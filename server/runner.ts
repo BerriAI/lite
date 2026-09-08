@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Attachment, Message, PermissionRequest, Session, ToolCall, ToolDefinition } from '../shared/types.js';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
-import { executeTool, isReadOnlyTool, toolDefinitions, resolveWorkspacePath } from './tools.js';
+import { executeTool, isReadOnlyTool, toolDefinitions, resolveWorkspacePath, assertReadablePath } from './tools.js';
 import { streamCompletion, type ProviderMessage } from './providers.js';
 
 type PendingPermission = { request: PermissionRequest; resolve: (approved: boolean) => void };
@@ -48,7 +48,7 @@ export class Runner {
     if (session.title === 'New session') this.setSession(id, { title:content.replace(/\s+/g,' ').slice(0,70) || 'Attachment review' });
     this.setSession(id, { status:'running' });
     void this.run(id, run).catch(error => {
-      if (!run.controller.signal.aborted) this.bus.emit(id,'error',{ message:this.safeError(error) });
+      if (!run.controller.signal.aborted) { this.setSession(id,{status:'error'}); this.bus.emit(id,'error',{ message:this.safeError(error) }); }
     }).finally(() => {
       for (const p of run.approvals.values()) p.resolve(false);
       run.approvals.clear();
@@ -84,7 +84,7 @@ export class Runner {
         history.push({role:'tool',content:message.content,tool_call_id:message.toolCallId});
       } else if (message.role === 'assistant') {
         if (!message.content && !message.toolCalls?.length) continue;
-        history.push({role:'assistant',content:message.content || null,tool_calls:message.toolCalls?.map(t => ({id:t.id,type:'function',function:{name:t.name,arguments:JSON.stringify(t.args)}}))});
+        history.push({role:'assistant',providerMetadata:message.providerMetadata,content:message.content || null,tool_calls:message.toolCalls?.map(t => ({id:t.id,type:'function',function:{name:t.name,arguments:JSON.stringify(t.args)}}))});
       } else if (message.role === 'user') {
         const parts: any[] = [{type:'text',text:message.content}];
         for (const attachment of message.attachments || []) {
@@ -92,7 +92,7 @@ export class Runner {
           else {
             let content = attachment.content;
             if (content === undefined && attachment.path) {
-              try { content = await fsReadFile(await resolveWorkspacePath(session.workspace,attachment.path),'utf8'); }
+              try { content = await fsReadFile(await assertReadablePath(session.workspace,attachment.path),'utf8'); }
               catch { content = '[File unavailable]'; }
             }
             if (content !== undefined) parts.push({type:'text',text:`\n<attached_file name=${JSON.stringify(attachment.name)}>\n${content.slice(0,50000)}\n</attached_file>`});
@@ -136,9 +136,10 @@ export class Runner {
       try {
         for await (const chunk of streamCompletion({provider,model:session.model,messages:history,tools,signal,system})) {
           if (signal.aborted) break;
-          if (chunk.type === 'text') { message.content += chunk.text || ''; this.bus.emit(id,'delta',{messageId:message.id,delta:chunk.text || ''}); }
-          else if (chunk.type === 'reasoning') { message.reasoning = (message.reasoning || '') + (chunk.text || ''); this.bus.emit(id,'reasoning',{messageId:message.id,delta:chunk.text || ''}); }
+          if (chunk.type === 'text') { message.content += chunk.text || ''; this.store.saveMessage(message); this.bus.emit(id,'delta',{messageId:message.id,delta:chunk.text || ''}); }
+          else if (chunk.type === 'reasoning') { message.reasoning = (message.reasoning || '') + (chunk.text || ''); this.store.saveMessage(message); this.bus.emit(id,'reasoning',{messageId:message.id,delta:chunk.text || ''}); }
           else if (chunk.type === 'usage' && chunk.usage) message.usage = {...chunk.usage,durationMs:Date.now()-startedAt};
+          else if (chunk.type === 'metadata' && chunk.metadata) message.providerMetadata = {...message.providerMetadata,...chunk.metadata};
           else if (chunk.type === 'tool' && chunk.tool) {
             const t = chunk.tool, current = fragments.get(t.index) || {id:'',name:'',arguments:''};
             if (t.id) current.id = t.id;

@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "description": "A thoughtful, local-first coding harness for LiteLLM and your favorite models.",
-  "engines": { "node": ">=22.13.0" },
-  "bin": { "lite": "bin/lite.mjs" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "bin": {
+    "lite": "bin/lite.mjs"
+  },
   "scripts": {
     "dev": "tsx watch server/index.ts",
     "build": "vite build && tsup server/index.ts --format esm --platform node --target node22 --out-dir dist/server --external vite",
@@ -26,10 +30,12 @@
     "fast-glob": "^3.3.3",
     "lucide-react": "^0.577.0",
     "marked": "^17.0.1",
+    "node-pty": "^1.1.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
+    "ws": "^8.21.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -40,6 +46,7 @@
     "@types/node": "^25.3.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^5.1.4",
     "jsdom": "^28.1.0",
     "tsup": "^8.5.1",

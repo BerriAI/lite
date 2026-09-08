@@ -1,0 +1,411 @@
+import { randomUUID } from 'node:crypto';
+import type { Model, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
+
+export interface ProviderMessage {
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string | any[] | null;
+  tool_calls?: { id: string; type: 'function'; function: { name: string; arguments: string } }[];
+  tool_call_id?: string;
+  providerMetadata?: Record<string, unknown>;
+}
+export interface CompletionOptions {
+  provider: Provider; model: string; messages: ProviderMessage[]; tools?: ToolDefinition[];
+  signal: AbortSignal; system?: string;
+}
+export interface CodexCredential { accessToken: string; accountId?: string; residency?: string }
+let codexCredentials: ((providerId: string) => Promise<CodexCredential>) | undefined;
+export function configureCodexAuth(resolve: (providerId: string) => Promise<CodexCredential>) { codexCredentials = resolve; }
+const REQUEST_TIMEOUT_MS = 5 * 60_000;
+const MAX_EVENT_BYTES = 4 * 1024 * 1024;
+const CODEX_BASE = 'https://chatgpt.com/backend-api/codex';
+
+/** Base URLs are API roots, not operation URLs. Preserve custom gateway prefixes. */
+export function endpoint(base: string, operation: string): string {
+  let url: URL;
+  try { url = new URL(base); } catch { throw new Error('Provider base URL must be a valid HTTP or HTTPS URL.'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    throw new Error('Provider base URL must use HTTP(S), without credentials, query parameters, or fragments.');
+  let path = url.pathname.replace(/\/+$/, '').replace(/\/(chat\/completions|messages|responses|models)$/, '');
+  path = path.replace(/(?:\/v1){2,}(?=\/|$)/g, '/v1');
+  if (!path) path = '/v1';
+  url.pathname = `${path}/${operation}`;
+  return url.toString();
+}
+function errorCode(value: any): string {
+  const code = value?.error?.code || value?.error?.type || value?.code;
+  // Do not surface provider-generated text: it can contain credentials or prompt data.
+  const known = new Set(['invalid_api_key', 'insufficient_quota', 'rate_limit_exceeded', 'overloaded_error', 'authentication_error', 'permission_error', 'model_not_found', 'context_length_exceeded', 'invalid_request_error', 'server_error']);
+  return typeof code === 'string' && known.has(code) ? `, ${code}` : '';
+}
+function httpError(status: number, body?: any): Error {
+  const advice: Record<number, string> = {
+    400: 'Check the model, tool support, and request settings.',
+    401: 'Check your API key or sign in again.', 403: 'Check account entitlements and workspace permissions.',
+    404: 'Check the base URL and model ID.', 408: 'The provider timed out.',
+    429: 'Rate limit or quota reached. Wait before trying again.',
+  };
+  return new Error(`Provider request failed (HTTP ${status}${errorCode(body)}). ${advice[status] || 'The provider could not complete this request.'}`);
+}
+async function request(url: string, init: RequestInit): Promise<Response> {
+  let response: Response;
+  try { response = await fetch(url, { ...init, redirect: 'error' }); }
+  catch {
+    if (init.signal?.aborted) throw init.signal.reason || new DOMException('Request cancelled', 'AbortError');
+    throw new Error('Cannot reach provider. Check the base URL, network, and TLS configuration.');
+  }
+  if (!response.ok) {
+    let body: any;
+    try { body = await response.json(); } catch { /* Do not expose a gateway's HTML error page. */ }
+    throw httpError(response.status, body);
+  }
+  return response;
+}
+
+/** Streaming decoder tolerates split UTF-8, CRLF, comments, and multiline data fields. */
+export async function* parseSSE(response: Response, signal: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
+  if (!response.body) throw new Error('Provider returned an empty streaming response.');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '', event = '', fields: string[] = [], eventSize = 0;
+  const onAbort = () => { void reader.cancel().catch(() => {}); };
+  signal.addEventListener('abort', onAbort, { once: true });
+  function line(value: string): { event: string; data: string } | undefined {
+    if (value === '') {
+      const result = fields.length ? { event, data: fields.join('\n') } : undefined;
+      event = ''; fields = []; eventSize = 0;
+      return result;
+    }
+    if (value.startsWith(':')) return;
+    const colon = value.indexOf(':');
+    const key = colon < 0 ? value : value.slice(0, colon);
+    const raw = colon < 0 ? '' : value.slice(colon + 1);
+    const content = raw.startsWith(' ') ? raw.slice(1) : raw;
+    if (key === 'event') event = content;
+    if (key === 'data') {
+      eventSize += content.length;
+      if (eventSize > MAX_EVENT_BYTES) throw new Error('Provider stream event exceeded the size limit.');
+      fields.push(content);
+    }
+  }
+  try {
+    while (true) {
+      signal.throwIfAborted();
+      const { value, done } = await reader.read();
+      signal.throwIfAborted();
+      buffer += decoder.decode(value, { stream: !done });
+      let offset = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        if (buffer[i] !== '\n' && buffer[i] !== '\r') continue;
+        if (buffer[i] === '\r' && i === buffer.length - 1 && !done) break;
+        const parsed = line(buffer.slice(offset, i));
+        if (buffer[i] === '\r' && buffer[i + 1] === '\n') i++;
+        offset = i + 1;
+        if (parsed) yield parsed;
+      }
+      buffer = buffer.slice(offset);
+      if (buffer.length > MAX_EVENT_BYTES) throw new Error('Provider stream line exceeded the size limit.');
+      if (done) {
+        if (buffer) { const parsed = line(buffer); if (parsed) yield parsed; }
+        const parsed = line(''); if (parsed) yield parsed;
+        break;
+      }
+    }
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
+function jsonEvent(data: string): any {
+  try { return JSON.parse(data); } catch { throw new Error('Provider returned malformed streaming JSON.'); }
+}
+function usage(value: any): Usage {
+  return {
+    inputTokens: value.prompt_tokens ?? value.input_tokens ?? 0,
+    outputTokens: value.completion_tokens ?? value.output_tokens ?? 0,
+    cachedTokens: value.prompt_tokens_details?.cached_tokens ?? value.input_tokens_details?.cached_tokens ?? value.cache_read_input_tokens,
+  };
+}
+async function* chatStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }): AsyncGenerator<StreamChunk> {
+  let finished = false, reasoningText = '', toolsSeen = false;
+  const thinkingBlocks: any[] = [], reasoningItems: any[] = [];
+  const remember = function* (): Generator<StreamChunk> {
+    if (thinkingBlocks.length || reasoningItems.length || reasoningText) yield { type: 'metadata', metadata: { ...scope,
+      ...(reasoningText ? { reasoning_content: reasoningText } : {}),
+      ...(thinkingBlocks.length ? { thinking_blocks: thinkingBlocks } : {}),
+      ...(reasoningItems.length ? { reasoning_items: reasoningItems } : {}),
+    } };
+  };
+  for await (const { data } of parseSSE(response, signal)) {
+    if (data.trim() === '[DONE]') { if (!toolsSeen) finished = true; break; }
+    const chunk = jsonEvent(data);
+    if (chunk.error) throw new Error(`Provider stream failed${errorCode(chunk)}.`);
+    if (chunk.usage) yield { type: 'usage', usage: usage(chunk.usage) };
+    // n is always one; don't combine unrelated alternatives into one assistant message.
+    const choice = chunk.choices?.find((c: any) => (c.index ?? 0) === 0);
+    if (!choice) continue;
+    const delta = choice.delta || {};
+    if (typeof delta.content === 'string' && delta.content) yield { type: 'text', text: delta.content };
+    const reasoning = delta.reasoning_content ?? delta.reasoning;
+    if (typeof reasoning === 'string' && reasoning) { reasoningText += reasoning; yield { type: 'reasoning', text: reasoning }; }
+    // LiteLLM emits unsigned thinking fragments followed by a complete signed block.
+    // Only signed blocks (and opaque redacted blocks) are safe to replay.
+    for (const block of delta.thinking_blocks || delta.provider_specific_fields?.thinking_blocks || []) {
+      if ((block.type === 'thinking' && typeof block.signature === 'string') || block.type === 'redacted_thinking') {
+        if (!thinkingBlocks.some(existing => JSON.stringify(existing) === JSON.stringify(block))) thinkingBlocks.push(block);
+      }
+    }
+    for (const item of delta.reasoning_items || []) if (!reasoningItems.some(existing => JSON.stringify(existing) === JSON.stringify(item))) reasoningItems.push(item);
+    if (Array.isArray(delta.tool_calls)) for (const call of delta.tool_calls) {
+      toolsSeen = true;
+      if (!Number.isInteger(call.index) || call.index < 0) throw new Error('Provider returned a tool call without a valid stream index.');
+      yield { type: 'tool', tool: {
+        index: call.index, id: call.id, name: call.function?.name, arguments: call.function?.arguments,
+      } };
+    }
+    if (choice.finish_reason) {
+      if (choice.finish_reason === 'length') throw new Error('The model reached its output limit. No partial tool calls were executed.');
+      if (choice.finish_reason === 'content_filter') throw new Error('The provider stopped the response because of content filtering.');
+      finished = true;
+    }
+  }
+  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+  yield* remember();
+}
+
+function contentText(value: ProviderMessage['content']): string {
+  if (typeof value === 'string') return value;
+  if (!Array.isArray(value)) return '';
+  return value.map(p => p.type === 'text' ? p.text : '').filter(Boolean).join('\n');
+}
+function imagePart(value: any): any {
+  const url = value.image_url?.url;
+  if (typeof url !== 'string') return undefined;
+  const match = url.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)$/);
+  if (match) return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
+  if (/^https:\/\//.test(url)) return { type: 'image', source: { type: 'url', url } };
+  throw new Error('This provider requires HTTPS or base64 image attachments.');
+}
+function anthropicMessages(messages: ProviderMessage[], providerId: string, model: string): any[] {
+  const result: any[] = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    const role = message.role === 'assistant' ? 'assistant' : 'user';
+    const content: any[] = [];
+    const metadata = scopedMetadata(message, providerId, model);
+    if (message.role === 'assistant' && Array.isArray(metadata.anthropicThinking)) content.push(...metadata.anthropicThinking);
+    if (message.role === 'tool') content.push({ type: 'tool_result', tool_use_id: message.tool_call_id, content: contentText(message.content) });
+    else {
+      if (Array.isArray(message.content)) for (const part of message.content) {
+        if (part.type === 'text' && part.text) content.push({ type: 'text', text: part.text });
+        if (part.type === 'image_url') content.push(imagePart(part));
+      }
+      else if (message.content) content.push({ type: 'text', text: message.content });
+      for (const call of message.tool_calls || []) {
+        let input: unknown;
+        try { input = JSON.parse(call.function.arguments); } catch { throw new Error('Conversation contains invalid tool arguments.'); }
+        content.push({ type: 'tool_use', id: call.id, name: call.function.name, input });
+      }
+    }
+    if (!content.length) continue;
+    if (result.at(-1)?.role === role) result.at(-1).content.push(...content);
+    else result.push({ role, content });
+  }
+  return result;
+}
+async function* anthropicStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }): AsyncGenerator<StreamChunk> {
+  let finished = false, tokens: Usage = { inputTokens: 0, outputTokens: 0 };
+  const thinking = new Map<number, any>();
+  for await (const { event, data } of parseSSE(response, signal)) {
+    const chunk = jsonEvent(data), type = chunk.type || event;
+    if (type === 'error') throw new Error(`Provider stream failed${errorCode(chunk)}.`);
+    if (type === 'message_start' && chunk.message?.usage) {
+      tokens = usage(chunk.message.usage);
+      // Anthropic's input_tokens excludes cache writes and hits; normalize total input.
+      tokens.inputTokens += (chunk.message.usage.cache_read_input_tokens || 0) + (chunk.message.usage.cache_creation_input_tokens || 0);
+    }
+    if (type === 'content_block_start' && ['thinking', 'redacted_thinking'].includes(chunk.content_block?.type)) thinking.set(chunk.index, { ...chunk.content_block });
+    if (type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
+      yield { type: 'tool', tool: { index: chunk.index, id: chunk.content_block.id, name: chunk.content_block.name } };
+      const input = chunk.content_block.input;
+      if (input && Object.keys(input).length) yield { type: 'tool', tool: { index: chunk.index, arguments: JSON.stringify(input) } };
+    }
+    if (type === 'content_block_delta') {
+      if (chunk.delta?.type === 'text_delta') yield { type: 'text', text: chunk.delta.text };
+      if (chunk.delta?.type === 'thinking_delta') {
+        const block = thinking.get(chunk.index);
+        if (block) block.thinking = (block.thinking || '') + chunk.delta.thinking;
+        yield { type: 'reasoning', text: chunk.delta.thinking };
+      }
+      if (chunk.delta?.type === 'signature_delta') {
+        const block = thinking.get(chunk.index);
+        if (block) block.signature = (block.signature || '') + chunk.delta.signature;
+      }
+      if (chunk.delta?.type === 'input_json_delta') yield { type: 'tool', tool: { index: chunk.index, arguments: chunk.delta.partial_json } };
+    }
+    if (type === 'message_delta') {
+      if (chunk.usage?.output_tokens !== undefined) tokens.outputTokens = chunk.usage.output_tokens;
+      if (chunk.delta?.stop_reason === 'max_tokens') throw new Error('The model reached its output limit. No partial tool calls were executed.');
+    }
+    if (type === 'message_stop') {
+      const blocks = [...thinking].sort(([a], [b]) => a - b).map(([, block]) => block).filter(block => block.type === 'redacted_thinking' || block.signature);
+      if (blocks.length) yield { type: 'metadata', metadata: { ...scope, anthropicThinking: blocks } };
+      finished = true; yield { type: 'usage', usage: tokens }; break;
+    }
+  }
+  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+}
+function scopedMetadata(message: ProviderMessage, providerId: string, model: string): Record<string, any> {
+  const data = message.providerMetadata;
+  return data?.providerId === providerId && data?.model === model ? data : {};
+}
+function chatMessages(messages: ProviderMessage[], providerId: string, model: string): any[] {
+  return messages.map(({ providerMetadata: _metadata, ...message }, i) => {
+    if (message.role !== 'assistant') return message;
+    const data = scopedMetadata(messages[i], providerId, model);
+    return { ...message, ...(typeof data.reasoning_content === 'string' ? { reasoning_content: data.reasoning_content } : {}),
+      ...(Array.isArray(data.thinking_blocks) ? { thinking_blocks: data.thinking_blocks } : {}),
+      ...(Array.isArray(data.reasoning_items) ? { reasoning_items: data.reasoning_items } : {}) };
+  });
+}
+function codexInput(messages: ProviderMessage[], providerId: string, model: string): any[] {
+  const input: any[] = [];
+  for (const message of messages) {
+    if (message.role === 'system') continue;
+    if (message.role === 'tool') { input.push({ type: 'function_call_output', call_id: message.tool_call_id, output: contentText(message.content) }); continue; }
+    const metadata = scopedMetadata(message, providerId, model);
+    if (message.role === 'assistant' && Array.isArray(metadata.responseItems) && metadata.responseItems.length) {
+      input.push(...metadata.responseItems.filter((item: any) => ['reasoning', 'message', 'function_call'].includes(item.type)));
+      continue;
+    }
+    const content = typeof message.content === 'string' ? message.content : null;
+    if (content) input.push({ role: message.role, content: [{ type: message.role === 'assistant' ? 'output_text' : 'input_text', text: content }] });
+    if (Array.isArray(message.content)) {
+      const parts = message.content.flatMap<any>(part => {
+        if (part.type === 'text') return [{ type: message.role === 'assistant' ? 'output_text' : 'input_text', text: part.text }];
+        if (part.type === 'image_url') return [{ type: 'input_image', image_url: part.image_url.url }];
+        return [];
+      });
+      if (parts.length) input.push({ role: message.role, content: parts });
+    }
+    for (const call of message.tool_calls || []) input.push({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments });
+  }
+  return input;
+}
+async function* responsesStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }): AsyncGenerator<StreamChunk> {
+  let finished = false;
+  const responseItems = new Map<number, any>();
+  const calls = new Map<number, { id?: string; name?: string; arguments: string }>();
+  for await (const { data } of parseSSE(response, signal)) {
+    if (data.trim() === '[DONE]') break;
+    const chunk = jsonEvent(data);
+    if (chunk.type === 'error' || chunk.type === 'response.failed') throw new Error(`Provider stream failed${errorCode(chunk.response || chunk)}.`);
+    if (chunk.type === 'response.output_text.delta') yield { type: 'text', text: chunk.delta };
+    if (['response.reasoning_summary_text.delta', 'response.reasoning_text.delta'].includes(chunk.type)) yield { type: 'reasoning', text: chunk.delta };
+    if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
+      calls.set(chunk.output_index, { id: chunk.item.call_id, name: chunk.item.name, arguments: chunk.item.arguments || '' });
+      yield { type: 'tool', tool: { index: chunk.output_index, id: chunk.item.call_id, name: chunk.item.name, arguments: chunk.item.arguments || undefined } };
+    }
+    if (chunk.type === 'response.function_call_arguments.delta') {
+      const current = calls.get(chunk.output_index) || { arguments: '' };
+      current.arguments += chunk.delta;
+      calls.set(chunk.output_index, current);
+      yield { type: 'tool', tool: { index: chunk.output_index, arguments: chunk.delta } };
+    }
+    if (chunk.type === 'response.output_item.done' && chunk.item && ['reasoning', 'message', 'function_call'].includes(chunk.item.type)) {
+      const { id: _id, ...item } = chunk.item;
+      if (item.type !== 'reasoning' || item.encrypted_content) responseItems.set(chunk.output_index, item);
+    }
+    if (chunk.type === 'response.output_item.done' && chunk.item?.type === 'function_call') {
+      const current = calls.get(chunk.output_index);
+      const complete = chunk.item.arguments || '';
+      if (!current) yield { type: 'tool', tool: { index: chunk.output_index, id: chunk.item.call_id, name: chunk.item.name, arguments: complete } };
+      else if (complete !== current.arguments) {
+        if (!complete.startsWith(current.arguments)) throw new Error('Provider returned inconsistent tool argument deltas.');
+        yield { type: 'tool', tool: { index: chunk.output_index, arguments: complete.slice(current.arguments.length) } };
+      }
+    }
+    if (chunk.type === 'response.incomplete') throw new Error('Provider returned an incomplete response. No partial tool calls were executed.');
+    if (chunk.type === 'response.completed') {
+      if (responseItems.size) yield { type: 'metadata', metadata: { ...scope, responseItems: [...responseItems].sort(([a], [b]) => a - b).map(([, item]) => item) } };
+      if (chunk.response?.usage) yield { type: 'usage', usage: usage(chunk.response.usage) };
+      finished = true; break;
+    }
+  }
+  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+}
+
+async function getCodexCredential(provider: Provider): Promise<CodexCredential> {
+  if (!codexCredentials) throw new Error('ChatGPT is not connected. Sign in through this application first.');
+  return codexCredentials(provider.id);
+}
+function codexHeaders(credential: CodexCredential): Record<string, string> {
+  return {
+    Authorization: `Bearer ${credential.accessToken}`, 'User-Agent': 'lite/0.1.0', originator: 'lite',
+    ...(credential.accountId ? { 'ChatGPT-Account-Id': credential.accountId } : {}),
+    ...(credential.residency ? { 'x-openai-internal-codex-residency': credential.residency } : {}),
+  };
+}
+export async function* streamCompletion(options: CompletionOptions): AsyncGenerator<StreamChunk> {
+  const { provider, model, messages, system, tools } = options;
+  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+  signal.throwIfAborted();
+  if (!model) throw new Error('Select a model before sending a message.');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+  let body: any, url: string;
+  if (provider.kind === 'anthropic') {
+    if (!provider.apiKey) throw new Error('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
+    headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
+    const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
+    body = { model, max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model), ...(instructions ? { system: instructions } : {}),
+      ...(tools?.length ? { tools: tools.map(t => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })) } : {}) };
+    url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
+  } else if (provider.kind === 'codex') {
+    Object.assign(headers, codexHeaders(await getCodexCredential(provider)));
+    headers['session-id'] = randomUUID();
+    body = { model, instructions: [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n') || 'You are a helpful coding assistant.',
+      input: codexInput(messages, provider.id, model), stream: true, store: false, include: ['reasoning.encrypted_content'],
+      ...(tools?.length ? { tools: tools.map(t => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters, strict: false })), tool_choice: 'auto', parallel_tool_calls: true } : {}) };
+    // Subscription credentials must never be forwarded to a configurable endpoint.
+    url = `${CODEX_BASE}/responses`;
+  } else {
+    if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+    body = { model, messages: [...(system ? [{ role: 'system', content: system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
+      stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
+    url = endpoint(provider.baseUrl, 'chat/completions');
+  }
+  const response = await request(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  if (!response.headers.get('content-type')?.includes('text/event-stream')) {
+    await response.body?.cancel();
+    throw new Error('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
+  }
+  if (provider.kind === 'anthropic') yield* anthropicStream(response, signal, { providerId: provider.id, model });
+  else if (provider.kind === 'codex') yield* responsesStream(response, signal, { providerId: provider.id, model });
+  else yield* chatStream(response, signal, { providerId: provider.id, model });
+}
+export async function listModels(provider: Provider, signal?: AbortSignal): Promise<Model[]> {
+  const requestSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
+  let headers: Record<string, string> = {}, url: string;
+  if (provider.kind === 'codex') {
+    headers = codexHeaders(await getCodexCredential(provider));
+    // The subscription catalog is separate from the billed public API catalog.
+    url = `${CODEX_BASE}/models?client_version=0.1.0`;
+  } else {
+    if (provider.kind === 'anthropic') {
+      if (!provider.apiKey) throw new Error('Anthropic requires an API key.');
+      headers = { 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' };
+    } else if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+    url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'models');
+  }
+  const response = await request(url, { headers, signal: requestSignal });
+  let result: any;
+  try { result = await response.json(); } catch { throw new Error('Provider returned an invalid model catalog.'); }
+  const data = Array.isArray(result) ? result : result.data || result.models;
+  if (!Array.isArray(data)) throw new Error('Provider returned an unsupported model catalog. Configure explicit model IDs instead.');
+  const models: Model[] = data.filter((m: any) => m && (m.id || m.slug)).map((m: any) => ({
+    id: m.id || m.slug, name: m.display_name || m.name || m.id || m.slug, providerId: provider.id,
+    ...(Number.isFinite(m.context_window) ? { contextWindow: m.context_window } : {}),
+  }));
+  for (const id of provider.models || []) if (!models.some(m => m.id === id)) models.push({ id, name: id, providerId: provider.id });
+  return models.sort((a, b) => a.name.localeCompare(b.name));
+}

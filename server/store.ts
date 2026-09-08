@@ -32,12 +32,12 @@ export class Store {
       defaultProvider: 'litellm', defaultModel: process.env.LITE_MODEL || '', workspace: resolve(process.env.LITE_WORKSPACE || process.cwd()),
       permissionMode: 'ask', maxSteps: 40, theme: 'system', mcpServers: {},
     };
-    settings.providers = settings.providers.map(p => p.id === 'litellm' ? { ...p, baseUrl: process.env.LITELLM_BASE_URL || p.baseUrl, apiKey: process.env.LITELLM_API_KEY || p.apiKey } : p);
+    settings.providers = settings.providers.map(p => p.id === 'litellm' ? { ...p, apiKey: p.apiKey ?? process.env.LITELLM_API_KEY } : p);
     return settings;
   }
   publicSettings(): Settings {
     const settings = this.settings();
-    return { ...settings, providers: settings.providers.map(({ apiKey, ...p }) => ({ ...p, configured: Boolean(apiKey) || /localhost|127\.0\.0\.1/.test(p.baseUrl) })), mcpServers: Object.fromEntries(Object.entries(settings.mcpServers).map(([name, config]) => [name, { ...config, env: config.env ? Object.fromEntries(Object.keys(config.env).map(k => [k, '••••••••'])) : undefined }])) };
+    return { ...settings, providers: settings.providers.map(({ apiKey, ...p }) => ({ ...p, configured: Boolean(apiKey) || ['localhost','127.0.0.1','[::1]'].includes(new URL(p.baseUrl).hostname) })), mcpServers: Object.fromEntries(Object.entries(settings.mcpServers).map(([name, config]) => [name, { ...config, env: config.env ? Object.fromEntries(Object.keys(config.env).map(k => [k, '••••••••'])) : undefined }])) };
   }
   saveSettings(patch: Partial<Settings>): Settings {
     const old = this.settings();
@@ -93,6 +93,7 @@ export class Store {
     const result = this.db.prepare('INSERT INTO events(session_id,data) VALUES(?,?)').run(event.sessionId, JSON.stringify(event));
     return { ...event, id: Number(result.lastInsertRowid) };
   }
+  latestEventId(id: string): number { return Number((this.db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM events WHERE session_id=?').get(id) as {id:number}).id); }
   events(id: string, after: number): RunEvent[] {
     return (this.db.prepare('SELECT id,data FROM events WHERE session_id=? AND id>? ORDER BY id LIMIT 10000').all(id, after) as {id:number,data:string}[]).map(r => ({ ...JSON.parse(r.data), id:r.id }));
   }
@@ -104,9 +105,9 @@ export class Store {
     const copied = messages.slice(0,end+1);
     // A branch boundary cannot contain tool calls without their matching results.
     while (copied.at(-1)?.role === 'assistant' && copied.at(-1)?.toolCalls?.length) copied.pop();
-    const callIds = new Map<string,string>();
-    for (const m of copied) for (const t of m.toolCalls || []) callIds.set(t.id, randomUUID());
-    for (const m of copied) this.saveMessage({ ...m, id:randomUUID(), sessionId:session.id, toolCallId:m.toolCallId ? callIds.get(m.toolCallId) : undefined, toolCalls:m.toolCalls?.map(t => ({ ...t,id:callIds.get(t.id)! })) });
+    // Tool IDs belong to provider history, not database keys. Preserve them and
+    // signed provider metadata together; only persisted message IDs are new.
+    for (const m of copied) this.saveMessage({ ...m, id:randomUUID(), sessionId:session.id });
     this.saveTodos(session.id, this.todos(id));
     return session;
   }
