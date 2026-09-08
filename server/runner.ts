@@ -7,7 +7,7 @@ import { streamCompletion, ProviderError, type ProviderMessage } from './provide
 import { planCompaction } from './context.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
-type ActiveRun = { controller: AbortController; approvals: Map<string, PendingPermission> };
+type ActiveRun = { controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
 export interface ExternalTools {
   definitions(): Promise<ToolDefinition[]>;
@@ -18,10 +18,39 @@ const conflict = (message: string) => Object.assign(new Error(message), { status
 export class Runner {
   private runs = new Map<string, ActiveRun>();
   private operations = new Set<string>();
+  private preparations = new Map<string, AbortController>();
+  private queuePreparations = new Map<string, Set<AbortController>>();
   constructor(readonly store: Store, readonly bus: EventBus, private external?: ExternalTools) {}
   active(id: string) { return this.runs.has(id); }
   permissions(id: string) { return [...(this.runs.get(id)?.approvals.values() || [])].map(p => p.request); }
-  assertIdle(id: string) { if (this.active(id) || this.operations.has(id)) throw conflict('Wait for the current operation or stop the response before making this change.'); }
+  assertIdle(id: string) { if (this.active(id) || this.operations.has(id) || this.preparations.has(id)) throw conflict('Wait for the current operation or stop the response before making this change.'); }
+  async submit(id: string, snapshot: () => Promise<{ content: string; attachments?: Attachment[] }>): Promise<string> {
+    this.assertIdle(id);this.store.session(id);
+    const controller=new AbortController();this.preparations.set(id,controller);
+    try {
+      const input=await snapshot();
+      if(controller.signal.aborted)throw conflict('Message preparation was cancelled. Nothing was sent.');
+      // Release and accept synchronously: no other operation can slip between them.
+      this.preparations.delete(id);
+      return this.start(id,input.content,input.attachments);
+    } finally {if(this.preparations.get(id)===controller)this.preparations.delete(id);}
+  }
+  async submitQueued(id: string, snapshot: () => Promise<{ content: string; attachments?: Attachment[] }>) {
+    this.store.session(id);
+    const originalRun=this.runs.get(id),controller=new AbortController();
+    const pending=this.queuePreparations.get(id)||new Set<AbortController>();
+    if(pending.size>=20)throw conflict('Too many queued messages are being prepared. Wait before adding another.');
+    pending.add(controller);this.queuePreparations.set(id,pending);
+    try {
+      const input=await snapshot();
+      if(controller.signal.aborted)throw conflict('Queued message preparation was cancelled. Nothing was queued.');
+      const run=this.runs.get(id);
+      const active=Boolean(originalRun&&run===originalRun&&!run.compacting&&!run.controller.signal.aborted);
+      if(originalRun!==run&&this.store.queue(id).items.length)this.pauseQueue(id,'The response changed while preparing context. Review before resuming queued messages.',false);
+      const queue=this.store.enqueue(id,input.content,input.attachments||[],active);
+      this.bus.emit(id,'queue',queue);return queue;
+    } finally {pending.delete(controller);if(!pending.size)this.queuePreparations.delete(id);}
+  }
   async exclusive<T>(id: string, operation: () => Promise<T>): Promise<T> {
     this.assertIdle(id);this.store.session(id);this.operations.add(id);
     try { return await operation(); }
@@ -29,10 +58,13 @@ export class Runner {
   }
   cancel(id: string) {
     this.store.session(id);
+    this.pauseQueue(id,'Cancelled. Review and resume queued messages explicitly.',false);
+    this.preparations.get(id)?.abort();
+    for(const controller of this.queuePreparations.get(id)||[])controller.abort();
     const run = this.runs.get(id);
     if (run) { run.controller.abort(); for (const p of run.approvals.values()) p.resolve(false); }
   }
-  stopAll() { for (const id of this.runs.keys()) this.cancel(id); }
+  stopAll() { for (const id of new Set([...this.runs.keys(),...this.preparations.keys(),...this.queuePreparations.keys()])) this.cancel(id); }
   decide(id: string, requestId: string, decision: 'allow' | 'always' | 'deny') {
     const run = this.runs.get(id), pending = run?.approvals.get(requestId);
     if (!run || !pending) throw conflict('This permission request is no longer pending.');
@@ -41,16 +73,49 @@ export class Runner {
     run.approvals.delete(requestId);
     pending.resolve(decision !== 'deny');
   }
-  start(id: string, content: string, attachments: Attachment[] = []) {
+  enqueue(id: string, content: string, attachments: Attachment[] = []) {
+    const run=this.runs.get(id);
+    const queue=this.store.enqueue(id,content,attachments,Boolean(run&&!run.compacting&&!run.controller.signal.aborted));
+    this.bus.emit(id,'queue',queue);return queue;
+  }
+  removeQueued(id: string, itemId: string) {
+    const queue=this.store.removeQueued(id,itemId);this.bus.emit(id,'queue',queue);return queue;
+  }
+  pauseQueue(id: string, reason = 'Paused. Resume when you are ready.', manual = true) {
+    const previous=this.store.queue(id);
+    const queue=this.store.saveQueue(id,{...previous,paused:true,reason,manualPause:manual||previous.manualPause});
+    this.bus.emit(id,'queue',queue);return queue;
+  }
+  resumeQueue(id: string) {
+    if(this.operations.has(id)||this.preparations.has(id))throw conflict('Wait for the current operation before resuming the queue.');
+    const run=this.runs.get(id);
+    if(run?.controller.signal.aborted)throw conflict('Wait for cancellation to finish before resuming the queue.');
+    if(run?.compacting)throw conflict('Wait for context compaction to finish before resuming the queue.');
+    this.store.saveQueue(id,{...this.store.queue(id),paused:false,manualPause:false,reason:undefined});
+    this.bus.emit(id,'queue',this.store.queue(id));
+    if(!run)this.drainQueue(id);
+    return this.store.queue(id);
+  }
+  private drainQueue(id: string) {
+    const queue=this.store.queue(id);
+    if(queue.paused||!queue.items.length||this.active(id)||this.operations.has(id)||this.preparations.has(id))return;
+    const next=queue.items[0];
+    try { this.start(id,next.content,next.attachments,next.id); }
+    catch(error){this.pauseQueue(id,`Could not start queued message: ${this.safeError(error)}`,false);}
+  }
+  start(id: string, content: string, attachments: Attachment[] = [], queuedId?: string) {
     this.assertIdle(id);
+    if(!queuedId&&this.store.queue(id).items.length)throw conflict('Resume or remove queued messages before sending a new message.');
     const session = this.store.session(id);
     const provider = this.store.settings().providers.find(p => p.id === session.providerId);
     if (!provider) throw Object.assign(new Error('Choose a connected provider in Settings.'), { status: 400 });
     if (!session.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map() };
-    this.runs.set(id, run);
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
-    this.save(message);
+    if(queuedId)this.store.acceptQueued(id,queuedId,message);else this.store.saveMessage(message);
+    this.runs.set(id, run);
+    this.bus.emit(id,'message',message);
+    if(queuedId)this.bus.emit(id,'queue',this.store.queue(id));
     if (session.title === 'New session') this.setSession(id, { title:content.replace(/\s+/g,' ').slice(0,70) || 'Attachment review' });
     this.setSession(id, { status:'running' });
     void this.run(id, run).catch(error => {
@@ -61,8 +126,12 @@ export class Runner {
       this.runs.delete(id);
       const current = this.store.session(id);
       this.setSession(id, { status:current.status === 'error' ? 'error' : 'idle' });
+      const succeeded=run.completed&&!run.blocked&&!run.controller.signal.aborted&&current.status!=='error';
+      if(!succeeded)this.pauseQueue(id,run.controller.signal.aborted?'Cancelled. Review and resume queued messages explicitly.':'Response stopped or encountered an error. Review before resuming queued messages.',false);
       this.bus.emit(id,'done',{ status:this.store.session(id).status });
+      if(succeeded)this.drainQueue(id);
     });
+    return message.id;
   }
   private save(message: Message) { this.store.saveMessage(message); this.bus.emit(message.sessionId, 'message', message); }
   private setSession(id: string, patch: Partial<Session>) { this.bus.emit(id, 'session', this.store.updateSession(id, patch)); }
@@ -180,7 +249,7 @@ export class Runner {
       });
       if (!message.toolCalls.length) delete message.toolCalls;
       this.save(message);
-      if (!message.toolCalls?.length) return;
+      if (!message.toolCalls?.length) { run.completed=true;return; }
       const batch = canonical(message.toolCalls.map(call => ({name:call.name,args:call.args})).sort((a,b) => canonical(a).localeCompare(canonical(b))));
       repeatedBatches = batch === previousBatch ? repeatedBatches + 1 : 1;
       previousBatch = batch;
@@ -205,6 +274,7 @@ export class Runner {
             call.status='completed';
           }
         } catch (error) { call.status='error';output=this.safeError(error); }
+        if(call.status==='denied'||call.status==='error')run.blocked=true;
         call.output=output;call.endedAt=Date.now();
         this.store.saveMessage(message);this.bus.emit(id,'tool',{messageId:message.id,tool:call});
         this.save({id:randomUUID(),sessionId:id,role:'tool',content:output,toolCallId:call.id,createdAt:Date.now()});
@@ -222,7 +292,8 @@ export class Runner {
     if (messages.length < 4) throw Object.assign(new Error('This session is already short enough; nothing to compact.'),{status:400});
     const provider=this.store.settings().providers.find(p=>p.id===session.providerId);
     if (!provider || !session.model) throw Object.assign(new Error('Connect a provider and choose a model first.'),{status:400});
-    const run:ActiveRun={controller:new AbortController(),approvals:new Map()};
+    const run:ActiveRun={controller:new AbortController(),approvals:new Map(),compacting:true};
+    if(this.store.queue(id).items.length)this.pauseQueue(id,'Context changed. Review and resume queued messages explicitly.',false);
     this.runs.set(id,run); this.setSession(id,{status:'running'});
     try { await this.summarize(id,run,false); }
     finally {this.runs.delete(id);this.setSession(id,{status:'idle'});this.bus.emit(id,'done',{status:'idle'});}

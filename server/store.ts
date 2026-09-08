@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { completeToolBoundary } from './context.js';
-import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider } from '../shared/types.js';
+import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider, QueueState, QueuedMessage, Attachment } from '../shared/types.js';
 
 export class Store {
   readonly db: DatabaseSync;
@@ -18,12 +18,15 @@ export class Store {
       CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id);
       CREATE TABLE IF NOT EXISTS todos (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS changes (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, path TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id,path));
+      CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);`);
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
+      const queue=this.queue(session.id);
+      if(queue.items.length)this.saveQueue(session.id,{...queue,paused:true,reason:'Server restarted. Review and resume queued messages explicitly.'});
     }
   }
   close() { this.db.close(); }
@@ -117,6 +120,43 @@ export class Store {
   event(event: RunEvent): RunEvent {
     const result = this.db.prepare('INSERT INTO events(session_id,data) VALUES(?,?)').run(event.sessionId, JSON.stringify(event));
     return { ...event, id: Number(result.lastInsertRowid) };
+  }
+  queue(id: string): QueueState {
+    this.session(id);
+    const row=this.db.prepare('SELECT data FROM queues WHERE session_id=?').get(id) as {data:string}|undefined;
+    return row?JSON.parse(row.data):{items:[],paused:true};
+  }
+  saveQueue(id: string, queue: QueueState): QueueState {
+    this.session(id);
+    this.db.prepare('INSERT INTO queues(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id,JSON.stringify(queue));
+    return queue;
+  }
+  enqueue(id: string, content: string, attachments: Attachment[], active: boolean): QueueState {
+    const queue=this.queue(id);
+    if(queue.items.length>=20)throw Object.assign(new Error('Queue is full (20 messages). Remove an item before adding another.'),{status:409});
+    const item:QueuedMessage={id:randomUUID(),sessionId:id,content,attachments,createdAt:Date.now()};
+    const next:QueueState={...queue,items:[...queue.items,item]};
+    // Explicit Pause holds future items too, even after all existing items are removed.
+    if(!queue.items.length&&!queue.manualPause){next.paused=!active;next.reason=active?undefined:'Ready when you are. Resume to send queued messages.';}
+    if(Buffer.byteLength(JSON.stringify(next))>16*1024*1024)throw Object.assign(new Error('Queued attachments exceed the 16 MiB session queue limit.'),{status:413});
+    return this.saveQueue(id,next);
+  }
+  removeQueued(id: string, itemId: string): QueueState {
+    const queue=this.queue(id);
+    if(!queue.items.some(item=>item.id===itemId))throw Object.assign(new Error('Queued message not found. It may already have started.'),{status:404});
+    return this.saveQueue(id,{...queue,items:queue.items.filter(item=>item.id!==itemId)});
+  }
+  acceptQueued(id: string, itemId: string, message: Message): void {
+    this.db.exec('BEGIN');
+    try {
+      const queue=this.queue(id);
+      if(queue.paused||queue.items[0]?.id!==itemId)throw Object.assign(new Error('Queue changed before this message could start.'),{status:409});
+      const item=queue.items[0];
+      if(message.sessionId!==id||message.role!=='user'||message.content!==item.content||JSON.stringify(message.attachments)!==JSON.stringify(item.attachments)||this.db.prepare('SELECT id FROM messages WHERE id=?').get(message.id))throw Object.assign(new Error('Queued message does not match the stored draft.'),{status:409});
+      this.saveMessage(message);
+      this.saveQueue(id,{...queue,items:queue.items.slice(1)});
+      this.db.exec('COMMIT');
+    } catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   latestEventId(id: string): number { return Number((this.db.prepare('SELECT COALESCE(MAX(id),0) AS id FROM events WHERE session_id=?').get(id) as {id:number}).id); }
   events(id: string, after: number): RunEvent[] {

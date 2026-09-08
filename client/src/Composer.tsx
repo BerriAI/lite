@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, File, Hammer, Image, ListTree, Paperclip, Search, Shield, ShieldCheck, Square, X } from 'lucide-react';
-import type { Attachment, Mode, Model, PermissionMode, Settings } from '../../shared/types';
+import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, File, Hammer, Image, ListPlus, ListTree, Paperclip, Pause, Play, Search, Shield, ShieldCheck, Square, X } from 'lucide-react';
+import type { Attachment, Mode, Model, PermissionMode, QueueState, Settings } from '../../shared/types';
 import { api, errorMessage, query } from './api';
 import { Modal, SpeedRail } from './ui';
 
@@ -8,11 +8,15 @@ export interface Selection { providerId: string; model: string; mode: Mode; perm
 interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;
+  onQueue?: (content: string, attachments: Attachment[]) => Promise<boolean>;
+  queue?: QueueState; queueBusy?: boolean;
+  onQueueAction?: (action: 'pause' | 'resume' | 'remove', queueId?: string) => void;
   running: boolean; disabled?: boolean; welcome?: boolean; workspace: string;
-  text: string; setText: (value: string) => void; onSettings: () => void;
+  text: string; setText: (value: string) => void;
+  attachments: Attachment[]; setAttachments: (value: Attachment[]) => void;
+  draftNotice?: string; onSettings: () => void;
 }
-export function Composer({ settings, selection, onSelection, onSend, onCancel, running, disabled, welcome, workspace, text, setText, onSettings }: Props) {
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+export function Composer({ settings, selection, onSelection, onSend, onQueue, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings }: Props) {
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextQuery, setContextQuery] = useState('');
@@ -21,10 +25,18 @@ export function Composer({ settings, selection, onSelection, onSend, onCancel, r
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [readingFiles, setReadingFiles] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const closeModel = useCallback(() => setModelOpen(false), []);
   const provider = settings.providers.find(p => p.id === selection.providerId);
+  const alive = useRef(true);
+  const adding = useRef(false);
+  const latestDraft = useRef({ text, attachments }); latestDraft.current = { text, attachments };
+  const queueCount = queue?.items.length ?? 0;
+  const queueMode = Boolean(onQueue && (running || queueCount));
+  const queueFull = queueCount >= 20;
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (!input.current) return;
     input.current.style.height = 'auto';
@@ -38,35 +50,46 @@ export function Composer({ settings, selection, onSelection, onSend, onCancel, r
     return () => { live = false; clearTimeout(timer); };
   }, [contextOpen, contextQuery, workspace]);
   async function send() {
-    if (running || disabled || sending || (!text.trim() && !attachments.length)) return;
+    if ((running && !queueMode) || disabled || sending || adding.current || queueBusy || (queueMode && queueFull) || (!text.trim() && !attachments.length)) return;
     setError('');
-    if (!selection.model || !selection.providerId) { setModelOpen(true); return; }
+    if (!queueMode && (!selection.model || !selection.providerId)) { setModelOpen(true); return; }
     setSending(true);
     try {
-      const ok = await onSend(text.trim() || 'Please review the attached files.', attachments);
-      if (ok) { setText(''); setAttachments([]); setContextOpen(false); input.current?.focus(); }
-    } catch (e) { setError(errorMessage(e)); } finally { setSending(false); }
+      const submit = queueMode ? onQueue! : onSend;
+      const ok = await submit(text.trim() || 'Please review the attached files.', attachments);
+      if (ok && alive.current) { setContextOpen(false); input.current?.focus(); }
+    } catch (e) { if (alive.current) setError(errorMessage(e)); } finally { if (alive.current) setSending(false); }
   }
   async function addFiles(selected: FileList | File[]) {
-    const additions: Attachment[] = [];
-    setError('');
-    for (const file of Array.from(selected)) {
-      if (file.size > 3 * 1024 * 1024) { setError(`${file.name} exceeds the 3 MB attachment limit.`); continue; }
-      if (attachments.length + additions.length >= 6) { setError('Attach up to 6 files per message.'); break; }
-      if (file.type.startsWith('image/')) {
-        const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(`Could not read ${file.name}`)); reader.readAsDataURL(file); });
-        additions.push({ name: file.name, mimeType: file.type, dataUrl });
-      } else {
-        const content = await file.text();
-        if (content.includes('\0')) { setError(`${file.name} is a binary file. Attach an image or a text file instead.`); continue; }
-        additions.push({ name: file.name, mimeType: file.type || 'text/plain', content });
+    if (adding.current || disabled || sending) return;
+    adding.current = true; setReadingFiles(true); setError('');
+    try {
+      for (const file of Array.from(selected)) {
+        if (file.size > 3 * 1024 * 1024) { setError(`${file.name} exceeds the 3 MiB attachment limit. Use a smaller file or attach a workspace file by path.`); continue; }
+        if (latestDraft.current.attachments.length >= 6) { setError('Attach up to 6 files per message.'); break; }
+        let attachment: Attachment;
+        if (file.type.startsWith('image/')) {
+          if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) { setError(`${file.name}: use a PNG, JPEG, GIF, or WebP image.`); continue; }
+          const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error(`Could not read ${file.name}`)); reader.readAsDataURL(file); });
+          attachment = { name: file.name, mimeType: file.type, dataUrl };
+        } else {
+          const content = await file.text();
+          if (content.includes('\0')) { setError(`${file.name} is a binary file. Attach an image or a text file instead.`); continue; }
+          if (content.length > 200_000) { setError(`${file.name} exceeds the 200,000 character text attachment limit.`); continue; }
+          attachment = { name: file.name, mimeType: file.type || 'text/plain', content };
+        }
+        if (!alive.current) return;
+        const current = latestDraft.current, next = [...current.attachments, attachment];
+        // Upload limits are independent of browser persistence: large drafts remain usable in memory.
+        latestDraft.current = { ...current, attachments: next }; setAttachments(next);
       }
-    }
-    setAttachments(a => [...a, ...additions].slice(0, 6));
+    } finally { adding.current = false; if (alive.current) setReadingFiles(false); }
   }
   function addContext(path: string) {
+    if (disabled || sending) return;
     if (attachments.length >= 6) { setError('Attach up to 6 files per message.'); return; }
-    setAttachments(a => a.some(v => v.path === path) ? a : [...a, { name: path.split('/').at(-1) || path, path }]);
+    const next = attachments.some(v => v.path === path) ? attachments : [...attachments, { name: path.split('/').at(-1) || path, path }];
+    setAttachments(next);
     if (/@[^\s]*$/.test(text)) setText(text.replace(/@[^\s]*$/, ''));
     setContextOpen(false); setContextQuery(''); input.current?.focus();
   }
@@ -75,20 +98,31 @@ export function Composer({ settings, selection, onSelection, onSend, onCancel, r
     if (e.key === 'Escape') setContextOpen(false);
   }
   return <>
+    {queue && (queueCount > 0 || queue.reason) && <section className="message-queue" aria-label="Queued messages">
+      <div className="queue-header"><strong><ListPlus size={14} />Next messages <span>{queueCount}/20</span></strong><span className="queue-status" role="status">{queue.paused ? 'Paused' : running ? 'After this response' : 'Ready'}</span>
+        {queueCount > 0 && <button className="text-button" disabled={disabled || queueBusy} onClick={() => onQueueAction?.(queue.paused || !running ? 'resume' : 'pause')}>{queue.paused || !running ? <Play size={12} /> : <Pause size={12} />}{queue.paused || !running ? 'Resume queue' : 'Pause queue'}</button>}
+      </div>
+      {queue.reason && <p className="queue-reason">{queue.reason}</p>}
+      {queue.paused && queueCount > 0 && <p className="queue-note">Queued messages stay paused until you choose Resume queue.</p>}
+      {queueFull && <p className="queue-reason" role="status">Queue is full. Remove a message or resume to make room.</p>}
+      {queueCount > 0 && <ol className="queue-items">{queue.items.map((item, index) => <li key={item.id}><span className="queue-position" aria-hidden="true">{index + 1}</span><div className="queue-item-content"><p title={item.content}>{item.content || 'Attached files'}</p>{item.attachments?.length > 0 && <span>{item.attachments.length} attachment{item.attachments.length === 1 ? '' : 's'} · {item.attachments.map(attachment => attachment.name).join(', ')}</span>}</div><button className="icon-button" aria-label={`Remove queued message ${index + 1}`} disabled={disabled || queueBusy} onClick={() => onQueueAction?.('remove', item.id)}><X size={13} /></button></li>)}</ol>}
+    </section>}
     <div className={`composer ${welcome ? 'welcome-composer' : ''} ${dragging ? 'dragging' : ''}`} onDragOver={e => { e.preventDefault(); setDragging(true); }} onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false); }} onDrop={e => { e.preventDefault(); setDragging(false); void addFiles(e.dataTransfer.files).catch(e => setError(errorMessage(e))); }}>
       {dragging && <div className="drop-overlay"><Paperclip size={22} />Drop files to add context</div>}
-      {attachments.length > 0 && <div className="attachments">{attachments.map((a, i) => <div className="attachment-chip" key={`${a.name}-${i}`} title={a.path || a.name}>{a.dataUrl ? <Image size={13} /> : <File size={13} />}<span>{a.path || a.name}</span><button aria-label={`Remove ${a.name}`} onClick={() => setAttachments(v => v.filter((_, n) => n !== i))}><X size={12} /></button></div>)}</div>}
-      <label className="sr-only" htmlFor="message-input">Message Lite</label><textarea ref={input} id="message-input" placeholder={welcome ? 'What do you want to build?' : running ? 'Draft your next message while Lite works…' : 'Ask a follow-up, or start something new…'} value={text} rows={welcome ? 3 : 2} onKeyDown={onKey} disabled={disabled} onChange={e => { setText(e.target.value); const mention = e.target.value.match(/(?:^|\s)@([^\s]*)$/); if (mention) { setContextOpen(true); setContextQuery(mention[1]); } else setContextOpen(false); }} />
+      {attachments.length > 0 && <div className="attachments">{attachments.map((a, i) => <div className="attachment-chip" key={`${a.name}-${i}`} title={a.path || a.name}>{a.dataUrl ? <Image size={13} /> : <File size={13} />}<span>{a.path || a.name}</span><button aria-label={`Remove ${a.name}`} disabled={sending} onClick={() => setAttachments(attachments.filter((_, n) => n !== i))}><X size={12} /></button></div>)}</div>}
+      <label className="sr-only" htmlFor="message-input">Message Lite</label><textarea ref={input} id="message-input" placeholder={welcome ? 'What do you want to build?' : queueMode ? 'Add the next message to your queue…' : 'Ask a follow-up, or start something new…'} value={text} maxLength={200000} rows={welcome ? 3 : 2} onKeyDown={onKey} disabled={disabled || sending} onChange={e => { setText(e.target.value); const mention = e.target.value.match(/(?:^|\s)@([^\s]*)$/); if (mention) { setContextOpen(true); setContextQuery(mention[1]); } else setContextOpen(false); }} />
       {contextOpen && <div className="context-picker"><div className="context-search"><Search size={15} /><input autoFocus aria-label="Search workspace files" placeholder="Find a file in your workspace…" value={contextQuery} onChange={e => setContextQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setContextOpen(false); input.current?.focus(); } if (e.key === 'Enter' && files.length) { e.preventDefault(); addContext(files[0]); } }} /><button className="icon-button" aria-label="Close file picker" onClick={() => setContextOpen(false)}><X size={14} /></button></div>{fileLoading ? <div className="picker-empty"><SpeedRail compact active />Finding files…</div> : files.length ? <div className="context-results">{files.slice(0, 30).map(f => <button key={f} onClick={() => addContext(f)}><File size={14} /><span>{f}</span>{attachments.some(a => a.path === f) && <Check size={14} />}</button>)}</div> : <div className="picker-empty">No files found. Try a different name.</div>}</div>}
       <div className="composer-toolbar"><div className="composer-tools">
         <div className="mode-switch" role="group" aria-label="Agent mode"><button className={selection.mode === 'build' ? 'selected' : ''} aria-pressed={selection.mode === 'build'} disabled={running || sending} onClick={() => onSelection({ ...selection, mode: 'build' })}><Hammer size={13} />Build</button><button className={selection.mode === 'plan' ? 'selected' : ''} aria-pressed={selection.mode === 'plan'} disabled={running || sending} onClick={() => onSelection({ ...selection, mode: 'plan' })}><ListTree size={14} />Plan</button></div>
         <span className="toolbar-divider" />
         <button className="model-trigger" onClick={() => setModelOpen(true)} disabled={running || sending} title={`${provider?.name || 'Choose provider'} · ${selection.model || 'Choose model'}`}><span className="model-dot" /><span>{selection.model?.split('/').at(-1) || 'Select model'}</span><ChevronDown size={12} /></button>
       </div><div className="composer-actions"><input ref={fileInput} type="file" multiple className="sr-only" tabIndex={-1} aria-label="Attach files" onChange={e => { if (e.target.files) void addFiles(e.target.files).catch(e => setError(errorMessage(e))); e.target.value = ''; }} /><button className="icon-button attach-button" title="Attach files" aria-label="Attach files" onClick={() => fileInput.current?.click()}><Paperclip size={17} /></button><button className="icon-button context-button" title="Add workspace file" aria-label="Add workspace file context" onClick={() => { setContextOpen(v => !v); setContextQuery(''); }}><AtSign size={17} /></button>
-        {running ? <button className="send-button stop" aria-label="Stop generation" title="Stop generation" onClick={onCancel}><Square size={14} fill="currentColor" /></button> : <button className="send-button" aria-label="Send message" title="Send message (Enter)" disabled={disabled || sending || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ArrowUp size={20} />}</button>}
+        {queueMode ? <button className="send-button queue-send" aria-label="Add to queue" title="Add to queue (Enter)" disabled={disabled || sending || readingFiles || queueBusy || queueFull || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ListPlus size={16} />}<span>Queue</span></button> : !running && <button className="send-button" aria-label="Send message" title="Send message (Enter)" disabled={disabled || sending || readingFiles || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ArrowUp size={20} />}</button>}
+        {running && <button className="send-button stop" aria-label="Stop generation" title="Stop generation and pause queued messages" disabled={disabled} onClick={onCancel}><Square size={14} fill="currentColor" /></button>}
       </div></div>
     </div>
-    <div className="composer-below"><details className="permission-select"><summary><Shield size={12} />{selection.mode === 'plan' ? 'Read-only plan' : selection.permissionMode === 'ask' ? 'Ask before changes' : 'Auto-approve changes'}<ChevronDown size={10} /></summary><div className="permission-menu"><strong>Permissions</strong><button disabled={running || sending} onClick={e => { onSelection({ ...selection, permissionMode: 'ask' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Shield size={16} /><span>Ask before changes<small>Review edits and commands first</small></span>{selection.permissionMode === 'ask' && <Check size={14} />}</button><button disabled={running || sending} onClick={e => { onSelection({ ...selection, permissionMode: 'auto' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><ShieldCheck size={16} /><span>Auto-approve<small>Allow edits and shell commands</small></span>{selection.permissionMode === 'auto' && <Check size={14} />}</button></div></details><span className="enter-hint"><CornerDownLeft size={11} />Send<span>·</span>Shift + Enter for a new line</span></div>
+    <div className="composer-below"><details className="permission-select"><summary><Shield size={12} />{selection.mode === 'plan' ? 'Read-only plan' : selection.permissionMode === 'ask' ? 'Ask before changes' : 'Auto-approve changes'}<ChevronDown size={10} /></summary><div className="permission-menu"><strong>Permissions</strong><button disabled={running || sending} onClick={e => { onSelection({ ...selection, permissionMode: 'ask' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Shield size={16} /><span>Ask before changes<small>Review edits and commands first</small></span>{selection.permissionMode === 'ask' && <Check size={14} />}</button><button disabled={running || sending} onClick={e => { onSelection({ ...selection, permissionMode: 'auto' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><ShieldCheck size={16} /><span>Auto-approve<small>Allow edits and shell commands</small></span>{selection.permissionMode === 'auto' && <Check size={14} />}</button></div></details><span className="enter-hint"><CornerDownLeft size={11} />{queueMode ? 'Queue' : 'Send'}<span>·</span>Shift + Enter for a new line</span></div>
+    {draftNotice && <div className="draft-notice" role="status">{draftNotice}</div>}
     {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss attachment error" onClick={() => setError('')}><X size={13} /></button></div>}
     {modelOpen && <ModelPicker settings={settings} selection={selection} onChange={onSelection} onClose={closeModel} onSettings={onSettings} />}
   </>;

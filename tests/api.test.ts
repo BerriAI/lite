@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm, writeFile, readFile, mkdir, symlink } from 'node:fs/promises';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fsPromises, { mkdtemp, rm, writeFile, readFile, mkdir, symlink } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, request as httpRequest, type Server } from 'node:http';
@@ -46,8 +47,9 @@ describe('local API and agent loop',()=>{
   });
   it('validates inputs and returns actionable not-found errors',async()=>{expect((await request('/sessions',{mode:'invalid'})).status).toBe(400);expect((await request('/sessions/missing')).status).toBe(404);expect((await request('/settings',{maxSteps:0},'PATCH')).status).toBe(400);});
   it('streams and persists a real multi-chunk provider response',async()=>{
-    const s=await session();expect((await request(`/sessions/${s.id}/messages`,{content:'Hello'})).status).toBe(202);
+    const s=await session();const accepted=await request(`/sessions/${s.id}/messages`,{content:'Hello'});expect(accepted.status).toBe(202);
     await until(()=>!runner.active(s.id));const result=(await request(`/sessions/${s.id}`)).data;
+    expect(accepted.data.messageId).toBe(result.messages[0].id);expect(store.events(s.id,0).some(e=>e.type==='message'&&e.data.role==='user'&&e.data.id===accepted.data.messageId)).toBe(true);
     expect(result.session.status).toBe('idle');expect(result.messages.at(-1).content).toBe('Hello world.');expect(result.messages.at(-1).usage.inputTokens).toBe(12);expect(calls).toHaveLength(1);
     expect(store.events(s.id,0).filter(e=>e.type==='delta').map(e=>e.data.delta).join('')).toBe('Hello world.');
   });
@@ -101,6 +103,173 @@ describe('local API and agent loop',()=>{
     const s=await session();await writeFile(join(dir,'x.txt'),'new');store.recordChange(s.id,{path:'x.txt',before:'old',after:'new'});
     expect((await request(`/sessions/${s.id}/undo`,{})).status).toBe(200);expect(await readFile(join(dir,'x.txt'),'utf8')).toBe('old');
     store.recordChange(s.id,{path:'x.txt',before:'old',after:'agent'});await writeFile(join(dir,'x.txt'),'external');expect((await request(`/sessions/${s.id}/undo`,{})).status).toBe(409);expect(await readFile(join(dir,'x.txt'),'utf8')).toBe('external');
+  });
+  it('drains explicitly queued follow-ups in order only after successful completion',async()=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'First task'});await until(()=>runner.permissions(s.id).length===1);
+    const permission=runner.permissions(s.id)[0];
+    expect((await request(`/sessions/${s.id}/queue`,{content:'Second task'})).status).toBe(202);await request(`/sessions/${s.id}/queue`,{content:'Third task'});
+    expect(store.queue(s.id).items.map(i=>i.content)).toEqual(['Second task','Third task']);expect(store.queue(s.id).paused).toBe(false);
+    mode='text';await request(`/sessions/${s.id}/permissions/${permission.id}`,{decision:'allow'});await until(()=>!runner.active(s.id));
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['First task','Second task','Third task']);expect(store.queue(s.id).items).toHaveLength(0);
+  });
+  it('cancellation holds queued snapshots until explicit resume',async()=>{
+    mode='slow';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>calls.length===1);
+    await writeFile(join(dir,'queued.txt'),'QUEUED_SNAPSHOT');await request(`/sessions/${s.id}/queue`,{content:'Follow-up',attachments:[{name:'queued',path:'queued.txt'}]});await writeFile(join(dir,'queued.txt'),'NEW_DISK_VALUE');
+    await request(`/sessions/${s.id}/cancel`,{});await until(()=>!runner.active(s.id));expect(calls).toHaveLength(1);expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items[0].attachments[0].content).toBe('QUEUED_SNAPSHOT');
+    expect((await request(`/sessions/${s.id}/messages`,{content:'Skip queue'})).status).toBe(409);mode='text';await request(`/sessions/${s.id}/queue/resume`,{});await until(()=>!runner.active(s.id));expect(calls).toHaveLength(2);expect(JSON.stringify(calls[1])).toContain('QUEUED_SNAPSHOT');expect(JSON.stringify(calls[1])).not.toContain('NEW_DISK_VALUE');
+  });
+  it('pauses remaining queue after provider errors and denied tools',async()=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>runner.permissions(s.id).length===1);await request(`/sessions/${s.id}/queue`,{content:'Pending'});
+    const permission=runner.permissions(s.id)[0];mode='error';await request(`/sessions/${s.id}/permissions/${permission.id}`,{decision:'allow'});await until(()=>!runner.active(s.id));expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items).toHaveLength(1);expect(store.session(s.id).status).toBe('error');
+    mode='tool';await request(`/sessions/${s.id}/queue/resume`,{});await until(()=>runner.permissions(s.id).length===1);await request(`/sessions/${s.id}/queue`,{content:'After denial'});await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'deny'});await until(()=>!runner.active(s.id));expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items[0].content).toBe('After denial');
+  });
+  it('idle enqueue requires resume, allows removal and isolates sessions',async()=>{
+    const a=await session(),b=await session();const queued=await request(`/sessions/${a.id}/queue`,{content:'Waiting'});expect(queued.data.paused).toBe(true);expect(calls).toHaveLength(0);
+    await request(`/sessions/${a.id}/queue`,{content:'Keep'});await request(`/sessions/${a.id}/queue/${queued.data.items[0].id}`,undefined,'DELETE');expect((await request(`/sessions/${a.id}/queue/missing`,undefined,'DELETE')).status).toBe(404);expect(store.queue(b.id).items).toHaveLength(0);
+    const [one,two]=await Promise.all([request(`/sessions/${a.id}/queue/resume`,{}),request(`/sessions/${a.id}/queue/resume`,{})]);expect(one.status).toBe(200);expect(two.status).toBe(200);await until(()=>!runner.active(a.id));expect(store.messages(a.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Keep']);
+  });
+  it('explicit pause survives current success and rejects protected queued attachments',async()=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>runner.permissions(s.id).length===1);await request(`/sessions/${s.id}/queue`,{content:'Pending'});await request(`/sessions/${s.id}/queue/pause`,{});
+    await writeFile(join(dir,'.env'),'PRIVATE');expect((await request(`/sessions/${s.id}/queue`,{content:'Bad',attachments:[{name:'secret',path:'.env'}]})).status).toBeGreaterThanOrEqual(400);
+    mode='text';await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'allow'});await until(()=>!runner.active(s.id));expect(store.queue(s.id).items).toHaveLength(1);expect(store.queue(s.id).paused).toBe(true);expect(store.messages(s.id).filter(m=>m.role==='user')).toHaveLength(1);
+  });
+  it.each([false,true])('keeps explicit Pause until Resume even when the live queue was emptied, removed prior item=%s',async removedPriorItem=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Initial'});
+    await until(()=>runner.permissions(s.id).length===1);
+    const permission=runner.permissions(s.id)[0];
+    if(removedPriorItem)await request(`/sessions/${s.id}/queue`,{content:'Remove before replacement'});
+    const paused=await request(`/sessions/${s.id}/queue/pause`,{});expect(paused.data.manualPause).toBe(true);
+    if(removedPriorItem){const item=store.queue(s.id).items[0];await request(`/sessions/${s.id}/queue/${item.id}`,undefined,'DELETE');}
+    expect(store.queue(s.id).items).toEqual([]);
+    const queued=await request(`/sessions/${s.id}/queue`,{content:'Held until explicit resume'});
+    expect(queued.data).toMatchObject({paused:true,manualPause:true});
+    mode='text';await request(`/sessions/${s.id}/permissions/${permission.id}`,{decision:'allow'});
+    await until(()=>!runner.active(s.id));
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Initial']);
+    expect(store.queue(s.id).items.map(item=>item.content)).toEqual(['Held until explicit resume']);
+    expect(store.queue(s.id)).toMatchObject({paused:true,manualPause:true});
+    expect(calls).toHaveLength(2);
+    const resumed=await request(`/sessions/${s.id}/queue/resume`,{});expect(resumed.status).toBe(200);expect(resumed.data.manualPause).toBe(false);
+    await until(()=>!runner.active(s.id));
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Initial','Held until explicit resume']);
+    expect(store.queue(s.id).items).toEqual([]);expect(calls).toHaveLength(3);
+  });
+  it('keeps a manual empty-queue hold through cancellation and a later direct run',async()=>{
+    mode='slow';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Cancel initial'});
+    await until(()=>calls.length===1);await request(`/sessions/${s.id}/queue/pause`,{});
+    await request(`/sessions/${s.id}/cancel`,{});await until(()=>!runner.active(s.id));
+    expect(store.queue(s.id)).toMatchObject({items:[],paused:true,manualPause:true});
+    mode='tool';await request(`/sessions/${s.id}/messages`,{content:'Later direct run'});
+    await until(()=>runner.permissions(s.id).length===1);
+    const queue=await request(`/sessions/${s.id}/queue`,{content:'Still explicitly paused'});
+    expect(queue.data).toMatchObject({paused:true,manualPause:true});
+    mode='text';await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'allow'});
+    await until(()=>!runner.active(s.id));expect(store.queue(s.id).items.map(item=>item.content)).toEqual(['Still explicitly paused']);
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Cancel initial','Later direct run']);
+  });
+  it('does not turn automatic cancellation holds into manual pauses on a future direct run',async()=>{
+    mode='slow';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Cancel initial'});
+    await until(()=>calls.length===1);await request(`/sessions/${s.id}/cancel`,{});await until(()=>!runner.active(s.id));
+    expect(store.queue(s.id).manualPause).not.toBe(true);
+    mode='tool';await request(`/sessions/${s.id}/messages`,{content:'Later direct run'});
+    await until(()=>runner.permissions(s.id).length===1);
+    const queue=await request(`/sessions/${s.id}/queue`,{content:'Automatically follow the new successful run'});
+    expect(queue.data.paused).toBe(false);
+    mode='text';await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'allow'});
+    await until(()=>!runner.active(s.id));expect(store.queue(s.id).items).toEqual([]);
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Cancel initial','Later direct run','Automatically follow the new successful run']);
+  });
+  it('cancels pending attachment preparation, reserves mutations and permits a later retry',async()=>{
+    const s=await session();history(s.id);const original=store.messages(s.id);
+    await writeFile(join(dir,'pending-snapshot.txt'),'PREPARED_ATTACHMENT');
+    let release!:()=>void,reached=false;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const originalOpen=fsPromises.open;
+    const open=vi.spyOn(fsPromises,'open').mockImplementation(async(...args)=>{
+      if(String(args[0]).endsWith('/pending-snapshot.txt')){reached=true;await gate;}
+      return originalOpen(...args);
+    });
+    syncBuiltinESMExports();
+    let pending:ReturnType<typeof request>|undefined;
+    try {
+      pending=request(`/sessions/${s.id}/messages`,{content:'Cancelled before acceptance',attachments:[{name:'pending-snapshot.txt',path:'pending-snapshot.txt'}]});
+      await until(()=>reached);
+      expect((await request(`/sessions/${s.id}/messages`,{content:'Overlapping send'})).status).toBe(409);
+      expect((await request(`/sessions/${s.id}/compact`,{})).status).toBe(409);
+      expect((await request(`/sessions/${s.id}/undo`,{})).status).toBe(409);
+      expect((await request(`/sessions/${s.id}`,undefined,'DELETE')).status).toBe(409);
+      expect((await request(`/sessions/${s.id}`,{mode:'plan'},'PATCH')).status).toBe(409);
+      expect((await request(`/sessions/${s.id}/queue/resume`,{})).status).toBe(409);
+      expect((await request(`/sessions/${s.id}/cancel`,{})).status).toBe(200);
+      expect(store.messages(s.id)).toEqual(original);expect(calls).toHaveLength(0);
+      release();const cancelled=await pending;expect(cancelled.status).toBe(409);
+      expect(store.messages(s.id)).toEqual(original);expect(store.sessions('',true)).toHaveLength(0);
+      expect(store.queue(s.id).items).toEqual([]);expect(calls).toHaveLength(0);expect(runner.active(s.id)).toBe(false);
+    } finally {
+      release();open.mockRestore();syncBuiltinESMExports();await pending?.catch(()=>{});
+    }
+    const retry=await request(`/sessions/${s.id}/messages`,{content:'Explicit retry after cancellation',attachments:[{name:'pending-snapshot.txt',path:'pending-snapshot.txt'}]});
+    expect(retry.status).toBe(202);await until(()=>!runner.active(s.id));
+    expect(calls).toHaveLength(1);expect(JSON.stringify(calls)).toContain('PREPARED_ATTACHMENT');
+    expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Earlier requirement.','Earlier requirement.','Explicit retry after cancellation']);
+  });
+  it('rejects a pending queued snapshot cancelled during A even if B starts before the read finishes',async()=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Run A'});
+    await until(()=>runner.permissions(s.id).length===1);
+    await writeFile(join(dir,'late-queue.txt'),'SNAPSHOT_FROM_A');
+    let release!:()=>void,reached=false;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),originalOpen=fsPromises.open;
+    const open=vi.spyOn(fsPromises,'open').mockImplementation(async(...args)=>{
+      if(String(args[0]).endsWith('/late-queue.txt')){reached=true;await gate;}
+      return originalOpen(...args);
+    });syncBuiltinESMExports();
+    let pending:ReturnType<typeof request>|undefined;
+    try {
+      pending=request(`/sessions/${s.id}/queue`,{content:'Cancelled follow-up from A',attachments:[{name:'late-queue.txt',path:'late-queue.txt'}]});
+      await until(()=>reached);expect(store.queue(s.id).items).toEqual([]);
+      expect((await request(`/sessions/${s.id}/cancel`,{})).status).toBe(200);await until(()=>!runner.active(s.id));
+      expect((await request(`/sessions/${s.id}/messages`,{content:'Run B'})).status).toBe(202);
+      await until(()=>runner.permissions(s.id).length===1);
+      release();const result=await pending;expect(result.status).toBe(409);
+      expect(store.queue(s.id).items).toEqual([]);
+      mode='text';await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'allow'});
+      await until(()=>!runner.active(s.id));
+      expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Run A','Run B']);
+      expect(calls).toHaveLength(3);expect(JSON.stringify(calls)).not.toContain('SNAPSHOT_FROM_A');
+    } finally {release();open.mockRestore();syncBuiltinESMExports();await pending?.catch(()=>{});}
+    const retry=await request(`/sessions/${s.id}/queue`,{content:'Explicit retry of follow-up',attachments:[{name:'late-queue.txt',path:'late-queue.txt'}]});
+    expect(retry.status).toBe(202);expect(retry.data.paused).toBe(true);
+    expect((await request(`/sessions/${s.id}/queue/resume`,{})).status).toBe(200);await until(()=>!runner.active(s.id));
+    expect(calls).toHaveLength(4);expect(JSON.stringify(calls.at(-1))).toContain('SNAPSHOT_FROM_A');
+    expect(store.messages(s.id).filter(m=>m.role==='user').at(-1)?.content).toBe('Explicit retry of follow-up');
+  });
+  it('holds a queued snapshot for review if its original run completes and another run starts during the read',async()=>{
+    mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Successful run A'});
+    await until(()=>runner.permissions(s.id).length===1);const firstPermission=runner.permissions(s.id)[0];
+    await writeFile(join(dir,'changed-run-queue.txt'),'ORIGINAL_RUN_SNAPSHOT');
+    let release!:()=>void,reached=false;
+    const gate=new Promise<void>(resolve=>{release=resolve;}),originalOpen=fsPromises.open;
+    const open=vi.spyOn(fsPromises,'open').mockImplementation(async(...args)=>{
+      if(String(args[0]).endsWith('/changed-run-queue.txt')){reached=true;await gate;}
+      return originalOpen(...args);
+    });syncBuiltinESMExports();
+    let pending:ReturnType<typeof request>|undefined;
+    try {
+      pending=request(`/sessions/${s.id}/queue`,{content:'Late follow-up bound to A',attachments:[{name:'changed-run-queue.txt',path:'changed-run-queue.txt'}]});
+      await until(()=>reached);mode='text';await request(`/sessions/${s.id}/permissions/${firstPermission.id}`,{decision:'allow'});
+      await until(()=>!runner.active(s.id));mode='tool';
+      expect((await request(`/sessions/${s.id}/messages`,{content:'Independent run B'})).status).toBe(202);
+      await until(()=>runner.permissions(s.id).length===1);
+      release();const result=await pending;expect(result.status).toBe(202);expect(result.data.paused).toBe(true);
+      expect(result.data.items[0]).toMatchObject({content:'Late follow-up bound to A',attachments:[{content:'ORIGINAL_RUN_SNAPSHOT'}]});
+      mode='text';await request(`/sessions/${s.id}/permissions/${runner.permissions(s.id)[0].id}`,{decision:'allow'});
+      await until(()=>!runner.active(s.id));expect(calls).toHaveLength(4);
+      expect(store.messages(s.id).filter(m=>m.role==='user').map(m=>m.content)).toEqual(['Successful run A','Independent run B']);
+      expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items).toHaveLength(1);
+    } finally {release();open.mockRestore();syncBuiltinESMExports();await pending?.catch(()=>{});}
+    await request(`/sessions/${s.id}/queue/resume`,{});await until(()=>!runner.active(s.id));
+    expect(calls).toHaveLength(5);expect(store.queue(s.id).items).toEqual([]);
+    expect(store.messages(s.id).filter(m=>m.role==='user').at(-1)?.content).toBe('Late follow-up bound to A');
   });
   it('never follows imported or legacy attachment paths on continuation',async()=>{
     await writeFile(join(dir,'private-notes.txt'),'LOCAL_ONLY_SENTINEL');

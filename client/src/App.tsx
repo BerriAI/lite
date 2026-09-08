@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Search, Settings2, Shield, Sparkles, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
-import type { Attachment, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
-import { api, applyEvent, errorMessage, patch, post, query } from './api';
+import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
+import { api, applyEvent, errorMessage, patch, post, query, useSessionDraft } from './api';
 import { Composer, type Selection } from './Composer';
 import { Conversation } from './Conversation';
 import { Settings } from './Settings';
@@ -24,7 +24,10 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(readSessionHash);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [selection, setSelection] = useState<Selection>({ providerId: '', model: '', mode: 'build', permissionMode: 'ask' });
-  const [text, setText] = useState('');
+  const { draft, notice: draftNotice, setText, setAttachments, clearSubmitted, prepareDelete } = useSessionDraft(activeId);
+  const { text, attachments } = draft;
+  const [queueBusy, setQueueBusy] = useState(false);
+  const queueOperation = useRef(false);
   const [search, setSearch] = useState('');
   const [archived, setArchived] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -51,6 +54,7 @@ export default function App() {
   const sidebarRef = useRef<HTMLElement>(null);
   const currentId = useRef(activeId); currentId.current = activeId;
   const eventJournal = useRef<RunEvent[]>([]);
+  const selectionRequest = useRef(0);
   const settingsRef = useRef(settings); settingsRef.current = settings;
   const archiveRef = useRef(archived); archiveRef.current = archived;
   const running = detail?.session.status === 'running' || detail?.session.status === 'waiting';
@@ -77,7 +81,8 @@ export default function App() {
   }, []);
   const navigate = useCallback((id: string | null) => {
     window.history.pushState(null, '', id ? `#session/${id}` : window.location.pathname + window.location.search);
-    setActiveId(id); setSidebarOpen(false); setSessionMenu(false); setError(''); setText('');
+    if (currentId.current !== id) { selectionRequest.current++; setDetail(null); }
+    currentId.current = id; setActiveId(id); setSidebarOpen(false); setSessionMenu(false); setError('');
   }, []);
   const newSession = useCallback(() => {
     pendingSession.current = null;
@@ -97,7 +102,7 @@ export default function App() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (settings) void refreshSessions().catch(e => setError(errorMessage(e))); }, [archived, refreshSessions, Boolean(settings)]);
   useEffect(() => {
-    function change() { setActiveId(readSessionHash()); setDetail(null); setError(''); }
+    function change() { const id = readSessionHash(); if (currentId.current !== id) { selectionRequest.current++; setDetail(null); } currentId.current = id; setActiveId(id); setError(''); }
     window.addEventListener('hashchange', change); window.addEventListener('popstate', change);
     return () => { window.removeEventListener('hashchange', change); window.removeEventListener('popstate', change); };
   }, []);
@@ -191,10 +196,15 @@ export default function App() {
   }
   async function changeSelection(next: Selection) {
     if (running) return;
-    const previous = selection; setSelection(next);
-    if (activeId) {
-      try { const session = await patch<Session>(`/sessions/${activeId}`, next); setDetail(d => d ? { ...d, session } : d); }
-      catch (e) { setSelection(previous); setError(errorMessage(e)); }
+    const previous = selection, id = activeId, request = ++selectionRequest.current;
+    setSelection(next);
+    if (id) {
+      try {
+        const session = await patch<Session>(`/sessions/${id}`, next);
+        if (currentId.current === id && selectionRequest.current === request) setDetail(d => d?.session.id === id ? { ...d, session } : d);
+      } catch (e) {
+        if (currentId.current === id && selectionRequest.current === request) { setSelection(previous); setError(errorMessage(e)); }
+      }
     }
   }
   async function send(content: string, attachments: Attachment[]) {
@@ -209,9 +219,10 @@ export default function App() {
         await patch(`/sessions/${id}`, selection);
       }
       await post(`/sessions/${id}/messages`, { content, attachments });
+      clearSubmitted(draft);
       pendingSession.current = null;
-      if (!activeId) navigate(id);
-      else await refreshDetail(id);
+      if (!activeId && currentId.current === null) navigate(id);
+      else if (currentId.current === id) void refreshDetail(id).catch(e => setError(`Message sent, but refreshing the session failed: ${errorMessage(e)}`));
       return true;
     } catch (e) {
       // Keep the same composer mounted after a failed request so attachments and draft survive.
@@ -219,12 +230,57 @@ export default function App() {
       return false;
     }
   }
+  async function queueMessage(content: string, attachments: Attachment[]) {
+    const id = activeId;
+    if (!id || queueOperation.current) return false;
+    queueOperation.current = true; setQueueBusy(true); setError('');
+    const cursor = detail?.lastEventId ?? 0;
+    try {
+      const queue = await post<QueueState>(`/sessions/${id}/queue`, { content, attachments });
+      clearSubmitted(draft);
+      // The detail cursor survives journal pruning; a bare response must not replace newer SSE/snapshot state.
+      setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) <= cursor ? { ...current, queue } : current);
+      if (currentId.current === id) {
+        setToast(queue.paused ? 'Message queued. Choose Resume queue when ready.' : 'Message added to queue');
+        void refreshDetail(id).catch(e => setError(`Message queued, but refreshing failed: ${errorMessage(e)}`));
+      }
+      return true;
+    } catch (e) {
+      if (currentId.current === id) {
+        setError(errorMessage(e));
+        void refreshDetail(id).catch(() => {});
+      }
+      return false;
+    } finally { queueOperation.current = false; setQueueBusy(false); }
+  }
+  async function queueAction(action: 'pause' | 'resume' | 'remove', queueId?: string) {
+    const id = activeId;
+    if (!id || queueOperation.current || (action === 'remove' && !queueId)) return;
+    queueOperation.current = true; setQueueBusy(true); setError('');
+    const cursor = detail?.lastEventId ?? 0;
+    try {
+      const queue = action === 'remove'
+        ? await api<QueueState>(`/sessions/${id}/queue/${encodeURIComponent(queueId!)}`, { method: 'DELETE' })
+        : await post<QueueState>(`/sessions/${id}/queue/${action}`);
+      // The detail cursor survives journal pruning; a bare response must not replace newer SSE/snapshot state.
+      setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) <= cursor ? { ...current, queue } : current);
+      if (currentId.current === id) void refreshDetail(id).catch(e => setError(errorMessage(e)));
+    } catch (e) { if (currentId.current === id) setError(errorMessage(e)); }
+    finally { queueOperation.current = false; setQueueBusy(false); }
+  }
   function saveSettings(next: SettingsType) {
     setSettings(next); setRefreshKey(v => v + 1);
     if (!activeId) setSelection(s => ({ ...s, providerId: next.defaultProvider, model: next.defaultModel, permissionMode: next.permissionMode }));
   }
   function askDelete(session: Session) {
-    setConfirm({ title: 'Delete this session?', description: `“${session.title}” and its conversation history will be permanently removed. Your workspace files will not be deleted.`, label: 'Delete session', danger: true, action: async () => { await api(`/sessions/${session.id}`, { method: 'DELETE' }); if (activeId === session.id) newSession(); await refreshSessions(); setToast('Session deleted'); } });
+    const clearDeletedDraft = prepareDelete(session.id);
+    setConfirm({ title: 'Delete this session?', description: `“${session.title}” and its conversation history will be permanently removed. Your workspace files will not be deleted.`, label: 'Delete session', danger: true, action: async () => {
+      await api(`/sessions/${session.id}`, { method: 'DELETE' });
+      const draftWarning = clearDeletedDraft();
+      if (currentId.current === session.id) newSession();
+      if (draftWarning) setError(`Session deleted. ${draftWarning}`);
+      await refreshSessions(); setToast('Session deleted');
+    } });
   }
   function askUndo() {
     if (!activeId) return;
@@ -279,10 +335,10 @@ export default function App() {
       <div className="main-panels"><div className={`main-stage ${!activeId ? 'welcome-stage' : ''}`}>
         {loading ? <div className="app-loading"><Logo /><SpeedRail active /><p>Opening your workspace…</p></div> : !settings ? <EmptyState icon={<Terminal size={30} />} title="Let’s get connected.">The local server is not available. Check that Lite is running, then retry the connection.<button className="button primary" onClick={() => void load()}>Try again</button></EmptyState> : activeId ? <>
           {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} onUndo={askUndo} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer"><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onCancel={() => void act(async () => { await post(`/sessions/${activeId}/cancel`); await refreshDetail(activeId); })} running={running} disabled={busy} workspace={workspace} text={text} setText={setText} onSettings={() => setSettingsOpen(true)} /></div>}
+          {detail && <div className="chat-composer"><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void act(async () => { await post(`/sessions/${activeId}/cancel`); await refreshDetail(activeId); })} running={running} disabled={busy} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
-          <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onCancel={() => {}} running={false} disabled={busy} welcome workspace={workspace} text={text} setText={setText} onSettings={() => setSettingsOpen(true)} /></div>
+          <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onCancel={() => {}} running={false} disabled={busy} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>
           <div className="suggestions">{suggestions.map(({ Icon, label, description, prompt }) => <button key={label} onClick={() => { setText(prompt); document.getElementById('message-input')?.focus(); }}><span className="suggestion-icon"><Icon size={17} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight className="suggestion-arrow" size={14} /></button>)}</div>
           {(!provider?.configured && provider?.baseUrl && !/localhost|127\.0\.0\.1/.test(provider.baseUrl)) && <button className="setup-hint" onClick={() => setSettingsOpen(true)}><Shield size={13} />Connect your provider to get started<ArrowRight size={13} /></button>}
           <div className="welcome-footnote"><span className="mini-speed"><i /><i /><i /></span>Powered by your models. Grounded in your workspace.</div>

@@ -36,7 +36,8 @@ npm start
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - MCP tools over local stdio or remote Streamable HTTP, with SSE fallback.
 - LiteLLM/OpenAI-compatible APIs, native Anthropic API keys, and explicit ChatGPT connection where account/provider policies permit it.
-- CLI task execution against the same running backend.
+- A persistent FIFO follow-up queue with explicit Pause/Resume/remove, plus separate per-session text and attachment drafts.
+- CLI task execution against the same running backend, strict option validation, NDJSON events, and remote cancellation on interrupts.
 
 This is an actively developed foundation, not a claim that every feature in every coding product is implemented. See [coverage and limitations](docs/coverage.md) for the tested scope.
 
@@ -51,7 +52,15 @@ node bin/lite.mjs models
 node bin/lite.mjs export SESSION_ID > session.json
 ```
 
-`run` connects to an already running server. Use `--url` to select another local Lite server and `--json` for newline-delimited events. In a noninteractive process, permission requests are denied rather than hanging. `--auto` deliberately allows edits and shell commands for that session.
+`run` connects to an already running server. Use `--url` to select another local Lite server and `--json` for newline-delimited events. In a noninteractive process, permission requests are denied rather than hanging. `--auto` deliberately allows edits and shell commands for a new session. An existing `--session` keeps its saved model, provider, mode, and permissions; change those in the app rather than passing conflicting flags. Use `--` before a prompt that begins with a dash.
+
+Provider errors produce a nonzero exit status, including with `--json`. Ctrl+C/SIGTERM cancels the remote run and reports the session ID for resuming later. A disconnected event stream reports an error rather than silently replaying a task.
+
+## Follow-ups and drafts
+
+During a response, **Queue** or Enter appends a follow-up; Shift+Enter adds a newline. Queued messages run in order only after an uninterrupted successful response. Stop, provider errors, denied/failed tools, and server restarts hold the remaining queue for explicit **Resume**. **Pause** holds future items without stopping the current response; **Stop** also cancels that response. Remove an item before it starts. Queues are local to each session, limited to 20 items and 16 MiB of serialized content, and file context is snapshotted when queued.
+
+Draft text and attachments stay separate for each session and are saved in this browser when storage allows it. Drafts are not shared across devices or browsers. Large drafts remain in memory with a warning when they exceed the 1 MiB per-draft / 2 MiB total browser-storage budget. File uploads allow up to six files, 3 MiB per file, and 200,000 characters per text file; selected file context sent to the model is bounded separately. An accepted message clears only the draft that was submitted, not newer typing.
 
 ## Providers and subscriptions
 
@@ -90,4 +99,6 @@ npm run test:e2e
 npm run build
 ```
 
-The unit/integration suite uses temporary workspaces and mock provider/MCP servers, including streaming, permissions, cancellation, filesystem boundaries, and persistence. Browser tests run against an isolated fixture server. Real-provider smoke tests are opt-in and require your own configured gateway.
+The unit/integration suite uses temporary workspaces and mock provider/MCP servers, including streaming, permissions, cancellation, filesystem boundaries, persistence, and spawned CLI processes. Browser tests run against an isolated fixture server using installed Google Chrome. Real-provider smoke tests are opt-in and require your own configured gateway.
+
+The production entrypoint, CLI server lifecycle, persisted tool workflow, and native PTY have also been exercised on exact Node 22.13.0 (macOS arm64), not merely bundled. Re-run that opt-in compatibility test after building with `LITE_TEST_NODE=/absolute/path/to/node22.13 npm test -- tests/runtime.test.ts`. It copies the built installation into a temporary directory and does not inherit provider credentials. Other runtime/platform combinations need their own validation.

@@ -17,13 +17,17 @@ This document distinguishes implemented behavior from planned work. A feature's 
 | Provider auth | Server-side API keys; explicit ChatGPT device/browser protocol | Mock auth/provider tests; no live subscription account validation |
 | Undo | Session mutation lock, all-target preflight, per-file content/inode rechecks, protected-path guard, retained pending snapshots on partial conflicts | API/tools tests, including late edits and symlink/inode replacement; not per-turn undo/redo or cross-file atomic |
 | History boundaries | Snapshot-only attachments and inert imports; forks trim incomplete tool groups | API/store/context tests |
-| CLI | Serve, run, sessions, models, export, JSON events | Actual help and real gateway run; fuller automation tests pending |
-| UI | React workspace, sessions, composer, model/settings/file/review/terminal controls | Fifteen browser scenarios: streaming reload/isolation, permissions, fork, inert import/export, terminal lifecycle, settings and responsive layouts |
+| Follow-up queue | Persistent FIFO snapshots, Pause/Resume/remove, success-only drain, explicit restart/error/cancellation holds; transactional acceptance | Store/API tests, six browser queue/draft scenarios, actual gateway browser write → two queued follow-ups with no duplicate turns |
+| Drafts | Session-isolated browser text/attachment persistence with bounded storage, memory-only fallback warning, no stale-response clearing | Browser switching/reload/submission/failure scenarios |
+| CLI | Serve, run, sessions, models, export, JSON events, strict flags, error exit codes and interrupt cancellation | 54 spawned CLI tests; actual gateway run; production CLI lifecycle on Node 22.13.0 |
+| Production runtime | Built server/static UI, persisted streaming tool workflow, CLI restart and native PTY | Opt-in isolated production test passed on exact Node 22.13.0, macOS arm64 |
+| UI | React workspace, sessions, composer, model/settings/file/review/terminal/queue controls | 21 browser scenarios including streaming reload/isolation, permissions, queue/drafts, fork, inert import/export, terminal lifecycle, settings and responsive layouts |
 
 ## Known gaps and next work
 
 - Full standalone TUI, IDE/ACP integrations, and remote authenticated attach are not implemented. Terminal shells are process-local, macOS/Linux only, with bounded raw replay rather than a full-screen snapshot.
-- Message queue/steering and proactive token-budget compaction are not yet implemented. Context recovery is reactive to explicit overflow, once per run; very large latest turns still need a larger model or smaller attachments.
+- Mid-response steering and proactive token-budget compaction are not yet implemented. The queue sends a separate next turn, never rewrites an active request. Context recovery is reactive to explicit overflow, once per run; very large latest turns still need a larger model or smaller attachments.
+- Queues do not replay an already accepted turn after a process restart. Pending items require explicit Resume. Draft storage is browser-local convenience, not durable shared storage; large drafts or storage failures are shown as memory-only.
 - Configurable agents/subagents, rich permission pattern rules, skills, LSP diagnostics, and formatters are not yet integrated.
 - Undo is session-wide recorded-file restoration, not per-user-turn history undo/redo. Shell changes are not captured.
 - MCP OAuth, resources/prompts, tool-list updates, and automatic reconnection require additional work.

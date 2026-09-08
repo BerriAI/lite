@@ -7,7 +7,7 @@ import { Store } from './store.js';
 import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
 import { listModels } from './providers.js';
-import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath, assertReadablePath } from './tools.js';
+import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
 import type { Message, Settings } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional()});
@@ -75,7 +75,7 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),queue:store.queue(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
   app.patch('/api/sessions/:id',(req,res)=>{
     const patch=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional()}).parse(req.body);
     if(patch.model||patch.providerId||patch.mode||patch.permissionMode)runner.assertIdle(req.params.id);
@@ -93,11 +93,23 @@ export function createApp(options:AppOptions = {}) {
     const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000);heartbeat.unref();
     req.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });
+  const snapshotInput=async(id:string,body:unknown)=>{
+    const input=inputSchema.parse(body),session=store.session(id);
+    for(const attachment of input.attachments||[])if(attachment.path){const file=await readFile(session.workspace,attachment.path);attachment.content=file.content.slice(0,50000)+(file.truncated?'\n[Attachment truncated]':'');}
+    return input;
+  };
   app.post('/api/sessions/:id/messages',async(req,res)=>{
-    const input=inputSchema.parse(req.body);const session=store.session(req.params.id);
-    for(const attachment of input.attachments||[])if(attachment.path){await assertReadablePath(session.workspace,attachment.path);const file=await readFile(session.workspace,attachment.path);attachment.content=file.content.slice(0,50000)+(file.truncated?'\n[Attachment truncated]':'');}
-    runner.start(req.params.id,input.content,input.attachments);res.status(202).json({ok:true});
+    const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body));
+    res.status(202).json({ok:true,messageId});
   });
+  app.get('/api/sessions/:id/queue',(req,res)=>res.json(store.queue(req.params.id)));
+  app.post('/api/sessions/:id/queue',async(req,res)=>{
+    const queue=await runner.submitQueued(req.params.id,()=>snapshotInput(req.params.id,req.body));
+    res.status(202).json(queue);
+  });
+  app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
+  app.post('/api/sessions/:id/queue/pause',(req,res)=>res.json(runner.pauseQueue(req.params.id)));
+  app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/permissions/:requestId',(req,res)=>{const{decision}=z.object({decision:z.enum(['allow','always','deny'])}).parse(req.body);runner.decide(req.params.id,req.params.requestId,decision);res.json({ok:true});});
   app.get('/api/sessions/:id/tool-grants',(req,res)=>res.json({tools:store.toolGrants(req.params.id).map(g=>g.tool)}));
