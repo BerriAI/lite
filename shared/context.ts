@@ -12,4 +12,7 @@ export interface ContextSnapshot {
   uncertain: boolean;
   action: 'continue' | 'compact';
   reason?: string;
+  /** Observability only: whether the cacheable prefix (system text + tool
+   * schemas) changed since this session's previous request, and why. */
+  cache?: import('./cache.js').CacheDiagnostics;
 }

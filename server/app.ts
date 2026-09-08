@@ -208,6 +208,9 @@ export function createApp(options:AppOptions = {}) {
       try {return direction==='recover'?await runner.history.recover(id):await runner.history[direction](id,checkpointId!);}
       finally {publishHistory(id);}
     });
+    // Undo/redo rewrite the provider-visible history; the next request should
+    // attribute its prompt-cache miss to that rather than reporting a clean prefix.
+    if(direction!=='recover')runner.notePrefixHistoryChange(id,'history_edited');
     res.json(state);
   });
   app.post('/api/sessions/:id/undo',async(req,res)=>{

@@ -6,6 +6,8 @@ import { executeTool, isReadOnlyTool, toolDefinitions, historySearchTool, memory
 import { SearchIndex, type SearchKind } from './search.js';
 import { Memory } from './memory.js';
 import { renderEnvelope } from './envelope.js';
+import { captureShape, compareShape } from './cache.js';
+import type { PrefixChangeReason, PrefixShape } from '../shared/cache.js';
 import { decide, validateRuleSet } from './permissions.js';
 import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
@@ -37,6 +39,12 @@ export class Runner {
   private searchWarm = false;
   private get searchIndex() { return this.searchIndexInstance ??= new SearchIndex(this.store); }
   private get memory() { return this.memoryInstance ??= new Memory(this.store); }
+  // Process-local cache observability: previous request prefix shape and any
+  // provider-visible history rewrites since it. Never persisted; first request
+  // after a restart honestly reports first_turn.
+  private prefixShapes = new Map<string, PrefixShape>();
+  private prefixHistoryReasons = new Map<string, Set<PrefixChangeReason>>();
+  notePrefixHistoryChange(id: string, reason: PrefixChangeReason) { (this.prefixHistoryReasons.get(id) ?? this.prefixHistoryReasons.set(id, new Set()).get(id)!).add(reason); }
   private operations = new Set<string>();
   private preparations = new Map<string, AbortController>();
   private queuePreparations = new Map<string, Set<AbortController>>();
@@ -500,6 +508,14 @@ export class Runner {
         try {retainedMessages=this.providerMessages(id,planCompaction(original,{retainLatestTurn:true,maxSourceChars:limits.maxSourceChars}).retained);} catch {/* No safe older prefix is advisory only. */}
       }
       message.context=assessContext({provider,model:session.model,messages:history,system,tools},{retainedMessages,autoCompactionAttempted});
+      // Cache observability: compare this request's cacheable prefix against the
+      // session's previous request and record why it changed. Children track
+      // their own child session id, so a researcher never muddies the parent.
+      {
+        const shape=captureShape(system,tools), drained=this.prefixHistoryReasons.get(id);
+        message.context.cache=compareShape(this.prefixShapes.get(id),shape,[...(drained??[])]);
+        this.prefixShapes.set(id,shape);drained?.clear();
+      }
       if(run.child&&message.context.action==='compact')throw conflict('The research task reached its context budget.');
       if(message.context.action==='compact') {
         autoCompactionAttempted=true;
@@ -527,7 +543,10 @@ export class Runner {
           if (message.activity) { message.activity='';this.save(message); }
           if (chunk.type === 'text') { message.content += chunk.text || ''; this.persist(message); this.bus.emit(id,'delta',{messageId:message.id,delta:chunk.text || ''}); }
           else if (chunk.type === 'reasoning') { message.reasoning = (message.reasoning || '') + (chunk.text || ''); this.persist(message); this.bus.emit(id,'reasoning',{messageId:message.id,delta:chunk.text || ''}); }
-          else if (chunk.type === 'usage' && chunk.usage) message.usage = {...chunk.usage,durationMs:Date.now()-startedAt};
+          else if (chunk.type === 'usage' && chunk.usage) {
+            message.usage = {...chunk.usage,durationMs:Date.now()-startedAt};
+            if(message.context?.cache)message.context.cache={...message.context.cache,inputTokens:chunk.usage.inputTokens,...(chunk.usage.cachedTokens!==undefined?{cachedTokens:chunk.usage.cachedTokens}:{})};
+          }
           else if (chunk.type === 'metadata' && chunk.metadata) message.providerMetadata = {...message.providerMetadata,...chunk.metadata};
           else if (chunk.type === 'tool' && chunk.tool) {
             const t = chunk.tool, current = fragments.get(t.index) || {id:'',name:'',arguments:''};
@@ -731,6 +750,7 @@ export class Runner {
       if(!hasMeaningfulSavings(before,candidate.estimatedInputTokens)||candidate.contextWindow===undefined||candidate.estimatedInputTokens+candidate.outputReserve>candidate.contextWindow)throw new Error('The summary would not safely reduce this request. Original history was preserved.');
     }
     this.history.compact(id,messages);
+    this.notePrefixHistoryChange(id,'history_compacted');
     run.progressMessage=undefined;
     // Once compaction commits, an event failure must not make the caller resend
     // stale original history or describe a committed replacement as unchanged.

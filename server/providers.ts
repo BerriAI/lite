@@ -440,8 +440,13 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     if (!provider.apiKey) throw new ProviderError('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
     headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
     const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
-    body = { model, max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model), ...(instructions ? { system: instructions } : {}),
-      ...(tools?.length ? { tools: tools.map(t => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })) } : {}) };
+    // Anthropic prompt caching is opt-in per request: breakpoints on the last
+    // tool schema and the system block mark the stable prefix as cacheable.
+    // Harmless when the provider or gateway has caching disabled.
+    const anthropicTools = tools?.length ? tools.map((t, index) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters, ...(index === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) : undefined;
+    body = { model, max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model),
+      ...(instructions ? { system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }] } : {}),
+      ...(anthropicTools ? { tools: anthropicTools } : {}) };
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
   } else if (provider.kind === 'codex') {
     Object.assign(headers, codexHeaders(await getCodexCredential(provider)));
@@ -453,7 +458,12 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     url = `${CODEX_BASE}/responses`;
   } else {
     if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
-    body = { model, messages: [...(system ? [{ role: 'system', content: system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
+    // Anthropic-family models behind an OpenAI-compatible gateway need the same
+    // explicit cache breakpoint, carried in a content part per the gateway
+    // convention. Scoped to models that require opt-in caching; other models
+    // keep plain string content so strict endpoints see an unmodified request.
+    const optInCache = /\bclaude\b|anthropic/i.test(model);
+    body = { model, messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
       stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
     url = endpoint(provider.baseUrl, 'chat/completions');
   }

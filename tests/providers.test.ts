@@ -248,7 +248,24 @@ describe('provider protocol', () => {
     expect(received.req.headers['x-api-key']).toBe('test-secret-never-expose');
     expect(received.body.messages[1]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: 'result' }] });
     expect(received.body.tools[0].input_schema).toEqual({ type: 'object', properties: {} });
+    // Prompt-cache breakpoints: the system block and the LAST tool schema carry
+    // cache_control so the stable prefix is cacheable; earlier tools stay clean.
+    expect(received.body.system).toEqual([{ type: 'text', text: 'system', cache_control: { type: 'ephemeral' } }]);
+    expect(received.body.tools.at(-1).cache_control).toEqual({ type: 'ephemeral' });
     expect(chunks.at(-1)?.usage).toEqual({ inputTokens: 17, outputTokens: 6, cachedTokens: 4 });
+  });
+  it('marks the openai-route system block cacheable only for anthropic-family models', async () => {
+    const bodies: any[] = [];
+    const base = await mock((_req, res, body) => {
+      bodies.push(body);
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    });
+    for (const model of ['claude-haiku-4-5-20251001', 'gpt-test-model']) {
+      for await (const chunk of streamCompletion({ provider: provider(base), model, system: 'stable system', messages: [{ role: 'user', content: 'hi' }], signal: new AbortController().signal })) void chunk;
+    }
+    expect(bodies[0].messages[0]).toEqual({ role: 'system', content: [{ type: 'text', text: 'stable system', cache_control: { type: 'ephemeral' } }] });
+    expect(bodies[1].messages[0]).toEqual({ role: 'system', content: 'stable system' });
   });
   it('refuses Anthropic subscriptions without an API key', async () => {
     await expect(collect({ ...provider('https://api.anthropic.com'), kind: 'anthropic', apiKey: '' })).rejects.toThrow('Subscription login is not supported');
