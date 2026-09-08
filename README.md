@@ -15,7 +15,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open **http://localhost:3210**. Choose a model, pick a workspace in Settings, and send a task. Build mode asks before editing files or executing commands. Plan mode exposes only read-only tools.
+Open **http://localhost:3210**. Choose a model, pick a workspace in Settings, and send a task. Build mode asks before editing files or executing commands. Plan mode exposes read-only tools and user questions, not workspace mutations.
 
 For a production build:
 
@@ -28,6 +28,7 @@ npm start
 
 - Streaming conversations, visible reasoning, Markdown/code copying, tool activity, and cancellation.
 - Build and read-only Plan modes, explicit tool approvals, remembered per-session tool grants with reset, and opt-in automatic approval.
+- Structured agent questions with deliberate option/custom replies, browser reload recovery, and interactive CLI input—separate from tool approval.
 - Bounded transient HTTP retries, repeated-tool-loop detection, and one-shot automatic context-overflow recovery that preserves the latest task and archives older history.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
@@ -61,6 +62,14 @@ Provider errors produce a nonzero exit status, including with `--json`. Ctrl+C/S
 During a response, **Queue** or Enter appends a follow-up; Shift+Enter adds a newline. Queued messages run in order only after an uninterrupted successful response. Stop, provider errors, denied/failed tools, and server restarts hold the remaining queue for explicit **Resume**. **Pause** holds future items without stopping the current response; **Stop** also cancels that response. Remove an item before it starts. Queues are local to each session, limited to 20 items and 16 MiB of serialized content, and file context is snapshotted when queued.
 
 Draft text and attachments stay separate for each session and are saved in this browser when storage allows it. Drafts are not shared across devices or browsers. Large drafts remain in memory with a warning when they exceed the 1 MiB per-draft / 2 MiB total browser-storage budget. File uploads allow up to six files, 3 MiB per file, and 200,000 characters per text file; selected file context sent to the model is bounded separately. An accepted message clears only the draft that was submitted, not newer typing.
+
+## Questions from the agent
+
+When the model needs a decision, **Question from agent** offers choices and a **Custom reply**. Nothing is selected or sent automatically: choose an option or enter text, then **Submit answer**. Answers are part of the current turn, not another user message, and do not grant tool permissions. Questions work in Build and Plan, including with automatic tool approval. You can keep a separate composer draft or queue a follow-up while answering.
+
+Reloading the browser restores a live pending question; an answer from another tab removes the old controls. An accepted answer and its tool result are saved together, and retrying that same answer cannot continue the model twice. **Stop response** cancels an unanswered question and holds queued follow-ups. A server restart interrupts unanswered questions rather than replaying the model; inspect and recover the interrupted history before continuing. Forks, imports, undo, and redo never revive question controls. Questions currently support one selection or one custom reply, not multi-select forms. Answers are sent to the provider—never include credentials.
+
+The CLI prints numbered choices to stderr while continuing to consume live events. Enter a number or custom text; prefix a numeric custom reply with `text:`. With `--json`, stdout remains NDJSON. Noninteractive input cannot answer questions, even with `--auto`: the CLI cancels the run and exits nonzero with instructions to use the app or an interactive terminal. EOF and interrupts also cancel instead of choosing for you.
 
 ## Undo, redo, and recovery
 

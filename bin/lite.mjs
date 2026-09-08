@@ -57,6 +57,12 @@ function parse() {
   }
 }
 
+// Model-authored prompts and output are data, never terminal escape sequences.
+function terminalText(value, multiline = false) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, character =>
+    multiline && (character === '\n' || character === '\t') ? character : `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 async function api(path, body, signal) {
   const response = await fetch(`${base}/api${path}`, {
     method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' },
@@ -64,7 +70,7 @@ async function api(path, body, signal) {
   });
   let data;
   try { data = await response.json(); } catch { throw new Error(`The Lite server returned an invalid response (HTTP ${response.status}).`); }
-  if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { status: response.status });
   return data;
 }
 
@@ -76,13 +82,44 @@ async function runPrompt(prompt) {
   });
   const path = `/sessions/${encodeURIComponent(session.id)}`;
   const controller = new AbortController();
-  let cancellation, interrupted = false, started = false, finished = false, reported = false;
+  let cancellation, interrupted = false, started = false, finished = false, reported = false, activeInput;
+  const inputTasks = new Set(), seenQuestions = new Set(), seenPermissions = new Set();
   const reportSession = () => { if (!reported) { process.stderr.write(`\nSession: ${session.id}\n`); reported = true; } };
-  const interrupt = signal => {
+  const dismissInput = (kind, id) => {
+    if (!activeInput || (kind && (activeInput.kind !== kind || activeInput.id !== id))) return;
+    const input = activeInput; activeInput = undefined;
+    input.controller.abort(); input.rl.close();
+  };
+  const cancelRun = (code, message) => {
     if (interrupted) return;
-    interrupted = true; process.exitCode = signal === 'SIGTERM' ? 143 : 130;
-    controller.abort();
+    interrupted = true; process.exitCode = code;
+    if (message) process.stderr.write(`\n${message}\n`);
+    controller.abort(); dismissInput();
     cancellation = api(`${path}/cancel`, {}, AbortSignal.timeout(5000)).catch(() => { process.stderr.write('\nCould not confirm cancellation. Check the session in Lite.\n'); });
+  };
+  const interrupt = signal => cancelRun(signal === 'SIGTERM' ? 143 : 130);
+  // Read input in a separate task: the SSE reader must continue consuming resolutions/done.
+  const promptInput = (kind, id, ask) => {
+    dismissInput();
+    const input = { kind, id, controller: new AbortController(), rl: createInterface({ input: process.stdin, output: process.stderr }) };
+    activeInput = input;
+    input.rl.once('close', () => {
+      if (activeInput === input && !input.controller.signal.aborted) cancelRun(1, 'Input closed before an answer was submitted. The run was cancelled; use Lite or an interactive terminal to continue.');
+    });
+    input.rl.once('SIGINT', () => interrupt('SIGINT'));
+    const task = (async () => {
+      try { await ask(input.rl, input.controller.signal); }
+      catch (error) {
+        if (!input.controller.signal.aborted && !interrupted) {
+          if (error.status === 409) process.stderr.write('\nThis request was already resolved elsewhere. Waiting for the current run.\n');
+          else cancelRun(1, `Could not submit the answer: ${terminalText(error.message)}. The run was cancelled; check the session in Lite.`);
+        }
+      } finally {
+        if (activeInput === input) dismissInput();
+        else { input.controller.abort(); input.rl.close(); }
+      }
+    })();
+    inputTasks.add(task); void task.finally(() => inputTasks.delete(task));
   };
   const onInt = () => interrupt('SIGINT'), onTerm = () => interrupt('SIGTERM');
   process.once('SIGINT', onInt); process.once('SIGTERM', onTerm);
@@ -110,28 +147,54 @@ async function runPrompt(prompt) {
           if (event.type !== 'message' || event.data?.role !== 'user' || event.data.id !== accepted.messageId) continue;
           matched = true;
         }
+        if (event.type === 'question' && (event.data?.turnId !== accepted.messageId || event.data.sessionId !== session.id)) continue;
         if (options.has('--json')) console.log(JSON.stringify(event));
-        else if (event.type === 'delta') process.stdout.write(event.data.delta);
-        else if (event.type === 'tool' && event.data.tool.status === 'running') process.stderr.write(`\n  ≋ ${event.data.tool.name}\n`);
+        else if (event.type === 'delta') process.stdout.write(terminalText(event.data.delta, true));
+        else if (event.type === 'tool' && event.data.tool.status === 'running') process.stderr.write(`\n  ≋ ${terminalText(event.data.tool.name)}\n`);
         if (event.type === 'error') {
           process.exitCode = 1;
-          if (!options.has('--json')) process.stderr.write(`\n${event.data.message}\n`);
+          if (!options.has('--json')) process.stderr.write(`\n${terminalText(event.data.message, true)}\n`);
         }
-        if (event.type === 'permission') {
-          const permission = event.data;
+        if (event.type === 'permission' && !seenPermissions.has(event.data.id)) {
+          const permission = event.data; seenPermissions.add(permission.id);
           if (!process.stdin.isTTY) {
-            await api(`${path}/permissions/${permission.id}`, { decision: 'deny' }, controller.signal);
-            process.stderr.write(`\nDenied ${permission.tool}: interactive approval required (or explicitly use --auto).\n`);
-          } else {
-            const rl = createInterface({ input: process.stdin, output: process.stderr });
-            try {
-              const answer = await rl.question(`\nAllow ${permission.tool} ${JSON.stringify(permission.args)}? [y/N] `, { signal: controller.signal });
-              await api(`${path}/permissions/${permission.id}`, { decision: /^y(es)?$/i.test(answer.trim()) ? 'allow' : 'deny' }, controller.signal);
-            } finally { rl.close(); }
+            await api(`${path}/permissions/${encodeURIComponent(permission.id)}`, { decision: 'deny' }, controller.signal);
+            process.stderr.write(`\nDenied ${terminalText(permission.tool)}: interactive approval required (or explicitly use --auto).\n`);
+          } else promptInput('permission', permission.id, async (rl, signal) => {
+            const answer = await rl.question(`\nAllow ${terminalText(permission.tool)} ${terminalText(JSON.stringify(permission.args))}? [y/N] `, { signal });
+            if (!signal.aborted) await api(`${path}/permissions/${encodeURIComponent(permission.id)}`, { decision: /^y(es)?$/i.test(answer.trim()) ? 'allow' : 'deny' }, signal);
+          });
+        }
+        if (event.type === 'permission_resolved') dismissInput('permission', event.data.id);
+        if (event.type === 'question' && !seenQuestions.has(event.data.id)) {
+          const question = event.data; seenQuestions.add(question.id);
+          if (!process.stdin.isTTY) {
+            cancelRun(1, 'This run needs your answer. Non-interactive input cannot answer questions, even with --auto. The run was cancelled; use the Lite app or rerun in an interactive terminal.');
+            return;
           }
+          promptInput('question', question.id, async (rl, signal) => {
+            process.stderr.write(`\n${terminalText(question.question, true)}\n`);
+            question.options.forEach((item, index) => process.stderr.write(`  ${index + 1}. ${terminalText(item.label)}${item.description ? ` — ${terminalText(item.description)}` : ''}\n`));
+            for (;;) {
+              const value = (await rl.question(question.options.length ? 'Choose a number, or type a custom answer (text: forces custom): ' : 'Your answer: ', { signal })).trim();
+              if (signal.aborted) return;
+              const custom = value.startsWith('text:');
+              const text = custom ? value.slice(5).trim() : value;
+              const numeric = !custom && question.options.length > 0 && /^\d+$/.test(value);
+              const item = numeric ? question.options[Number(value) - 1] : undefined;
+              if (numeric && !item) { process.stderr.write('Choose a listed number, or use text: for a custom answer.\n'); continue; }
+              if (!item && (!text || text.length > 8000)) { process.stderr.write('Enter a nonblank answer of at most 8000 characters.\n'); continue; }
+              const answer = item ? { kind: 'option', optionId: item.id } : { kind: 'text', text };
+              await api(`${path}/questions/${encodeURIComponent(question.id)}/answer`, answer, signal); return;
+            }
+          });
+        }
+        if (event.type === 'question_resolved') {
+          dismissInput('question', event.data.id);
+          if (seenQuestions.has(event.data.id) && event.data.status !== 'answered') process.exitCode = process.exitCode || 1;
         }
         if (event.type === 'done') {
-          finished = true;
+          finished = true; dismissInput();
           if (event.data.status === 'error') process.exitCode = 1;
           if (!options.has('--json')) process.stdout.write('\n');
           reportSession(); return;
@@ -142,7 +205,8 @@ async function runPrompt(prompt) {
   } catch (error) {
     if (!interrupted) throw error;
   } finally {
-    controller.abort();
+    controller.abort(); dismissInput();
+    await Promise.all(inputTasks);
     if (cancellation) await cancellation;
     if (interrupted || (started && !finished)) reportSession();
     process.removeListener('SIGINT', onInt); process.removeListener('SIGTERM', onTerm);
@@ -169,6 +233,8 @@ Models: --provider ID
 flags cannot override it. --json emits newline-delimited run events.
 Tools ask for approval by default. --auto explicitly allows shell
 commands and edits; it is not a sandbox. Keys stay server-side.
+Questions require your answer in an interactive terminal or the Lite app.
+Non-interactive runs cancel unanswered questions, including with --auto.
 `);
   else if (command === 'serve') {
     const entry = existsSync(resolve(root, 'dist/server/index.js')) ? ['dist/server/index.js'] : ['--import', 'tsx', 'server/index.ts'];

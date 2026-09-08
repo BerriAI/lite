@@ -4,6 +4,8 @@ import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings
 import { api, applyEvent, errorMessage, patch, post, query, useSessionDraft } from './api';
 import { Composer, type Selection } from './Composer';
 import { Conversation } from './Conversation';
+import { QuestionCard, emptyQuestionDraft, type QuestionDraft } from './QuestionCard';
+import type { QuestionAnswer, QuestionRequest } from '../../shared/questions';
 import { TurnHistory } from './TurnHistory';
 import { Settings } from './Settings';
 import { Workspace } from './Workspace';
@@ -33,6 +35,12 @@ export default function App() {
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const historyOperation = useRef(false);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [questionDrafts, setQuestionDrafts] = useState(new Map<string, QuestionDraft>());
+  const [questionErrors, setQuestionErrors] = useState(new Map<string, string>());
+  const [answering, setAnswering] = useState(new Set<string>());
+  const answerOperations = useRef(new Set<string>());
+  const resolvedQuestions = useRef(new Set<string>());
+  const cancelling = useRef(new Set<string>());
   const [search, setSearch] = useState('');
   const [archived, setArchived] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -84,6 +92,7 @@ export default function App() {
     if (currentId.current === id) {
       const newer = eventJournal.current.filter(event => event.sessionId === id && (event.id ?? 0) > (next.lastEventId ?? 0));
       const reconciled = newer.reduce(applyEvent, next);
+      if (reconciled.questions) reconciled.questions = reconciled.questions.filter(question => !resolvedQuestions.current.has(question.id));
       setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) > (reconciled.lastEventId ?? 0) ? current : reconciled);
       eventJournal.current = newer;
     }
@@ -181,6 +190,11 @@ export default function App() {
             if (eventId) lastEventId = eventId;
             if (event.sessionId !== id) return;
             event.id = eventId || event.id;
+            if (event.type === 'question_resolved') {
+              resolvedQuestions.current.add(event.data.id);
+              setQuestionDrafts(current => { const next = new Map(current); next.delete(event.data.id); return next; });
+              setQuestionErrors(current => { const next = new Map(current); next.delete(event.data.id); return next; });
+            }
             eventJournal.current.push(event);
             if (eventJournal.current.length > 2000) eventJournal.current.splice(0, 1000);
             setDetail(d => d ? applyEvent(d, event) : d);
@@ -278,6 +292,50 @@ export default function App() {
       if (currentId.current === id) void refreshDetail(id).catch(e => setError(errorMessage(e)));
     } catch (e) { if (currentId.current === id) setError(errorMessage(e)); }
     finally { queueOperation.current = false; setQueueBusy(false); }
+  }
+  function changeQuestionDraft(id: string, value: QuestionDraft) {
+    setQuestionDrafts(current => new Map(current).set(id, value));
+    setQuestionErrors(current => { const next = new Map(current); next.delete(id); return next; });
+  }
+  async function answerQuestion(request: QuestionRequest, answer: QuestionAnswer) {
+    const { sessionId: id, id: questionId } = request, view = selectionRequest.current;
+    const stillHere = () => currentId.current === id && selectionRequest.current === view;
+    if (!stillHere() || busy || historyOperation.current || cancelling.current.has(id) || answerOperations.current.has(questionId) || resolvedQuestions.current.has(questionId) || !detailRef.current?.questions?.some(question => question.id === questionId && question.sessionId === id)) return;
+    answerOperations.current.add(questionId); setAnswering(current => new Set(current).add(questionId));
+    setQuestionErrors(current => { const next = new Map(current); next.delete(questionId); return next; });
+    let failure = '';
+    try {
+      await post(`/sessions/${id}/questions/${encodeURIComponent(questionId)}/answer`, answer);
+      resolvedQuestions.current.add(questionId);
+      setQuestionDrafts(current => { const next = new Map(current); next.delete(questionId); return next; });
+      // Remove only this globally unique request; never copy a stale response into session state.
+      if (stillHere()) setDetail(current => current?.session.id === id ? { ...current, questions: (current.questions ?? []).filter(question => question.id !== questionId) } : current);
+    } catch (e) { failure = errorMessage(e); }
+    finally {
+      try { await refreshDetail(id); }
+      catch (e) {
+        if (stillHere()) {
+          if (resolvedQuestions.current.has(questionId)) setError(`Answer accepted or question resolved, but refreshing failed: ${errorMessage(e)}. Reload to check the response.`);
+          else failure += `${failure ? ' ' : ''}Could not refresh the question: ${errorMessage(e)}.`;
+        }
+      }
+      if (failure && stillHere() && !resolvedQuestions.current.has(questionId) && !cancelling.current.has(id)) setQuestionErrors(current => new Map(current).set(questionId, failure));
+      answerOperations.current.delete(questionId);
+      setAnswering(current => { const next = new Set(current); next.delete(questionId); return next; });
+    }
+  }
+  async function stopResponse(id: string) {
+    if (currentId.current !== id || cancelling.current.has(id)) return;
+    const view = selectionRequest.current, stillHere = () => currentId.current === id && selectionRequest.current === view;
+    cancelling.current.add(id); setBusy(true); setError('');
+    let failure = '';
+    try { await post(`/sessions/${id}/cancel`); }
+    catch (e) { failure = errorMessage(e); }
+    finally {
+      try { await refreshDetail(id); } catch (e) { failure += `${failure ? ' ' : ''}Could not refresh the stopped response: ${errorMessage(e)}.`; }
+      if (failure && stillHere()) setError(failure);
+      cancelling.current.delete(id); setBusy(false);
+    }
   }
   function saveSettings(next: SettingsType) {
     setSettings(next); setRefreshKey(v => v + 1);
@@ -377,14 +435,14 @@ export default function App() {
       </div>
       <div className="sidebar-bottom"><button className="sidebar-footer-button" onClick={() => importInput.current?.click()}><Upload size={15} /><span>Import session</span></button><button className="sidebar-footer-button" onClick={() => setSettingsOpen(true)} disabled={!settings}><Settings2 size={16} /><span>Settings</span></button><div className="workspace-identity"><span className="workspace-avatar"><Terminal size={16} /></span><div><strong>{workspace.split('/').filter(Boolean).at(-1) || 'Your workspace'}</strong><span>On your machine</span></div><button className="icon-button" aria-label="Workspace settings" disabled={!settings} onClick={() => setSettingsOpen(true)}><ChevronDown size={14} /></button></div></div>
     </aside>
-    <main className="main" id="main-content"><header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb-project"><Folder size={14} />{workspace.split('/').filter(Boolean).at(-1) || 'Workspace'}</span><span className="breadcrumb-slash">/</span><span className="topbar-title">{detail?.session.title || (activeId ? 'Session' : 'New session')}</span></div><div className="topbar-actions">{detail && <><span className={`session-state ${detail.session.status}`}><span />{detail.session.status === 'running' ? 'Working' : detail.session.status === 'waiting' ? 'Needs approval' : detail.session.status === 'error' ? 'Run error' : detail.session.archived ? 'Archived' : 'Saved locally'}</span><div className="session-menu-wrap"><button className="icon-button" aria-label="Session actions" aria-expanded={sessionMenu} onClick={() => setSessionMenu(v => !v)}><MoreHorizontal size={19} /></button>{sessionMenu && <><button className="menu-dismiss" aria-label="Close session actions" onClick={() => setSessionMenu(false)} /><div className="session-menu"><button onClick={() => { setRename(detail.session); setRenameValue(detail.session.title); setSessionMenu(false); }}><Pencil size={14} />Rename session</button><button disabled={running || busy} onClick={() => { void fork(); setSessionMenu(false); }}><GitFork size={14} />Fork conversation</button><button onClick={() => { void exportSession(); setSessionMenu(false); }}><Download size={14} />Export session</button><button disabled={running || busy} onClick={() => { setSessionMenu(false); setConfirm({ title: 'Compact this conversation?', description: 'Summarize older context to make room for your next steps. This changes the context used by future model calls.', label: 'Compact context', action: async () => { await post(`/sessions/${activeId}/compact`); await refreshDetail(activeId!); setToast('Conversation compacted'); } }); }}><ArrowDownToLine size={14} />Compact context</button>{history && <><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canUndo || !history.undoId} onClick={() => { askHistory('undo'); setSessionMenu(false); }}><Undo2 size={14} />Undo last turn</button><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canRedo || !history.redoId} onClick={() => { askHistory('redo'); setSessionMenu(false); }}><Redo2 size={14} />Redo turn</button></>}{legacyUndo && <button disabled={historyDisabled} onClick={() => { askHistory('legacy'); setSessionMenu(false); }}><Undo2 size={14} />Undo session file changes</button>}<button onClick={() => { void archive(detail.session); setSessionMenu(false); }}><Archive size={14} />{detail.session.archived ? 'Restore session' : 'Archive session'}</button><button onClick={() => { setSessionMenu(false); void act(async () => { await api(`/sessions/${activeId}/tool-grants`, {method:'DELETE'}); setToast('Remembered tool approvals cleared. Auto mode is unchanged.'); }); }}><Shield size={14} />Reset remembered approvals</button><hr /><button className="danger" disabled={running} onClick={() => { askDelete(detail.session); setSessionMenu(false); }}><Trash2 size={14} />Delete session</button></div></>}</div></>}
+    <main className="main" id="main-content"><header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb-project"><Folder size={14} />{workspace.split('/').filter(Boolean).at(-1) || 'Workspace'}</span><span className="breadcrumb-slash">/</span><span className="topbar-title">{detail?.session.title || (activeId ? 'Session' : 'New session')}</span></div><div className="topbar-actions">{detail && <><span className={`session-state ${detail.session.status}`}><span />{detail.session.status === 'running' ? 'Working' : detail.session.status === 'waiting' ? detail.questions?.length ? 'Needs answer' : 'Needs approval' : detail.session.status === 'error' ? 'Run error' : detail.session.archived ? 'Archived' : 'Saved locally'}</span><div className="session-menu-wrap"><button className="icon-button" aria-label="Session actions" aria-expanded={sessionMenu} onClick={() => setSessionMenu(v => !v)}><MoreHorizontal size={19} /></button>{sessionMenu && <><button className="menu-dismiss" aria-label="Close session actions" onClick={() => setSessionMenu(false)} /><div className="session-menu"><button onClick={() => { setRename(detail.session); setRenameValue(detail.session.title); setSessionMenu(false); }}><Pencil size={14} />Rename session</button><button disabled={running || busy} onClick={() => { void fork(); setSessionMenu(false); }}><GitFork size={14} />Fork conversation</button><button onClick={() => { void exportSession(); setSessionMenu(false); }}><Download size={14} />Export session</button><button disabled={running || busy} onClick={() => { setSessionMenu(false); setConfirm({ title: 'Compact this conversation?', description: 'Summarize older context to make room for your next steps. This changes the context used by future model calls.', label: 'Compact context', action: async () => { await post(`/sessions/${activeId}/compact`); await refreshDetail(activeId!); setToast('Conversation compacted'); } }); }}><ArrowDownToLine size={14} />Compact context</button>{history && <><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canUndo || !history.undoId} onClick={() => { askHistory('undo'); setSessionMenu(false); }}><Undo2 size={14} />Undo last turn</button><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canRedo || !history.redoId} onClick={() => { askHistory('redo'); setSessionMenu(false); }}><Redo2 size={14} />Redo turn</button></>}{legacyUndo && <button disabled={historyDisabled} onClick={() => { askHistory('legacy'); setSessionMenu(false); }}><Undo2 size={14} />Undo session file changes</button>}<button onClick={() => { void archive(detail.session); setSessionMenu(false); }}><Archive size={14} />{detail.session.archived ? 'Restore session' : 'Archive session'}</button><button onClick={() => { setSessionMenu(false); void act(async () => { await api(`/sessions/${activeId}/tool-grants`, {method:'DELETE'}); setToast('Remembered tool approvals cleared. Auto mode is unchanged.'); }); }}><Shield size={14} />Reset remembered approvals</button><hr /><button className="danger" disabled={running} onClick={() => { askDelete(detail.session); setSessionMenu(false); }}><Trash2 size={14} />Delete session</button></div></>}</div></>}
         {detail && <button className={`icon-button ${terminalOpen ? 'selected' : ''}`} aria-label={terminalOpen ? 'Hide terminal pane' : 'Open terminal'} aria-expanded={terminalOpen} title="Open a local shell (not sandboxed)" onClick={() => setTerminalOpen(v => !v)}><Terminal size={18} /></button>}
         <button className={`icon-button workspace-toggle ${workspaceOpen ? 'selected' : ''}`} aria-label={workspaceOpen ? 'Hide workspace panel' : 'Show workspace panel'} title="Files, changes, and plan" aria-expanded={workspaceOpen} onClick={() => setWorkspaceOpen(v => !v)}><PanelRight size={18} /></button></div></header>
       {error && <div className="global-alert" role="alert"><span>{error}</span>{!settings ? <button onClick={() => void load()}>Retry connection</button> : activeId && !detail ? <button onClick={() => { setError(''); setSessionReload(v => v + 1); }}>Retry</button> : null}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></button></div>}
       <div className="main-panels"><div className={`main-stage ${!activeId ? 'welcome-stage' : ''}`}>
         {loading ? <div className="app-loading"><Logo /><SpeedRail active /><p>Opening your workspace…</p></div> : !settings ? <EmptyState icon={<Terminal size={30} />} title="Let’s get connected.">The local server is not available. Check that Lite is running, then retry the connection.<button className="button primary" onClick={() => void load()}>Try again</button></EmptyState> : activeId ? <>
-          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void act(async () => { await post(`/sessions/${activeId}/cancel`); await refreshDetail(activeId); })} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
+          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
+          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
           <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onCancel={() => {}} running={false} disabled={busy} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>

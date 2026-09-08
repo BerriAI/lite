@@ -171,6 +171,8 @@ function reduceEvent(detail: SessionDetail, event: RunEvent): SessionDetail {
       return { ...detail, session: { ...detail.session, status: 'waiting' }, permissions: [...detail.permissions.filter(p => p.id !== permission.id), permission] };
     }
     case 'permission_resolved': return { ...detail, permissions: detail.permissions.filter(p => p.id !== (data.id ?? data.requestId ?? data.permissionId)) };
+    case 'question': return { ...detail, session: { ...detail.session, status: 'waiting' }, questions: [...(detail.questions ?? []).filter(question => question.id !== data.id), data] };
+    case 'question_resolved': return { ...detail, questions: (detail.questions ?? []).filter(question => question.id !== data.id) };
     case 'queue': return { ...detail, queue: data };
     case 'history': return { ...detail, history: data };
     case 'reset': return { ...detail, messages: data.messages };

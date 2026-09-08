@@ -6,9 +6,10 @@ import { executeTool, isReadOnlyTool, toolDefinitions, readFile } from './tools.
 import { streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
 import { planCompaction } from './context.js';
 import { History } from './history.js';
+import { Questions, questionTool } from './questions.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
-type ActiveRun = { controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean };
+type ActiveRun = { turnId?: string; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
 export interface ExternalTools {
   definitions(): Promise<ToolDefinition[]>;
@@ -24,7 +25,8 @@ export class Runner {
   private idleWaiters = new Set<() => void>();
   private stopping = false;
   readonly history: History;
-  constructor(readonly store: Store, readonly bus: EventBus, private external?: ExternalTools) { this.history=new History(store); }
+  readonly questions: Questions;
+  constructor(readonly store: Store, readonly bus: EventBus, private external?: ExternalTools) { this.history=new History(store);this.questions=new Questions(store,bus); }
   active(id: string) { return this.runs.has(id); }
   permissions(id: string) { return [...(this.runs.get(id)?.approvals.values() || [])].map(p => p.request); }
   private assertOpen() { if(this.stopping)throw conflict('The server is stopping. Restart it before sending more work.'); }
@@ -133,6 +135,7 @@ export class Runner {
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map() };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     this.history.accept(id,message,queuedId);
+    run.turnId=message.id;
     this.runs.set(id, run);
     try {
       this.bus.emit(id,'message',message);
@@ -242,7 +245,7 @@ export class Runner {
     const provider = settings.providers.find(p => p.id === session.providerId)!;
     const signal = run.controller.signal;
     const system = await this.systemPrompt(session);
-    const tools = [...toolDefinitions.filter(t => t.function.name !== 'task'), ...(await this.external?.definitions() || [])].filter(t => session.mode !== 'plan' || isReadOnlyTool(t.function.name));
+    const tools = [...toolDefinitions.filter(t => t.function.name !== 'task'), questionTool, ...(await this.external?.definitions() || []).filter(t => t.function.name !== 'ask_user')].filter(t => session.mode !== 'plan' || t.function.name === 'ask_user' || isReadOnlyTool(t.function.name));
     let previousBatch = '', repeatedBatches = 0, recoveredContext = false;
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
       const message: Message = {id:randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
@@ -294,18 +297,40 @@ export class Runner {
       if (!message.toolCalls.length) delete message.toolCalls;
       this.save(message);
       if (!message.toolCalls?.length) { run.completed=true;return; }
+      if(new Set(message.toolCalls.map(call=>call.id)).size!==message.toolCalls.length) {
+        // Preserve the rejected provider response for explicit recovery, but do
+        // not execute any part or invent ambiguous tool results for this batch.
+        message.error='The provider returned duplicate tool call IDs. No tools in this response were executed. Recover the interrupted history before continuing.';
+        this.store.saveMessage(message);
+        throw new Error(message.error);
+      }
       const batch = canonical(message.toolCalls.map(call => ({name:call.name,args:call.args})).sort((a,b) => canonical(a).localeCompare(canonical(b))));
       repeatedBatches = batch === previousBatch ? repeatedBatches + 1 : 1;
       previousBatch = batch;
       // Repeated identical actions can spend tokens or mutate twice without progress.
       const stalled = repeatedBatches >= 3;
       for (const call of message.toolCalls) {
-        let output = '';
+        let output = '', questionStarted = false;
         try {
           if (signal.aborted) { call.status = 'denied'; output = 'Cancelled by the user.'; }
           else if (stalled) { call.status = 'denied'; output = 'Stopped repeated identical tool calls. Ask the user how to proceed; do not work around this guard.'; }
           else if (malformed.has(call.id)) { call.status = 'error'; output = malformed.get(call.id)!; }
           else if (!tools.some(t => t.function.name === call.name)) { call.status = 'error'; output = 'Unknown or unavailable tool. Use one of the provided tools.'; }
+          else if (call.name === 'ask_user') {
+            this.setSession(id,{status:'waiting'});
+            const waiting=this.questions.ask(id,run.turnId!,message.id,call.id,call.args,signal);
+            questionStarted=true;
+            const settlement=await waiting;
+            // Settlement already persisted this assistant and exactly one result.
+            // Keep existing batch object identities, but refresh every tool outcome.
+            for(const saved of settlement.assistant.toolCalls || []) {
+              const local=message.toolCalls!.find(item=>item.id===saved.id);
+              if(local)Object.assign(local,saved);
+            }
+            if(settlement.status!=='answered')run.blocked=true;
+            if(!signal.aborted)this.setSession(id,{status:'running'});
+            continue;
+          }
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else {
             call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.store.saveMessage(message);
@@ -318,7 +343,12 @@ export class Runner {
             });
             call.status='completed';
           }
-        } catch (error) { call.status='error';output=this.safeError(error); }
+        } catch (error) {
+          // A durable question may be unresolved after cancellation storage failure,
+          // or already answered before event failure. Never invent a second result.
+          if(questionStarted)throw error;
+          call.status='error';output=this.safeError(error);
+        }
         if(call.status==='denied'||call.status==='error')run.blocked=true;
         call.output=output;call.endedAt=Date.now();
         this.store.saveMessage(message);this.bus.emit(id,'tool',{messageId:message.id,tool:call});

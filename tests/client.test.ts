@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../client/src/App';
 import { useSessionDraft, type ComposerDraft } from '../client/src/api';
 import type { QueueState, RunEvent, Session, SessionDetail, Settings } from '../shared/types';
+import type { QuestionRequest } from '../shared/questions';
 
 const draftKey = (id: string) => `lite:draft:v1:${id}`;
 const stored = (id: string): ComposerDraft | null => JSON.parse(localStorage.getItem(draftKey(id)) ?? 'null');
@@ -32,6 +33,13 @@ function element<T extends Element = HTMLElement>(selector: string): T {
   expect(result, `Missing ${selector}`).not.toBeNull(); return result!;
 }
 async function click(selector: string) { await act(async () => element<HTMLButtonElement>(selector).click()); }
+async function fill(selector: string, value: string) {
+  const input = element<HTMLTextAreaElement>(selector);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
 async function clickText(label: string, scope = document.body) {
   const button = [...scope.querySelectorAll('button')].find(item => item.textContent?.trim() === label);
   expect(button, `Missing button ${label}`).toBeDefined();
@@ -393,5 +401,154 @@ describe('turn history UI', () => {
     expect(labels.includes('Undo session file changes')).toBe(!hasCheckpoints);
     expect(labels).toContain('Undo last turn'); expect(labels).toContain('Redo turn');
     expect(document.querySelector('[aria-label="Undo session file changes"]')).toBeNull();
+  });
+});
+
+function question(id = 'q-a', sessionId = 'a'): QuestionRequest {
+  return { id, sessionId, turnId: 'turn-a', messageId: 'assistant-a', toolCallId: 'ask-a', question: 'Which database should we use?', options: [{ id: 'postgres', label: 'PostgreSQL', description: 'A relational database' }, { id: 'sqlite', label: 'SQLite' }], createdAt: 1 };
+}
+function questioning(id = 'a', request = question(`q-${id}`, id)) {
+  return detail(id, { session: session(id, { status: 'waiting' }), questions: [request] });
+}
+const questionRegion = () => element<HTMLElement>('[aria-label="Question from agent"]');
+const submitQuestion = () => clickText('Submit answer', questionRegion());
+
+describe('structured agent questions', () => {
+  it('requires explicit option selection and submits once without modifying composer drafts', async () => {
+    const saved = { text: 'unsent composer work', attachments: [{ name: 'draft.txt', content: 'keep this' }] };
+    localStorage.setItem(draftKey('a'), JSON.stringify(saved));
+    const server = appServer([questioning()]), pending = deferred<object>();
+    server.mutation = (path, method) => { expect(`${method} ${path}`).toBe('POST /api/sessions/a/questions/q-a/answer'); return pending.promise; };
+    await mountApp();
+    expect(questionRegion().querySelector('input:checked')).toBeNull();
+    expect(element<HTMLButtonElement>('.question-actions .primary').disabled).toBe(true);
+    expect(element('.session-state').textContent).toBe('Needs answer');
+    expect(element('.run-status').textContent).toContain('Waiting for your answer');
+    await click('.question-option input[value="postgres"]');
+    expect(server.requests.some(request => request.startsWith('POST'))).toBe(false);
+    const button = element<HTMLButtonElement>('.question-actions .primary');
+    await act(async () => { button.click(); button.click(); });
+    expect(server.requests.filter(request => request.startsWith('POST'))).toEqual(['POST /api/sessions/a/questions/q-a/answer']);
+    const [, options] = vi.mocked(fetch).mock.calls.find(([path]) => path === '/api/sessions/a/questions/q-a/answer')!;
+    expect(JSON.parse(options!.body as string)).toEqual({ kind: 'option', optionId: 'postgres' });
+    expect(element<HTMLButtonElement>('[aria-label="Add to queue"]').disabled).toBe(false);
+    expect(element<HTMLButtonElement>('[aria-label="Stop generation"]').disabled).toBe(false);
+    expect(element<HTMLButtonElement>('.question-actions .secondary').disabled).toBe(false);
+    server.details.set('a', detail('a', { questions: [], lastEventId: 12 }));
+    await act(async () => pending.resolve({ id: 'q-a', status: 'answered', answer: { kind: 'option', optionId: 'postgres' } }));
+    expect(document.querySelector('.question-card')).toBeNull();
+    expect(stored('a')).toEqual(saved);
+    expect(element<HTMLTextAreaElement>('#message-input').value).toBe(saved.text);
+    expect(server.requests.filter(request => request === 'GET /api/sessions/a')).toHaveLength(2);
+  });
+
+  it('always offers custom text, preserves it across switching, and keeps Enter as a newline', async () => {
+    const request = { ...question(), options: [] };
+    const server = appServer([questioning('a', request), questioning('b')]);
+    server.mutation = () => { server.details.set('a', detail('a', { questions: [], lastEventId: 12 })); return { id: 'q-a', status: 'answered', answer: { kind: 'text', text: 'Use an embedded database' } }; };
+    await mountApp(); await click('.question-option.custom input');
+    await fill('.question-custom textarea', '   ');
+    expect(element<HTMLButtonElement>('.question-actions .primary').disabled).toBe(true);
+    await fill('.question-custom textarea', '  Use an embedded database  ');
+    const input = element<HTMLTextAreaElement>('.question-custom textarea');
+    expect(input.maxLength).toBe(8000);
+    await act(async () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(server.requests.some(request => request.startsWith('POST'))).toBe(false);
+    await click('.session-link[title="Session b"]');
+    expect(questionRegion().querySelector('input:checked')).toBeNull();
+    await click('.session-link[title="Session a"]');
+    expect(element<HTMLTextAreaElement>('.question-custom textarea').value).toBe('  Use an embedded database  ');
+    await submitQuestion();
+    const [, options] = vi.mocked(fetch).mock.calls.find(([path]) => path === '/api/sessions/a/questions/q-a/answer')!;
+    expect(JSON.parse(options!.body as string)).toEqual({ kind: 'text', text: 'Use an embedded database' });
+  });
+
+  it('keeps the answer and enables retry after failure, without touching main draft', async () => {
+    const server = appServer([questioning()]);
+    server.mutation = () => { throw new Error('answer not accepted'); };
+    localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'main draft', attachments: [] }));
+    await mountApp(); await click('.question-option.custom input'); await fill('.question-custom textarea', 'Keep my custom answer'); await submitQuestion();
+    expect(element('.question-error').textContent).toContain('answer not accepted');
+    expect(element<HTMLTextAreaElement>('.question-custom textarea').value).toBe('Keep my custom answer');
+    expect(element<HTMLButtonElement>('.question-actions .primary').disabled).toBe(false);
+    expect(stored('a')?.text).toBe('main draft');
+    expect(server.requests.filter(request => request === 'GET /api/sessions/a')).toHaveLength(2);
+  });
+
+  it('does not resurrect a remotely resolved question from a stale snapshot or delayed failed answer', async () => {
+    const server = appServer([questioning()]), pending = deferred<object>();
+    server.mutation = () => pending.promise;
+    await mountApp(); await click('.question-option input[value="sqlite"]'); await submitQuestion();
+    const source = TestEventSource.instances.at(-1)!;
+    await act(async () => source.emit({ id: 12, sessionId: 'a', type: 'question_resolved', data: { id: 'q-a', status: 'answered' } }));
+    expect(document.querySelector('.question-card')).toBeNull();
+    // Prune the journal using a current snapshot, then return an older pending snapshot.
+    server.details.set('a', detail('a', { questions: [], lastEventId: 13 }));
+    await act(async () => source.onopen?.());
+    server.details.set('a', questioning());
+    await act(async () => pending.reject(new Error('Another client answered first')));
+    expect(document.querySelector('.question-card')).toBeNull();
+    expect(document.querySelector('.question-error')).toBeNull();
+    expect(document.querySelector('.global-alert')).toBeNull();
+  });
+
+  it.each(['success', 'failure'] as const)('ignores a late answer %s after navigation to another question', async outcome => {
+    const server = appServer([questioning(), questioning('b')]), pending = deferred<object>();
+    server.mutation = () => pending.promise;
+    await mountApp(); await click('.question-option input[value="sqlite"]'); await submitQuestion();
+    await click('.session-link[title="Session b"]');
+    await click('.question-option.custom input'); await fill('.question-custom textarea', 'Session b answer');
+    await act(async () => {
+      if (outcome === 'success') pending.resolve({ id: 'q-a', status: 'answered', answer: { kind: 'option', optionId: 'sqlite' } });
+      else pending.reject(new Error('Session a failed'));
+    });
+    expect(element('.topbar-title').textContent).toBe('Session b');
+    expect(element<HTMLTextAreaElement>('.question-custom textarea').value).toBe('Session b answer');
+    expect(document.querySelector('.question-error')).toBeNull();
+    expect(document.querySelector('.global-alert')).toBeNull();
+  });
+
+  it('Stop response stays usable during an in-flight answer and refreshes paused queue state', async () => {
+    const server = appServer([questioning()]), pending = deferred<object>();
+    server.mutation = (path, method) => {
+      if (path.endsWith('/answer')) return pending.promise;
+      expect(`${method} ${path}`).toBe('POST /api/sessions/a/cancel');
+      server.details.set('a', detail('a', { questions: [], lastEventId: 15, queue: { items: [], paused: true, reason: 'Cancelled. Resume explicitly.' } }));
+      TestEventSource.instances.at(-1)!.emit({ id: 14, sessionId: 'a', type: 'question_resolved', data: { id: 'q-a', status: 'cancelled' } });
+      return {};
+    };
+    await mountApp(); await click('.question-option input[value="sqlite"]'); await submitQuestion();
+    await clickText('Stop response', questionRegion());
+    await act(async () => pending.reject(new Error('Question cancelled')));
+    expect(server.requests).toContain('POST /api/sessions/a/cancel');
+    expect(document.querySelector('.question-card')).toBeNull();
+    expect(element('.queue-status').textContent).toBe('Paused');
+    expect(document.querySelector('.global-alert')).toBeNull();
+    expect(server.requests.some(request => request.endsWith('/queue/resume'))).toBe(false);
+  });
+
+  it('renders malicious question/option text inertly and never treats auto mode as an answer', async () => {
+    const malicious = '<img src=x onerror="window.questionExecuted=true"><script>alert(1)</script>';
+    const request = { ...question(), question: malicious, options: [{ id: 'unsafe', label: malicious, description: '<a href="javascript:alert(1)">click</a>' }] };
+    const server = appServer([detail('a', { session: session('a', { status: 'waiting', mode: 'plan', permissionMode: 'auto' }), questions: [request] })]);
+    await mountApp();
+    expect(questionRegion().textContent).toContain(malicious);
+    expect(questionRegion().querySelector('img,script,a')).toBeNull();
+    expect(questionRegion().querySelector('input:checked')).toBeNull();
+    expect(server.requests.some(request => request.startsWith('POST'))).toBe(false);
+  });
+
+  it('SSE deduplicates pending requests and resolution restores the approval waiting label', async () => {
+    appServer([detail('a', { session: session('a', { status: 'waiting' }), permissions: [{ id: 'permission', sessionId: 'a', toolCallId: 'write', tool: 'write_file', args: {}, description: 'Needs permission' }] })]);
+    await mountApp(); const source = TestEventSource.instances.at(-1)!;
+    await act(async () => {
+      source.emit({ id: 11, type: 'question', sessionId: 'a', data: question() });
+      source.emit({ id: 12, type: 'question', sessionId: 'a', data: question() });
+    });
+    expect(document.querySelectorAll('.question-card')).toHaveLength(1);
+    expect(element('.run-status').textContent).toContain('Waiting for your answer');
+    await act(async () => source.emit({ id: 13, type: 'question_resolved', sessionId: 'a', data: { id: 'q-a', status: 'answered' } }));
+    expect(document.querySelectorAll('.question-card')).toHaveLength(0);
+    expect(element('.run-status').textContent).toContain('Waiting for your approval');
   });
 });

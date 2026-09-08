@@ -61,8 +61,11 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       providerCalls.push(request);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const emit = (delta: unknown) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`);
-      if (request.messages.at(-1)?.role !== 'tool') emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: fixtureContent }) } }] });
-      else { emit({ content: 'Runtime ' }); emit({ content: 'complete.' }); }
+      const prompt = request.messages.filter((message: { role: string }) => message.role === 'user').at(-1)?.content ?? '';
+      if (request.messages.at(-1)?.role !== 'tool') {
+        if (prompt.includes('runtime question')) emit({ tool_calls: [{ index: 0, id: 'runtime-question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Which runtime approach?', options: [{ id: 'small', label: 'Small change' }, { id: 'broad', label: 'Broader change' }] }) } }] });
+        else emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: fixtureContent }) } }] });
+      } else { emit({ content: 'Runtime ' }); emit({ content: 'complete.' }); }
       res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: request.messages.at(-1)?.role === 'tool' ? 'stop' : 'tool_calls' }] })}\n\n`);
       res.end('data: [DONE]\n\n');
     });
@@ -181,6 +184,99 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     const cli = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'sessions', '--url', app.base], workspace, env).finished;
     expect(cli.code).toBe(0);
     expect(cli.output).toContain(session.id);
+    // Exercise ask_user through the bundled production server, not source imports.
+    const questionSession = await api('/sessions', { title: 'Runtime structured question', mode: 'plan', permissionMode: 'auto' });
+    const questionPath = `/sessions/${questionSession.id}`;
+    const questionAbort = new AbortController();
+    const questionResponse = await fetch(`${app.base}/api${questionPath}/events`, { signal: questionAbort.signal });
+    const questionEvents: { type: string; data: any }[] = [];
+    const questionStream = (async () => {
+      const reader = questionResponse.body!.getReader(), decoder = new TextDecoder(); let buffer = '';
+      try {
+        while (true) {
+          const part = await reader.read(); if (part.done) throw new Error('Question stream ended without done.');
+          buffer += decoder.decode(part.value, { stream: true });
+          let boundary;
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+            const line = frame.split('\n').find(value => value.startsWith('data: ')); if (!line) continue;
+            const event = JSON.parse(line.slice(6)); questionEvents.push(event);
+            if (event.type === 'done') return;
+          }
+        }
+      } finally { await reader.cancel(); }
+    })();
+    const acceptance = await api(`${questionPath}/messages`, { content: 'Ask a runtime question before proceeding.' });
+    await expect.poll(async () => (await api(questionPath)).questions.length).toBe(1);
+    const pendingQuestion = (await api(questionPath)).questions[0];
+    expect(pendingQuestion).toMatchObject({ sessionId: questionSession.id, turnId: acceptance.messageId, toolCallId: 'runtime-question', question: 'Which runtime approach?' });
+    expect((await api(questionPath)).permissions).toEqual([]);
+    expect((await api(questionPath)).session.status).toBe('waiting');
+    expect(providerCalls).toHaveLength(3);
+    const answerPath = `${questionPath}/questions/${pendingQuestion.id}/answer`;
+    const answer = { kind: 'option', optionId: 'small' };
+    const receipt = await api(answerPath, answer);
+    expect(receipt).toEqual({ id: pendingQuestion.id, status: 'answered', answer });
+    await questionStream; questionAbort.abort();
+    expect(questionEvents.find(event => event.type === 'question')?.data).toEqual(pendingQuestion);
+    expect(questionEvents.filter(event => event.type === 'question_resolved').map(event => event.data)).toEqual([{ id: pendingQuestion.id, status: 'answered' }]);
+    expect(questionEvents.at(-1)).toMatchObject({ type: 'done', data: { status: 'idle' } });
+    const answered = await api(questionPath);
+    expect(answered.questions).toEqual([]);
+    expect(answered.messages.filter((message: { role: string }) => message.role === 'tool')).toHaveLength(1);
+    expect(answered.history.canUndo).toBe(true);
+    expect(await api(answerPath, answer)).toEqual(receipt);
+    expect(providerCalls).toHaveLength(4);
+    const questionCheckpoint = answered.history.undoId;
+    await api(`${questionPath}/history/undo`, { checkpointId: questionCheckpoint });
+    expect((await api(questionPath)).messages).toEqual([]);
+    expect((await api(questionPath)).questions).toEqual([]);
+    expect((await api(`${questionPath}/questions`)).questions).toEqual([]);
+    const stale = await fetch(app.base + '/api' + answerPath, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(answer) });
+    expect(stale.status).toBe(409);
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
+    app = await start(false);
+    expect((await api(questionPath)).questions).toEqual([]);
+    expect((await api(questionPath)).history.redoId).toBe(questionCheckpoint);
+    await api(`${questionPath}/history/redo`, { checkpointId: questionCheckpoint });
+    const restoredQuestion = await api(questionPath);
+    expect(restoredQuestion.messages).toEqual(answered.messages);
+    expect(restoredQuestion.history).toEqual(answered.history);
+    expect(restoredQuestion.questions).toEqual([]);
+    expect((await api(`${questionPath}/questions`)).questions).toEqual([]);
+    expect(providerCalls).toHaveLength(4);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+
+    // A killed server cannot turn a persisted unanswered question into a fresh live request.
+    const interruptedSession = await api('/sessions', { title: 'Interrupted production question', permissionMode: 'auto' });
+    const interruptedPath = `/sessions/${interruptedSession.id}`;
+    await api(`${interruptedPath}/messages`, { content: 'Ask an unanswered runtime question.' });
+    await expect.poll(async () => (await api(interruptedPath)).questions.length).toBe(1);
+    const beforeCrash = await api(interruptedPath), interruptedQuestion = beforeCrash.questions[0];
+    await api(`${interruptedPath}/queue`, { content: 'Do not execute this queued continuation after restart.' });
+    expect(providerCalls).toHaveLength(5);
+    app.child.kill('SIGKILL'); expect((await app.finished).signal).toBe('SIGKILL');
+    app = await start(false);
+    const afterCrash = await api(interruptedPath);
+    expect(afterCrash.questions).toEqual([]);
+    expect(afterCrash.messages).toEqual(beforeCrash.messages);
+    expect(afterCrash.history.pendingRecovery).toBeTruthy();
+    expect(afterCrash.queue).toMatchObject({ paused: true, items: [{ content: 'Do not execute this queued continuation after restart.' }] });
+    expect((await api(`${interruptedPath}/questions`)).questions).toEqual([]);
+    const late = await fetch(`${app.base}/api${interruptedPath}/questions/${interruptedQuestion.id}/answer`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind: 'text', text: 'Too late' }) });
+    expect(late.status).toBe(409);
+    await api(`${interruptedPath}/history/recover`, {});
+    const recovered = await api(interruptedPath);
+    expect(recovered.history.pendingRecovery).toBeUndefined();
+    expect(recovered.questions).toEqual([]); expect(recovered.history.canUndo).toBe(true);
+    await api(`${interruptedPath}/history/undo`, { checkpointId: recovered.history.undoId });
+    const recoveryRedo = (await api(interruptedPath)).history.redoId;
+    await api(`${interruptedPath}/history/redo`, { checkpointId: recoveryRedo });
+    expect((await api(interruptedPath)).messages).toEqual(recovered.messages);
+    expect((await api(interruptedPath)).questions).toEqual([]);
+    expect((await api(interruptedPath)).queue.paused).toBe(true);
+    expect(providerCalls).toHaveLength(5);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     // Validate the installed native PTY on this exact ABI without starting a
     // login shell (which would read the real user's startup files).
     const pty = await processResult(runtime!, ['--input-type=module', '-e', `import {createRequire} from 'node:module'; const require=createRequire(${JSON.stringify(join(installation, 'package.json'))}); const {spawn}=require('node-pty'); const p=spawn('/bin/sh',['-c','printf "PTY_RUNTIME_OK\\n"'],{cwd:process.cwd(),env:{PATH:'/usr/bin:/bin',HOME:process.cwd(),TERM:'xterm'}}); p.onData(s=>process.stdout.write(s)); p.onExit(e=>process.exit(e.exitCode)); setTimeout(()=>process.exit(2),3000).unref();`], workspace, env).finished;

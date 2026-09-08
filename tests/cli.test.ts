@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn as spawnPty, type IPty } from 'node-pty';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Message, RunEvent, Session, SessionDetail } from '../shared/types';
+import type { QuestionAnswer, QuestionRequest } from '../shared/questions';
 
 const cli = fileURLToPath(new URL('../bin/lite.mjs', import.meta.url));
 const fixtureEntry = fileURLToPath(new URL('./fixtures/cli-server.ts', import.meta.url));
@@ -56,6 +58,7 @@ function events(result: Result): RunEvent[] {
 describe('spawned lite executable against a real local provider', () => {
   let workspace: string, base: string, fixture: Process;
   const children = new Set<Process>();
+  const terminals = new Set<{ pty: IPty; exited: () => boolean; result: Promise<Result> }>();
   beforeEach(async () => {
     workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-cli-')));
     await mkdir(join(workspace, 'home'));
@@ -74,6 +77,11 @@ describe('spawned lite executable against a real local provider', () => {
       await proc.result.catch(() => {});
     }
     children.clear();
+    for (const terminal of terminals) {
+      if (!terminal.exited()) terminal.pty.kill('SIGKILL');
+      await terminal.result.catch(() => {});
+    }
+    terminals.clear();
     if (fixture) {
       fixture.child.kill('SIGTERM');
       const timer = setTimeout(() => fixture.child.kill('SIGKILL'), 4000);
@@ -85,6 +93,36 @@ describe('spawned lite executable against a real local provider', () => {
   function launch(args: string[], extraEnv: Record<string, string> = {}, explicitUrl = true) {
     const proc = start([cli, ...args, ...(explicitUrl ? ['--url', base] : [])], workspace, environment(workspace, extraEnv));
     children.add(proc); proc.child.stdin.end(); return proc;
+  }
+  function launchTerminal(args: string[]) {
+    const output = join(workspace, `pty-output-${terminals.size}.jsonl`);
+    const quote = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`;
+    // stdin/stderr remain a real PTY; only stdout is redirected to prove JSONL purity.
+    const command = `exec ${[process.execPath, cli, ...args, '--url', base].map(quote).join(' ')} > ${quote(output)}`;
+    const pty = spawnPty('/bin/sh', ['-c', command], { cwd: workspace, env: environment(workspace), cols: 160, rows: 40, name: 'xterm' });
+    let stderr = '', exited = false;
+    pty.onData(data => { stderr += data; });
+    const result = new Promise<Result>((resolve, reject) => {
+      pty.onExit(({ exitCode }) => {
+        exited = true;
+        void readFile(output, 'utf8').then(stdout => resolve({ code: exitCode, signal: null, stdout, stderr }), reject);
+      });
+    });
+    const terminal = { pty, exited: () => exited, result, stderr: () => stderr };
+    terminals.add(terminal); return terminal;
+  }
+  async function pendingQuestion(): Promise<QuestionRequest> {
+    let question: QuestionRequest | undefined;
+    await until(async () => {
+      const list = await api<{ sessions: Session[] }>('/sessions');
+      if (!list.sessions.length) return false;
+      const state = await api<SessionDetail & { questions?: QuestionRequest[] }>(`/sessions/${list.sessions[0].id}`);
+      question = state.questions?.[0]; return Boolean(question);
+    });
+    return question!;
+  }
+  async function submittedAnswers(): Promise<{ path: string; body: QuestionAnswer }[]> {
+    return (await (await fetch(`${base}/fixture/requests`)).json()).answers;
   }
   async function run(args: string[], extraEnv: Record<string, string> = {}, explicitUrl = true) {
     const result = await launch(args, extraEnv, explicitUrl).result;
@@ -339,6 +377,130 @@ describe('spawned lite executable against a real local provider', () => {
     const result = await run(['sessions'], { LITE_URL: `http://127.0.0.1:${port}` }, false);
     expect(result.code).toBe(1); expect(result.stdout).toBe('');
     expect(result.stderr).toContain('Start the local server with lite serve first.');
+  });
+
+  it.each([{ json: false, auto: false }, { json: true, auto: false }, { json: false, auto: true }, { json: true, auto: true }])('cancels unanswered non-TTY questions without guessing (JSON=$json, auto=$auto)', async ({ json, auto }) => {
+    const result = await run(['run', 'question-fixture noninteractive', ...(json ? ['--json'] : []), ...(auto ? ['--auto'] : [])]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('Non-interactive input cannot answer questions, even with --auto');
+    expect(result.stderr).toContain('use the Lite app or rerun in an interactive terminal');
+    const id = sessionId(result);
+    await until(async () => (await api<SessionDetail>(`/sessions/${id}`)).session.status === 'idle');
+    const state = await api<SessionDetail & { questions?: QuestionRequest[] }>(`/sessions/${id}`);
+    expect(state.questions ?? []).toEqual([]);
+    expect(await submittedAnswers()).toEqual([]);
+    expect(await requests()).toHaveLength(1);
+    if (json) {
+      const output = events(result), question = output.find(event => event.type === 'question');
+      expect(question?.data.turnId).toBe(output.find(event => event.type === 'message' && event.data.role === 'user')?.data.id);
+    } else expect(result.stdout).not.toContain('continued exactly once');
+  });
+
+  it.each([
+    { input: '2', answer: { kind: 'option', optionId: 'broad' }, suffix: 'numbered' },
+    { input: 'Prefer a staged rollout', answer: { kind: 'text', text: 'Prefer a staged rollout' }, suffix: 'custom' },
+    { input: 'text: 2', answer: { kind: 'text', text: '2' }, suffix: 'numeric-custom' },
+    { input: 'Explain the tradeoffs first', answer: { kind: 'text', text: 'Explain the tradeoffs first' }, suffix: 'freeform' },
+  ])('answers a question through an actual PTY with $suffix input and pristine JSON stdout', async ({ input, answer, suffix }) => {
+    const terminal = launchTerminal(['run', `question-fixture ${suffix}`, '--json']);
+    const question = await pendingQuestion();
+    await until(() => terminal.stderr().includes(suffix === 'freeform' ? 'Your answer:' : 'Choose a number,'));
+    if (suffix !== 'freeform') {
+      expect(terminal.stderr()).toContain('1. Small change'); expect(terminal.stderr()).toContain('2. Broader revision');
+      expect(await submittedAnswers()).toEqual([]); // Printing options never preselects an answer.
+    }
+    terminal.pty.write(`${input}\r`);
+    const result = await terminal.result;
+    expect(result.code).toBe(0); expect(sessionId(result)).toBe(question.sessionId);
+    const output = events(result);
+    expect(output.filter(event => event.type === 'delta').map(event => event.data.delta).join('')).toBe('Question answered; continued exactly once.');
+    expect(output.at(-1)).toMatchObject({ type: 'done', data: { status: 'idle' } });
+    expect(await submittedAnswers()).toEqual([{ path: `/api/sessions/${question.sessionId}/questions/${question.id}/answer`, body: answer }]);
+    expect(await requests()).toHaveLength(2);
+    expect(result.stdout).not.toContain('Choose a number,');
+  });
+
+  it('reprompts invalid or blank PTY input, deduplicates question IDs, ignores stale turns, and escapes model terminal controls', async () => {
+    const terminal = launchTerminal(['run', 'question-fixture controls', '--json']);
+    const question = await pendingQuestion();
+    await until(() => terminal.stderr().includes('Choose a number,'));
+    expect(terminal.stderr()).toContain('\\u001b]52;c;SECRETS\\u0007\\u000dspoof\\u202e');
+    expect(terminal.stderr()).toContain('Small\\u001b[2J change');
+    expect(terminal.stderr()).toContain('Keep\\u009b2J it focused');
+    expect(terminal.stderr()).not.toContain('\u001b]52;');
+    for (const stale of [false, true]) {
+      const response = await fetch(`${base}/fixture/question-event/${question.sessionId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stale }) });
+      expect(response.ok).toBe(true);
+    }
+    terminal.pty.write('99\r');
+    await until(() => terminal.stderr().includes('Choose a listed number'));
+    terminal.pty.write('\r');
+    await until(() => terminal.stderr().includes('Enter a nonblank answer'));
+    expect(await submittedAnswers()).toEqual([]);
+    terminal.pty.write('1\r');
+    const result = await terminal.result;
+    expect(result.code).toBe(0);
+    expect(result.stderr.split('Choose a path').length - 1).toBe(1);
+    expect(events(result).filter(event => event.type === 'question' && event.data.id === 'stale-question')).toEqual([]);
+    expect((await submittedAnswers()).map(answer => answer.body)).toEqual([{ kind: 'option', optionId: 'small' }]);
+  });
+
+  it('dismisses pending PTY input on done even when a question resolution event is missing', async () => {
+    const session = await api<Session>('/sessions', { title: 'Terminal done dismissal' });
+    expect((await fetch(`${base}/fixture/omit-question-resolution/${session.id}`, { method: 'POST' })).ok).toBe(true);
+    const terminal = launchTerminal(['run', 'question-fixture missing resolution', '--session', session.id, '--json']);
+    const question = await pendingQuestion();
+    await until(() => terminal.stderr().includes('Choose a number,'));
+    await api(`/sessions/${session.id}/questions/${question.id}/answer`, { kind: 'option', optionId: 'small' });
+    const result = await terminal.result;
+    expect(result.code).toBe(0);
+    expect(events(result).filter(event => event.type === 'question_resolved')).toEqual([]);
+    expect(events(result).at(-1)).toMatchObject({ type: 'done' });
+    expect(await submittedAnswers()).toHaveLength(1);
+    expect(await requests()).toHaveLength(2);
+  });
+
+  it('keeps reading SSE while an actual PTY tool approval is resolved by another client', async () => {
+    const terminal = launchTerminal(['run', 'write-fixture external approval', '--json']);
+    let session: Session, permissionId: string;
+    await until(async () => {
+      session = (await api<{ sessions: Session[] }>('/sessions')).sessions[0];
+      if (!session) return false;
+      permissionId = (await api<SessionDetail>(`/sessions/${session.id}`)).permissions[0]?.id;
+      return Boolean(permissionId);
+    });
+    await until(() => terminal.stderr().includes('[y/N]'));
+    await api(`/sessions/${session!.id}/permissions/${permissionId!}`, { decision: 'deny' });
+    const result = await terminal.result;
+    expect(result.code).toBe(0);
+    expect(events(result).at(-1)).toMatchObject({ type: 'done' });
+    await expect(readFile(join(workspace, 'cli-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.each(['answer', 'cancel'])('keeps reading SSE and dismisses PTY input when another client performs %s', async action => {
+    const terminal = launchTerminal(['run', 'question-fixture external resolution', '--json']);
+    const question = await pendingQuestion();
+    await until(() => terminal.stderr().includes('Choose a number,'));
+    if (action === 'answer') await api(`/sessions/${question.sessionId}/questions/${question.id}/answer`, { kind: 'text', text: 'Answered in the other tab' });
+    else await api(`/sessions/${question.sessionId}/cancel`, {});
+    const result = await terminal.result;
+    expect(result.code).toBe(action === 'answer' ? 0 : 1);
+    expect(events(result).at(-1)).toMatchObject({ type: 'done' });
+    expect(events(result).some(event => event.type === 'question_resolved' && event.data.status === (action === 'answer' ? 'answered' : 'cancelled'))).toBe(true);
+    expect(await requests()).toHaveLength(action === 'answer' ? 2 : 1);
+    expect(await submittedAnswers()).toHaveLength(action === 'answer' ? 1 : 0);
+  });
+
+  it.each([{ input: '\u0004', code: 1, label: 'EOF' }, { input: '\u0003', code: 130, label: 'Ctrl-C' }, { input: '', code: 143, label: 'SIGTERM' }])('$label during an actual PTY question cancels remotely without a guessed answer', async ({ input, code, label }) => {
+    const terminal = launchTerminal(['run', 'question-fixture interrupted', '--json']);
+    const question = await pendingQuestion();
+    await until(() => terminal.stderr().includes('Choose a number,'));
+    if (label === 'SIGTERM') terminal.pty.kill('SIGTERM'); else terminal.pty.write(input);
+    const result = await terminal.result;
+    expect(result.code).toBe(code); expect(sessionId(result)).toBe(question.sessionId);
+    await until(async () => (await api<SessionDetail>(`/sessions/${question.sessionId}`)).session.status === 'idle');
+    expect(await submittedAnswers()).toEqual([]); expect(await requests()).toHaveLength(1);
+    if (label === 'EOF') expect(result.stderr).toContain('Input closed before an answer was submitted');
   });
 
   it.each([false, true])('fails provider errors with nonzero exit status (JSON=%s)', async json => {

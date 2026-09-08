@@ -11,9 +11,11 @@ if (!workspace) throw new Error('CLI_TEST_WORKSPACE is required.');
 const store = new Store(join(workspace, 'state'));
 const secret = 'CLI_FIXTURE_KEY_DO_NOT_PRINT';
 const requests: unknown[] = [];
+const answers: { path: string; body: unknown }[] = [];
 const heldResponses = new Map<string, () => void>();
 const races = new Map<string, { prompt: string; phases: string[] }>();
 const missingMessageIds = new Set<string>();
+const omitQuestionResolutions = new Set<string>();
 const mock = createServer(async (req, res) => {
   if (req.url?.endsWith('/models')) {
     res.setHeader('Content-Type', 'application/json');
@@ -47,6 +49,17 @@ const mock = createServer(async (req, res) => {
     }
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const emit = (delta: unknown, finish_reason?: string) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`);
+    if (prompt.includes('question-fixture') && body.messages.at(-1)?.role !== 'tool') {
+      const controls = prompt.includes('controls');
+      emit({ tool_calls: [{ index: 0, id: 'cli-question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({
+        question: controls ? 'Choose a path\u001b]52;c;SECRETS\u0007\rspoof\u202e.' : 'Which approach should I use?',
+        options: prompt.includes('freeform') ? [] : [
+          { id: 'small', label: controls ? 'Small\u001b[2J change' : 'Small change', description: controls ? 'Keep\u009b2J it focused' : 'Keep the change focused.' },
+          { id: 'broad', label: 'Broader revision', description: 'Update related code too.' },
+        ],
+      }) } }] });
+      emit({}, 'tool_calls'); res.end('data: [DONE]\n\n'); return;
+    }
     if (prompt.includes('write-fixture') && body.messages.at(-1)?.role !== 'tool') {
       emit({ tool_calls: [{ index: 0, id: 'cli-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'cli-output.txt', content: 'Written by the CLI fixture.\n' }) } }] });
       emit({}, 'tool_calls'); res.end('data: [DONE]\n\n'); return;
@@ -57,7 +70,7 @@ const mock = createServer(async (req, res) => {
       res.on('close', () => clearTimeout(timer)); return;
     }
     emit({ reasoning_content: 'Checking the CLI request.' });
-    const text = prompt.includes('write-fixture') ? 'Tool request finished.' : `Reply: ${prompt} — café ready.\n`;
+    const text = prompt.includes('question-fixture') ? 'Question answered; continued exactly once.' : prompt.includes('write-fixture') ? 'Tool request finished.' : `Reply: ${prompt} — café ready.\n`;
     for (const part of text.match(/.{1,7}|\n/g) ?? []) {
       if (res.destroyed) return;
       emit({ content: part });
@@ -76,7 +89,16 @@ store.saveSettings({ workspace, providers: [
   { id: 'broken', name: 'Unavailable fixture', kind: 'openai', baseUrl: `${mockUrl}/broken/v1`, apiKey: secret },
 ], defaultProvider: 'fixture', defaultModel: 'cli-default', permissionMode: 'ask', maxSteps: 8, mcpServers: {} });
 const { app, runner, bus } = createApp({ store });
-app.get('/fixture/requests', (_req, res) => res.json({ requests }));
+app.get('/fixture/requests', (_req, res) => res.json({ requests, answers }));
+app.post('/fixture/omit-question-resolution/:id', (req, res) => {
+  omitQuestionResolutions.add(req.params.id); res.json({ ok: true });
+});
+app.post('/fixture/question-event/:id', express.json(), (req, res) => {
+  const question = store.events(req.params.id, 0).findLast(event => event.type === 'question')?.data;
+  if (!question) { res.status(404).json({ error: 'No question event.' }); return; }
+  const data = req.body.stale ? { ...question, id: 'stale-question', turnId: 'previous-turn' } : question;
+  bus.emit(req.params.id, 'question', data); res.json({ ok: true });
+});
 app.post('/fixture/race/:id', express.json(), (req, res) => {
   races.set(req.params.id, { prompt: req.body.prompt, phases: [] }); res.json({ ok: true });
 });
@@ -88,11 +110,20 @@ app.get('/fixture/race/:id', (req, res) => {
   res.json({ ...race, ready: Boolean(race && heldResponses.has(race.prompt)) });
 });
 const server = createServer(async (req, res) => {
+  if (req.method === 'POST' && /^\/api\/sessions\/[^/]+\/questions\/[^/]+\/answer$/.test(req.url ?? '')) {
+    const chunks: Buffer[] = [], path = req.url!;
+    req.on('data', chunk => chunks.push(Buffer.from(chunk)));
+    req.on('end', () => { try { answers.push({ path, body: JSON.parse(Buffer.concat(chunks).toString()) }); } catch {} });
+  }
   const match = req.url?.match(/^\/api\/sessions\/([^/]+)\/(events|messages)$/);
   const race = match && races.get(match[1]);
   if (match && match[2] === 'messages' && req.method === 'POST' && missingMessageIds.delete(match[1])) {
     const response = res as express.Response;
     response.json = data => express.response.json.call(response, { ...data, messageId: undefined });
+  }
+  if (match && match[2] === 'events' && req.method === 'GET' && omitQuestionResolutions.has(match[1])) {
+    const write = res.write.bind(res);
+    res.write = ((...args: Parameters<typeof res.write>) => String(args[0]).includes('"type":"question_resolved"') ? true : write(...args)) as typeof res.write;
   }
   if (race && match[2] === 'events' && req.method === 'GET') {
     // app's future-only subscription is installed before its connected comment is written.

@@ -75,7 +75,7 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
   app.patch('/api/sessions/:id',(req,res)=>{
     const patch=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional()}).parse(req.body);
     if(patch.model||patch.providerId||patch.mode||patch.permissionMode)runner.assertIdle(req.params.id);
@@ -112,6 +112,8 @@ export function createApp(options:AppOptions = {}) {
   app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/permissions/:requestId',(req,res)=>{const{decision}=z.object({decision:z.enum(['allow','always','deny'])}).parse(req.body);runner.decide(req.params.id,req.params.requestId,decision);res.json({ok:true});});
+  app.get('/api/sessions/:id/questions',(req,res)=>res.json({questions:runner.questions.pending(req.params.id)}));
+  app.post('/api/sessions/:id/questions/:questionId/answer',(req,res)=>res.json(runner.questions.answer(req.params.id,req.params.questionId,req.body)));
   app.get('/api/sessions/:id/tool-grants',(req,res)=>res.json({tools:store.toolGrants(req.params.id).map(g=>g.tool)}));
   app.delete('/api/sessions/:id/tool-grants',(req,res)=>{store.clearToolGrants(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/fork',(req,res)=>{runner.assertIdle(req.params.id);const input=z.object({messageId:z.string().optional()}).parse(req.body||{});res.status(201).json(store.fork(req.params.id,input.messageId));});
