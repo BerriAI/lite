@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, ShieldCheck, Trash2, Unplug, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Trash2, Unplug, X } from 'lucide-react';
 import type { McpServerConfig, Provider, Settings as SettingsType } from '../../shared/types';
+import type { PermissionDecision, PermissionRuleSet } from '../../shared/permissions';
+import { PERMISSION_LIMITS } from '../../shared/permissions';
 import { api, errorMessage, patch, post } from './api';
 import { CopyButton, Modal, SpeedRail } from './ui';
 
@@ -11,6 +13,29 @@ type McpReview = { servers: Record<string, McpServerConfig>; revision: string };
 const mcpStatusLabels: Record<McpServerStatus['status'], string> = { disabled: 'Disabled', disconnected: 'Configured · disconnected', connecting: 'Connecting', connected: 'Connected', refreshing: 'Refreshing tools', stale: 'Stale', error: 'Error' };
 type Login = { loginId: string; method: 'device' | 'browser'; url: string; userCode?: string; expiresAt: number; providerId: string };
 type ContextLimitRow = { id: string; model: string; tokens: string };
+// Mirrors the server's RULE_TOOLS allowlist (server/permissions.ts stays the authority; rules never target mcp_* tools).
+const RULE_TOOLS = ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash', 'web_fetch', 'todo_read', 'todo_write', 'task'] as const;
+const decisionLabels: [PermissionDecision, string][] = [['allow', 'Allow without asking'], ['ask', 'Ask every time'], ['deny', 'Deny always']];
+type RuleRow = { id: string; tool: string; decision: PermissionDecision; patterns: string };
+const ruleRowsFor = (ruleSet?: PermissionRuleSet): RuleRow[] => (ruleSet?.rules ?? []).map(rule => ({ id: crypto.randomUUID(), tool: rule.tool, decision: rule.decision, patterns: (rule.patterns ?? []).join('\n') }));
+const rowPatterns = (row: RuleRow) => row.patterns.split('\n').map(line => line.trim()).filter(Boolean);
+function ruleRowError(row: RuleRow): string {
+  if (!(RULE_TOOLS as readonly string[]).includes(row.tool)) return 'Choose a built-in tool.';
+  const patterns = rowPatterns(row);
+  if (patterns.length > PERMISSION_LIMITS.patternsPerRule) return `Use at most ${PERMISSION_LIMITS.patternsPerRule} patterns per rule.`;
+  const over = patterns.find(value => value.length > PERMISSION_LIMITS.patternLength);
+  if (over !== undefined) return `Patterns are limited to ${PERMISSION_LIMITS.patternLength} characters each.`;
+  if (patterns.some(value => /[\p{Cc}\p{Cf}]/u.test(value))) return 'Patterns must be single-line printable text.';
+  return '';
+}
+function parseRuleRows(rows: RuleRow[]): PermissionRuleSet {
+  if (rows.length > PERMISSION_LIMITS.rules) throw new Error(`Use at most ${PERMISSION_LIMITS.rules} permission rules.`);
+  return { version: 1, rules: rows.map((row, index) => {
+    const problem = ruleRowError(row); if (problem) throw new Error(`Permission rule ${index + 1}: ${problem}`);
+    const patterns = rowPatterns(row);
+    return { tool: row.tool, decision: row.decision, ...(patterns.length ? { patterns } : {}) };
+  }) };
+}
 const contextRowsFor = (providers: Provider[]): Record<string, ContextLimitRow[]> => Object.fromEntries(providers.map(provider => [provider.id, Object.entries(provider.contextWindows ?? {}).map(([model, tokens]) => ({ id: crypto.randomUUID(), model, tokens: String(tokens) }))]));
 function parseContextRows(rows: ContextLimitRow[]): Record<string, number> {
   if (rows.length > 100) throw new Error('Use at most 100 context window overrides per provider.');
@@ -27,8 +52,10 @@ function parseContextRows(rows: ContextLimitRow[]): Record<string, number> {
 export function Settings({ settings, onClose, onSave }: { settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
   const [draft, setDraft] = useState<SettingsType>(() => ({ ...settings, providers: settings.providers.map(({ apiKey: _key, ...p }) => p) }));
   const [contextRows, setContextRows] = useState(() => contextRowsFor(settings.providers));
+  const [ruleRows, setRuleRows] = useState(() => ruleRowsFor(settings.permissionRules));
+  const rulesTouched = useRef(false);
   const saving = useRef(false);
-  const [tab, setTab] = useState<'providers' | 'general' | 'integrations'>('providers');
+  const [tab, setTab] = useState<'providers' | 'general' | 'permissions' | 'integrations'>('providers');
   const [selected, setSelected] = useState(settings.defaultProvider || settings.providers[0]?.id || '');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -147,6 +174,12 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
     setNotice(''); setError(''); setContextRows(current => ({ ...current, [selected]: next }));
   }
   function updateProvider(update: Partial<Provider>) { setNotice(''); setDraft(s => ({ ...s, providers: s.providers.map(p => p.id === selected ? { ...p, ...update } : p) })); }
+  function updateRuleRows(next: RuleRow[]) {
+    if (saving.current) return;
+    rulesTouched.current = true; setNotice(''); setError(''); setRuleRows(next);
+  }
+  const ruleErrors = ruleRows.map(ruleRowError);
+  const rulesInvalid = ruleRows.length > PERMISSION_LIMITS.rules || ruleErrors.some(Boolean);
   async function save(close: boolean) {
     if (saving.current || mcpOperations.current.size || reviewOperation.current) return null;
     saving.current = true; setBusy(true); setError(''); setNotice('');
@@ -157,14 +190,18 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       if (!draft.providers.some(p => p.id === draft.defaultProvider)) throw new Error('Choose a default provider.');
       const mcpChanged = mcp !== initialMcp.current;
       if (mcpChanged && !reviewedRevision.current) throw new Error('Review the saved MCP configuration before saving MCP changes.');
-      const { mcpServers: _mcp, mcpConfigRevision: _revision, ...values } = draft;
+      const { mcpServers: _mcp, mcpConfigRevision: _revision, permissionRules: _rules, ...values } = draft;
+      let permissionRules: PermissionRuleSet | undefined;
+      if (rulesTouched.current) {
+        try { permissionRules = parseRuleRows(ruleRows); } catch (error) { setTab('permissions'); throw error; }
+      }
       const providers = values.providers.map(p => {
         let contextWindows: Record<string, number>;
         try { contextWindows = parseContextRows(contextRows[p.id] ?? []); }
         catch (error) { setSelected(p.id); setTab('providers'); throw error; }
         return { ...p, models: p.models?.filter(Boolean), ...(contextRows[p.id] !== undefined || p.contextWindows !== undefined ? { contextWindows } : {}) };
       });
-      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
+      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(permissionRules !== undefined ? { permissionRules } : {}), ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
       if (!alive.current) return saved;
       onSave(saved);
       if (mcpChanged) {
@@ -174,6 +211,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       // An unrelated save is not consent to adopt unseen changes to saved executable configuration.
       setDraft({ ...saved, mcpServers: savedMcp.current, mcpConfigRevision: reviewedRevision.current, providers: saved.providers.map(({ apiKey: _key, ...p }) => p) });
       setContextRows(contextRowsFor(saved.providers));
+      setRuleRows(ruleRowsFor(saved.permissionRules)); rulesTouched.current = false;
       if (close) onClose(); else { setNotice('Settings saved.'); void refreshMcp(true); }
       return saved;
     } catch (e) { if (alive.current) { setError(errorMessage(e)); void refreshMcp(true); } return null; }
@@ -209,6 +247,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
     <div className="settings-layout"><nav className="settings-nav" aria-label="Settings sections">
       <button className={tab === 'providers' ? 'selected' : ''} onClick={() => setTab('providers')}><Server size={16} />Providers</button>
       <button className={tab === 'general' ? 'selected' : ''} onClick={() => setTab('general')}><Settings2 size={16} />Workspace</button>
+      <button className={tab === 'permissions' ? 'selected' : ''} onClick={() => setTab('permissions')}><Shield size={16} />Permissions</button>
       <button className={tab === 'integrations' ? 'selected' : ''} onClick={() => setTab('integrations')}><Unplug size={16} />Integrations</button>
       <div className="settings-note"><ShieldCheck size={17} /><p>Your keys stay on this local server. They are never returned to the browser.</p></div>
     </nav><div className="settings-content">
@@ -243,6 +282,24 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         <div className="form-columns"><label>Maximum steps<input type="number" min="1" max="100" value={draft.maxSteps} onChange={e => setDraft(s => ({ ...s, maxSteps: Number(e.target.value) }))} /></label><label>Appearance<select value={draft.theme} onChange={e => setDraft(s => ({ ...s, theme: e.target.value as SettingsType['theme'] }))}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
         <div className="quiet-callout"><ShieldCheck size={18} /><p>Plan mode is read-only. Switch to Build when you are ready to make changes.</p></div>
       </div>}
+      {tab === 'permissions' && <div className="form-stack"><div className="section-heading"><div><h3>Decide once, ahead of time.</h3><p>Explicit rules run before the session’s permission mode.</p></div></div>
+        <p className="field-hint">An explicit Deny always wins. Ask beats Allow. Per-project rules in <code>.lite/permissions.json</code> in your workspace (same shape: <code>{'{"version":1,"rules":[…]}'}</code>) override these app rules at equal severity. When no rule matches, the session’s permission mode decides as usual. Rules never widen tool availability — Plan mode and profile limits still apply, and connected (mcp_*) tools cannot be targeted. Rules for a turn are captured when the message is accepted, so edits here apply to future turns.</p>
+        <p className="field-hint">Patterns, one per line, match the tool’s sensitive argument: the command for bash, the workspace-relative path for file tools. A rule with no patterns matches every call of the tool. For bash, a pattern without wildcards matches as a command prefix at a word boundary (“git status” covers “git status --short”, not “git statusx”); <code>*</code> spans words and flags but never crosses shell operators like <code>;</code> <code>&&</code> <code>|</code>; <code>**</code> matches anything. For file tools, <code>*</code> stays within one path segment and <code>**</code> crosses segments.</p>
+        {ruleRows.length === 0 ? <div className="empty-state"><Shield size={25} /><strong>No permission rules</strong><p>Every tool call falls back to the session’s permission mode. Add a rule to always allow, always ask, or always deny specific tools or patterns.</p><button className="button secondary" disabled={busy} onClick={() => updateRuleRows([{ id: crypto.randomUUID(), tool: 'bash', decision: 'ask', patterns: '' }])}><Plus size={15} />Add rule</button></div> : <>
+          {ruleRows.map((row, index) => <div className="permission-rule" key={row.id}>
+            <div className="permission-rule-row">
+              <label>Tool<select aria-label={`Rule ${index + 1} tool`} value={row.tool} disabled={busy} onChange={e => updateRuleRows(ruleRows.map(item => item.id === row.id ? { ...item, tool: e.target.value } : item))}>{RULE_TOOLS.map(tool => <option key={tool} value={tool}>{tool}</option>)}</select></label>
+              <label>Decision<select aria-label={`Rule ${index + 1} decision`} value={row.decision} disabled={busy} onChange={e => updateRuleRows(ruleRows.map(item => item.id === row.id ? { ...item, decision: e.target.value as PermissionDecision } : item))}>{decisionLabels.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <button className="icon-button danger" type="button" disabled={busy} aria-label={`Remove rule ${index + 1}`} title="Remove rule" onClick={() => updateRuleRows(ruleRows.filter(item => item.id !== row.id))}><Trash2 size={15} /></button>
+            </div>
+            <label>Patterns<textarea className="code-input" rows={2} aria-label={`Rule ${index + 1} patterns`} value={row.patterns} disabled={busy} spellCheck={false} placeholder={'Optional · one per line · blank matches every call'} onChange={e => updateRuleRows(ruleRows.map(item => item.id === row.id ? { ...item, patterns: e.target.value } : item))} /></label>
+            {ruleErrors[index] && <p className="error-text" role="alert">{ruleErrors[index]}</p>}
+          </div>)}
+          <div className="permission-rules-footer"><button className="text-button" type="button" disabled={busy || ruleRows.length >= PERMISSION_LIMITS.rules} onClick={() => updateRuleRows([...ruleRows, { id: crypto.randomUUID(), tool: 'bash', decision: 'ask', patterns: '' }])}><Plus size={14} />Add rule</button><span className="field-hint">{ruleRows.length} / {PERMISSION_LIMITS.rules} rules · {PERMISSION_LIMITS.patternsPerRule} patterns per rule · {PERMISSION_LIMITS.patternLength} characters per pattern</span></div>
+          {ruleRows.length > PERMISSION_LIMITS.rules && <p className="error-text" role="alert">Use at most {PERMISSION_LIMITS.rules} permission rules.</p>}
+        </>}
+        <div className="quiet-callout"><ShieldCheck size={18} /><p>Pattern matching is a documented convenience, not a sandbox. A bash command containing shell control operators never auto-allows through a pattern rule unless the full command text matches.</p></div>
+      </div>}
       {tab === 'integrations' && <div className="form-stack"><div className="section-heading"><div><h3>Extend your workspace.</h3><p>Connect tools through Model Context Protocol.</p></div></div>
         <label>MCP servers<textarea className="code-input" rows={12} value={mcp} disabled={busy} onChange={e => { currentMcp.current = e.target.value; setMcp(e.target.value); }} spellCheck={false} aria-label="MCP servers" aria-describedby="mcp-hint" /><span className="field-hint" id="mcp-hint">A JSON object keyed by server name. Each entry supports command, args, env, or url, and enabled. Masked environment values are kept when saved unchanged.</span></label>
         <div className="mcp-cache-heading"><div><strong>Saved server connections</strong><p>Cache-only status · checked every 3 seconds while this tab is open. Viewing status never starts a server.</p></div><button className="button secondary" disabled={mcpLoading || busy} onClick={() => void refreshMcp(true)}>Refresh status</button></div>
@@ -272,6 +329,6 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={14} /></button></div>}
       {notice && <p className="success-note" role="status"><Check size={15} />{notice}</p>}
     </div></div>
-    <footer className="modal-footer"><span>Local by default. Open by design.</span><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || testing || anyMcpAction || reviewLoading} onClick={() => save(true)}>Save settings<ChevronRight size={15} /></button></footer>
+    <footer className="modal-footer"><span>Local by default. Open by design.</span><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || testing || anyMcpAction || reviewLoading || rulesInvalid} onClick={() => save(true)}>Save settings<ChevronRight size={15} /></button></footer>
   </Modal>;
 }

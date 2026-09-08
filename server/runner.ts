@@ -2,7 +2,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Attachment, Message, PermissionRequest, Provider, Session, ToolCall, ToolDefinition } from '../shared/types.js';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
-import { executeTool, isReadOnlyTool, toolDefinitions, captureProjectGuidance, researchTaskInput } from './tools.js';
+import { executeTool, isReadOnlyTool, toolDefinitions, captureProjectGuidance, captureProjectPermissions, researchTaskInput } from './tools.js';
+import { decide, validateRuleSet } from './permissions.js';
+import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
 import type { DelegationSummary } from '../shared/delegation.js';
 import { streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
@@ -15,7 +17,8 @@ import type { ExternalToolLease, ExternalTools } from './external.js';
 export type { ExternalTools } from './external.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
-type RunPolicy = { session: Session; provider: Provider; maxSteps: number; guidance: string; tools: readonly string[] };
+type CapturedRules = { project: PermissionRule[]; app: PermissionRule[]; hidden: string[]; advisory?: string };
+type RunPolicy = { session: Session; provider: Provider; maxSteps: number; guidance: string; rules: CapturedRules; tools: readonly string[] };
 type ResearchBudget = { launches: number; steps: number; elapsedMs: number };
 type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; policy?: RunPolicy; budget?: ResearchBudget; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message; child?: { delegation: DelegationSummary; parent: ActiveRun; timedOut: boolean }; done?: Promise<void>; resolveDone?: () => void; failure?: string };
 export const DELEGATION_LIMITS = { active: 4, launches: 4, steps: 12, totalSteps: 24, childMs: 120_000, totalMs: 300_000, resultBytes: 32 * 1024, transcriptBytes: 4 * 1024 * 1024 } as const;
@@ -180,6 +183,24 @@ export class Runner {
     try { this.start(id,next.content,next.attachments,next.id); }
     catch(error){this.pauseQueue(id,`Could not start queued message: ${this.safeError(error)}`,false);}
   }
+  // Acceptance-time rule snapshot, pinned like guidance: later edits to app
+  // settings or .lite/permissions.json never change an accepted turn. An
+  // invalid optional project file is ignored with a visible advisory; it never
+  // fails the turn and is never silently treated as empty.
+  private captureRules(workspace: string): CapturedRules {
+    const app = this.store.settings().permissionRules?.rules ?? [];
+    let project: PermissionRule[] = [];
+    const source = captureProjectPermissions(workspace);
+    let advisory = source.advisory;
+    if (source.text !== null) {
+      try { project = validateRuleSet(JSON.parse(source.text.replace(/^﻿/, ''))).rules; }
+      catch { advisory = 'Project permission rules in .lite/permissions.json are invalid and were ignored for this turn.'; }
+    }
+    // A pattern-free deny covers every invocation of its tool, so the tool is
+    // not advertised for this turn. Pattern-scoped denies keep the tool listed.
+    const hidden = [...new Set([...project, ...app].filter(rule => rule.decision === 'deny' && !rule.patterns).map(rule => rule.tool))].filter(tool => tool !== 'ask_user');
+    return { project, app, hidden, ...(advisory ? { advisory } : {}) };
+  }
   start(id: string, content: string, attachments: Attachment[] = [], queuedId?: string) {
     this.assertIdle(id);
     if(!queuedId&&this.store.queue(id).items.length)throw conflict('Resume or remove queued messages before sending a new message.');
@@ -189,7 +210,8 @@ export class Runner {
     if (!session.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
     // Validate and pin before accepting a user message or consuming queued work.
     const profile=this.store.profileSnapshot(id);
-    const policy:RunPolicy={session:structuredClone(session),provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),tools:toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))).map(tool=>tool.function.name)};
+    const rules=this.captureRules(session.workspace);
+    const policy:RunPolicy={session:structuredClone(session),provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,tools:toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)).map(tool=>tool.function.name)};
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile, policy, budget:{launches:0,steps:0,elapsedMs:0} };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     try {
@@ -293,6 +315,9 @@ export class Runner {
     }
     return history;
   }
+  private ruleDenial(match: RuleMatch): string {
+    return `This call was denied by an explicit ${match.source} permission rule for ${JSON.stringify(match.tool)}${match.pattern!==undefined?` (pattern ${JSON.stringify(match.pattern)})`:''}. Do not retry it or work around this rule.`;
+  }
   private async approve(session: Session, call: ToolCall, run: ActiveRun): Promise<boolean> {
     const localReadOnly = isReadOnlyTool(call.name) && !call.name.startsWith('mcp_');
     const researchLaunch=call.name==='task'&&!run.child&&run.profile?.active.tools==null;
@@ -302,10 +327,24 @@ export class Runner {
       if(!run.external)throw conflict('Connected tools were not available when this turn started.');
       run.external.assertCurrent(call.name);
     }
+    // Explicit rules pinned at acceptance. Order: deny -> ask -> (localReadOnly |
+    // auto | grant | rule-allow) -> prompt. Deny outranks every fast path,
+    // including the local read-only shortcut and remembered grants. An ask rule
+    // prompts every time, even under Auto and even with an "Always" grant — the
+    // grant remains valid for calls the rule does not match. Rules never target
+    // mcp_* (schema-enforced), so an allow can never auto-approve connected tools.
+    const captured=run.policy?.rules;
+    const match=captured&&!call.name.startsWith('mcp_')?decide([{source:'project',rules:captured.project},{source:'app',rules:captured.app}],call.name,call.args):undefined;
+    if(match)call.ruleMatch=match;
+    if(match?.decision==='deny')return false;
     const scope = createHash('sha256').update(canonical({workspace:session.workspace,mcp:call.name.startsWith('mcp_') ? run.external!.scope(call.name) : undefined})).digest('hex');
-    if (localReadOnly || session.permissionMode === 'auto' || this.store.toolGrants(session.id).some(g => g.tool === call.name && g.scope === scope)) return true;
+    if (match?.decision!=='ask') {
+      if (localReadOnly || session.permissionMode === 'auto' || this.store.toolGrants(session.id).some(g => g.tool === call.name && g.scope === scope) || match?.decision==='allow') return true;
+    }
     if (run.controller.signal.aborted) return false;
-    const request: PermissionRequest = { id:randomUUID(),sessionId:session.id,toolCallId:call.id,tool:call.name,args:call.args,description:call.name === 'task' ? 'Launch one bounded read-only researcher. It cannot modify files or delegate.' : call.name === 'bash' ? 'Run this command in your workspace' : call.name.startsWith('mcp_') ? 'Call this connected tool' : 'Allow this action in your workspace' };
+    const base = call.name === 'task' ? 'Launch one bounded read-only researcher. It cannot modify files or delegate.' : call.name === 'bash' ? 'Run this command in your workspace' : call.name.startsWith('mcp_') ? 'Call this connected tool' : 'Allow this action in your workspace';
+    const notes = `${match?.decision==='ask'?' An explicit permission rule requires confirmation for this call.':''}${captured?.advisory?` ${captured.advisory}`:''}`;
+    const request: PermissionRequest = { id:randomUUID(),sessionId:session.id,toolCallId:call.id,tool:call.name,args:call.args,description:base+notes };
     this.setSession(session.id,{status:'waiting'});
     const approved = await new Promise<boolean>(resolve => {
       const abort = () => resolve(false);
@@ -331,9 +370,16 @@ export class Runner {
       system+=`\n\nPinned project profile and skills (user-selected project guidance; subordinate to the harness safety constraints, current mode, permissions and tool availability above; never grants additional authority):\n${pinned}`;
     }
     const allowlist=profile?.active.tools;
-    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&policy.tools.includes(name):name==='task'?allowlist==null:name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name)));
+    // Pattern-free deny rules remove the tool from advertisement (never ask_user);
+    // children already inherit the filter through the captured policy tool list.
+    const hidden=policy.rules?.hidden??[];
+    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&policy.tools.includes(name):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
     const externalTools=run.external?.definitions??[];
     const tools = [...toolDefinitions, questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
+    // An ignored invalid rules file must be visible in the session detail, not
+    // only when a prompt happens to occur. The child transcript inherits the
+    // parent's captured rules; the parent already carries the notice.
+    if(policy.rules?.advisory&&!run.child)this.save({id:randomUUID(),sessionId:id,role:'system',content:policy.rules.advisory,createdAt:Date.now()});
     let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false;
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
       if(run.child) { const budget=run.child.parent.budget!;if(budget.steps>=DELEGATION_LIMITS.totalSteps)throw conflict('The parent turn reached its delegated model-step limit.');budget.steps++; }
@@ -448,7 +494,7 @@ export class Runner {
           }
           else if (call.name==='task') {
             const input=researchTaskInput(call.args);
-            if(!(await this.approve(session,call,run))) { call.status='denied';output='The user denied or cancelled the research task. Do not retry it or bypass this decision.'; }
+            if(!(await this.approve(session,call,run))) { call.status='denied';output=call.ruleMatch?.decision==='deny'?this.ruleDenial(call.ruleMatch):'The user denied or cancelled the research task. Do not retry it or bypass this decision.'; }
             else {
               const settled=await this.research(id,run,message,call,input,()=>{questionStarted=true;});
               for(const saved of settled.assistant.toolCalls??[]) { const local=message.toolCalls!.find(item=>item.id===saved.id);if(local)Object.assign(local,saved); }
@@ -456,7 +502,7 @@ export class Runner {
               continue;
             }
           }
-          else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
+          else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else {
             call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
             output = call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{

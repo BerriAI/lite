@@ -79,6 +79,31 @@ export function captureProjectGuidance(workspace: string): string {
   return result;
 }
 
+/** Acceptance-time snapshot of the optional .lite/permissions.json rules file.
+ * Same guarded synchronous posture as captureProjectGuidance — turn acceptance
+ * is synchronous, so the async profile reader cannot be used here. A missing
+ * file is silent; any unsafe or unreadable state returns an advisory so the
+ * turn still runs with the file visibly ignored, never silently emptied. */
+export function captureProjectPermissions(workspace: string): { text: string | null; advisory?: string } {
+  const ignored = { text: null, advisory: 'Project permission rules in .lite/permissions.json could not be read safely and were ignored for this turn.' };
+  let descriptor: number | undefined;
+  try {
+    const root = realpathSync(workspace);
+    const target = path.join(root, '.lite', 'permissions.json'), parent = path.dirname(target);
+    try { lstatSync(target); } catch (error) { return hasCode(error, 'ENOENT') ? { text: null } : ignored; }
+    if (lstatSync(parent).isSymbolicLink() || realpathSync(parent) !== parent || realpathSync(target) !== target) return ignored;
+    descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const before = fstatSync(descriptor), linked = lstatSync(target);
+    if (linked.isSymbolicLink() || linked.dev !== before.dev || linked.ino !== before.ino || !before.isFile() || before.nlink !== 1 || before.size > 64 * 1024) return ignored;
+    const bytes = Buffer.alloc(before.size);
+    const count = readSync(descriptor, bytes, 0, bytes.length, 0), after = fstatSync(descriptor);
+    if (count !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.nlink !== 1 || after.dev !== before.dev || after.ino !== before.ino) return ignored;
+    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return content.includes('\0') ? ignored : { text: content };
+  } catch { return ignored; }
+  finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+
 export function researchTaskInput(args: Record<string, unknown>): { description: string; prompt: string } {
   if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt')) throw new Error('Task accepts only description and prompt.');
   const description = textArg(args, 'description'), prompt = textArg(args, 'prompt');

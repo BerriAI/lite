@@ -52,6 +52,17 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('RULES_BROWSER')){
+    // Actual rule-governed calls: one bash command and one file write drawn from
+    // the prompt so tests can steer subjects; the run then reports its results.
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Rules outcome: ${data.messages.filter((m:any)=>m.role==='tool').map((m:any)=>m.content).join(' | ')}`});
+    else if(prompt.includes('RULES_ADVERTISE'))emit({content:`Advertised tools: ${(data.tools||[]).map((tool:any)=>tool.function.name).join(', ')}`});
+    else{
+      const command=/RUN_COMMAND\[(.+?)\]/.exec(prompt)?.[1];const target=/WRITE_PATH\[(.+?)\]/.exec(prompt)?.[1];
+      const calls=[];if(command)calls.push({index:calls.length,id:'rules-bash',type:'function',function:{name:'bash',arguments:JSON.stringify({command})}});
+      if(target)calls.push({index:calls.length,id:'rules-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:target,content:'Rule-governed write.\n'})}});
+      if(calls.length){toolCall=true;emit({tool_calls:calls});}else emit({content:'No rule-governed call was requested.'});
+    }
   }else if(prompt.includes('MCP_BROWSER')&&data.messages.at(-1)?.role!=='tool'){
     const external=data.tools?.find((tool:any)=>tool.function?.name.startsWith('mcp_'));
     if(external){toolCall=true;emit({tool_calls:[{index:0,id:'browser-mcp-call',type:'function',function:{name:external.function.name,arguments:JSON.stringify({text:prompt})}}]});}

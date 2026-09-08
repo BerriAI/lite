@@ -28,6 +28,7 @@ npm start
 
 - Streaming conversations, visible reasoning, Markdown/code copying, tool activity, and cancellation.
 - Build and read-only Plan modes, explicit tool approvals, remembered per-session tool grants with reset, and opt-in automatic approval.
+- Fine-grained permission rules — per-tool allow/ask/deny with bash command-prefix and file-path patterns, app-level and per-project (`.lite/permissions.json`), where an explicit deny outranks every automatic approval. See [permission rules](docs/permissions.md).
 - Structured agent questions with deliberate option/custom replies, browser reload recovery, and interactive CLI input—separate from tool approval.
 - Bounded transient HTTP retries, repeated-tool-loop detection, advisory request-context estimates, and one-shot proactive/overflow compaction that preserves the latest task and archives older history.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
