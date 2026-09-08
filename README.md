@@ -36,7 +36,7 @@ npm start
 - Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - Explicit project profiles and instruction skills, previewed before selection and pinned per session, with tool restrictions and deliberate reloads.
-- MCP tools over local stdio or remote Streamable HTTP, with SSE fallback.
+- Explicit MCP connections over local stdio, Streamable HTTP, or legacy SSE; cache-only status, deliberate catalog refresh/reconnect, and per-turn snapshots that refuse changed tool connections.
 - LiteLLM/OpenAI-compatible APIs, native Anthropic API keys, and explicit ChatGPT connection where account/provider policies permit it.
 - A persistent FIFO follow-up queue with explicit Pause/Resume/remove, plus separate per-session text and attachment drafts.
 - CLI task execution against the same running backend, strict option validation, NDJSON events, and remote cancellation on interrupts.
@@ -104,7 +104,7 @@ Lite reads `AGENTS.md`, `LITE.md`, and `.lite/instructions.md` in the selected w
 
 Project profiles in `.lite/profiles.json` and instruction skills in `.lite/skills/<id>/SKILL.md` are **explicit opt-in**. Open **Project profiles** near the composer to preview instructions, select skills, and review tool restrictions. Recommendations never activate skills automatically. Active instructions stay pinned through source edits, deletion, and restart until deliberately replaced or cleared. Changing a profile preserves your model, mode, and permissions unless you explicitly apply its defaults; queued work stays paused. See the [profile format, CLI examples, and safety boundaries](docs/profiles.md).
 
-Connected MCP server commands are executable configuration. Configure only servers you trust. Tools from connected servers use the same approval workflow as other mutable actions. Named profiles exclude MCP tools in this version; skills-only selection retains ordinary tool policy.
+MCP server commands are executable configuration. Save and review them in **Settings → Integrations**, then choose **Connect** explicitly. Saving settings, checking status, and sending a model request never connect automatically. Tools use the same approval workflow as other mutable actions, but a pending approval cannot redirect an old tool name to a replacement server. Catalog changes require explicit refresh; interrupted calls are never replayed automatically. Named profiles and Plan mode exclude MCP tools; skills-only selection retains ordinary Build-mode policy. See [MCP connections, limits, and snapshot safety](docs/mcp.md).
 
 ## Safety and local data
 

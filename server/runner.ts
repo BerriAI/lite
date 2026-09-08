@@ -9,14 +9,12 @@ import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings,
 import { History } from './history.js';
 import { Questions, questionTool } from './questions.js';
 import type { ProfileSnapshot } from './profiles.js';
+import type { ExternalToolLease, ExternalTools } from './external.js';
+export type { ExternalTools } from './external.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
-type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message };
+type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
-export interface ExternalTools {
-  definitions(): Promise<ToolDefinition[]>;
-  execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
-}
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 
 export class Runner {
@@ -25,6 +23,7 @@ export class Runner {
   private preparations = new Map<string, AbortController>();
   private queuePreparations = new Map<string, Set<AbortController>>();
   private configurationPreparations = new Map<string, AbortController>();
+  private externalOperations = new Set<AbortController>();
   private idleWaiters = new Set<() => void>();
   private stopping = false;
   readonly history: History;
@@ -41,7 +40,7 @@ export class Runner {
   private assertOpen() { if(this.stopping)throw conflict('The server is stopping. Restart it before sending more work.'); }
   assertIdle(id: string) { this.assertOpen();if (this.active(id) || this.operations.has(id) || this.preparations.has(id)) throw conflict('Wait for the current operation or stop the response before making this change.'); }
   private notifyIdle() {
-    if(this.runs.size||this.operations.size||this.preparations.size||this.queuePreparations.size||this.configurationPreparations.size)return;
+    if(this.runs.size||this.operations.size||this.preparations.size||this.queuePreparations.size||this.configurationPreparations.size||this.externalOperations.size)return;
     for(const resolve of this.idleWaiters)resolve();
     this.idleWaiters.clear();
   }
@@ -108,6 +107,12 @@ export class Runner {
       this.configurationPreparations.delete(key);if(id)this.operations.delete(id);this.notifyIdle();
     }
   }
+  async externalOperation<T>(operation:(signal:AbortSignal)=>Promise<T>,requestSignal?:AbortSignal):Promise<T> {
+    this.assertOpen();const controller=new AbortController();this.externalOperations.add(controller);
+    const signal=requestSignal?AbortSignal.any([controller.signal,requestSignal]):controller.signal;
+    try {signal.throwIfAborted();return await operation(signal);}
+    finally {this.externalOperations.delete(controller);this.notifyIdle();}
+  }
   cancel(id: string) {
     this.configurationPreparations.get(id)?.abort();
     this.preparations.get(id)?.abort();
@@ -120,6 +125,7 @@ export class Runner {
   stopAll() {
     this.stopping=true;
     for(const controller of this.configurationPreparations.values())controller.abort();
+    for(const controller of this.externalOperations)controller.abort();
     for (const id of new Set([...this.runs.keys(),...this.preparations.keys(),...this.queuePreparations.keys()])) {
       try {this.cancel(id);} catch {console.error('Could not persist cancellation. Pending work will require review after restart.');}
     }
@@ -175,7 +181,10 @@ export class Runner {
     const profile=this.store.profileSnapshot(id);
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
-    this.history.accept(id,message,queuedId);
+    try {
+      if(session.mode==='build'&&profile?.active.tools==null)run.external=this.external?.capture(run.controller.signal);
+      this.history.accept(id,message,queuedId);
+    } catch(error) {this.releaseExternal(run);throw error;}
     run.turnId=message.id;
     this.runs.set(id, run);
     try {
@@ -198,6 +207,10 @@ export class Runner {
     try {this.pauseQueue(id,'Response failed. Review the accepted turn before resuming queued messages.',false);} catch {console.error('Could not persist the queue hold. Queued work will not start in this process.');}
     try {this.bus.emit(id,'error',{message:this.safeError(error)});} catch {console.error('Could not record a response error event. Refresh the session to inspect saved progress.');}
   }
+  private releaseExternal(run:ActiveRun) {
+    const lease=run.external;run.external=undefined;
+    try {lease?.release();}catch{console.error('Could not release connected tool snapshot. Reconnect tools before continuing.');}
+  }
   private finishRun(id: string, run: ActiveRun) {
     let succeeded=false;
     for(const pending of run.approvals.values())pending.resolve(false);
@@ -214,7 +227,7 @@ export class Runner {
       this.bus.emit(id,'done',{status:this.store.session(id).status});
     } catch(error) {succeeded=false;this.failRun(id,run,error);}
     finally {
-      run.progressMessage=undefined;
+      run.progressMessage=undefined;this.releaseExternal(run);
       this.runs.delete(id);
       this.notifyIdle();
     }
@@ -270,7 +283,11 @@ export class Runner {
     const localReadOnly = isReadOnlyTool(call.name) && !call.name.startsWith('mcp_');
     if (session.mode === 'plan' && !localReadOnly) return false;
     // A changed integration cannot inherit approval intended for its previous configuration.
-    const scope = createHash('sha256').update(canonical({workspace:session.workspace,mcp:call.name.startsWith('mcp_') ? this.store.settings().mcpServers : undefined})).digest('hex');
+    if(call.name.startsWith('mcp_')) {
+      if(!run.external)throw conflict('Connected tools were not available when this turn started.');
+      run.external.assertCurrent(call.name);
+    }
+    const scope = createHash('sha256').update(canonical({workspace:session.workspace,mcp:call.name.startsWith('mcp_') ? run.external!.scope(call.name) : undefined})).digest('hex');
     if (localReadOnly || session.permissionMode === 'auto' || this.store.toolGrants(session.id).some(g => g.tool === call.name && g.scope === scope)) return true;
     if (run.controller.signal.aborted) return false;
     const request: PermissionRequest = { id:randomUUID(),sessionId:session.id,toolCallId:call.id,tool:call.name,args:call.args,description:call.name === 'bash' ? 'Run this command in your workspace' : call.name.startsWith('mcp_') ? 'Call this connected tool' : 'Allow this action in your workspace' };
@@ -298,7 +315,7 @@ export class Runner {
     }
     const allowlist=profile?.active.tools;
     const allowed=(name:string)=>name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&name!=='task'&&(session.mode!=='plan'||isReadOnlyTool(name)));
-    const externalTools=allowlist==null?(await this.external?.definitions()||[]):[];
+    const externalTools=run.external?.definitions??[];
     const tools = [...toolDefinitions.filter(t => t.function.name !== 'task'), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
     let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false;
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
@@ -412,7 +429,7 @@ export class Runner {
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else {
             call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.store.saveMessage(message);
-            output = call.name.startsWith('mcp_') && this.external ? await this.external.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
+            output = call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
               workspace:session.workspace,sessionId:id,signal,
               prepareChange:change => { this.history.prepareChange(id,change); },
               onChange:change => { this.history.commitChange(id,change); },

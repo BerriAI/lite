@@ -33,7 +33,7 @@ describe('context budget Runner and API integration', () => {
     });
     provider = { id: 'budget', name: 'Budget', kind: 'openai', baseUrl: await listen(providerServer), contextWindows: { 'budget-model': 16384 } };
     store.saveSettings({ workspace: directory, providers: [provider], defaultProvider: provider.id, defaultModel: 'budget-model' });
-    const app = createApp({ store, external: { definitions: async () => extraTools, execute: async () => 'unused' } }); runner = app.runner; server = createServer(app.app); url = await listen(server);
+    const app = createApp({ store, external: { capture: () => ({definitions:structuredClone(extraTools),scope:()=> 'context-fixture',assertCurrent:()=>{},execute:async()=> 'unused',release:()=>{}}) } }); runner = app.runner; server = createServer(app.app); url = await listen(server);
   });
   afterEach(async () => { runner.stopAll(); await runner.whenIdle(); vi.restoreAllMocks(); modelCatalog.clear(); await close(server); await close(providerServer); store.close(); await rm(directory, { recursive: true, force: true }); });
   const api = async (path: string, method = 'GET', data?: unknown) => { const response = await fetch(url + '/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };

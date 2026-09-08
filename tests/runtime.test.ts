@@ -53,6 +53,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(version.output.trim()).toMatch(/^v22\.13\.0$/);
     const providerCalls: { messages: { role: string; content: any }[]; tools?: { function: { name: string } }[] }[] = [];
     let catalogCalls = 0;
+    let advertisedMcpName = '';
     const fixtureContent = String.fromCharCode(0xfeff) + 'persisted runtime output — exact UTF-8\r\nno final newline';
     const changedAttachment = 'External edit made after the accepted attachment snapshot.';
     const provider = createServer(async (req, res) => {
@@ -70,6 +71,16 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       if (summary) {
         await writeFile(join(workspace, 'do-not-reread.txt'), changedAttachment);
         emit({ content: 'Earlier runtime context: preserve the existing file bytes and inspect the latest attachment; no tools were rerun.' });
+      }
+      else if (prompt.includes('runtime MCP')) {
+        if (request.messages.at(-1)?.role === 'tool') emit({ content: 'Runtime MCP complete.' });
+        else if (prompt.includes('probe')) emit({ content: 'Runtime MCP disconnected probe complete.' });
+        else {
+          const available = request.tools?.find((tool: { function: { name: string } }) => tool.function.name.startsWith('mcp_'))?.function.name;
+          advertisedMcpName = available ?? advertisedMcpName;
+          finishReason = 'tool_calls';
+          emit({ tool_calls: [{ index: 0, id: `runtime-mcp-${providerCalls.length}`, type: 'function', function: { name: advertisedMcpName, arguments: JSON.stringify({ text: 'runtime MCP input' }) } }] });
+        }
       }
       else if (prompt.includes('runtime context')) emit({ content: 'Runtime context complete.' });
       else if (request.messages.at(-1)?.role !== 'tool') {
@@ -518,6 +529,144 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(readFile(join(workspace, '.lite', 'profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    // Exercise the built MCP manager with an isolated stdio process, not a
+    // source import. Its protocol input is bounded and every external action
+    // is logged outside the workspace so history cannot manufacture evidence.
+    const mcpScript = join(installation, 'runtime-mcp.mjs');
+    const mcpLog = join(temporary, 'runtime-mcp.jsonl');
+    const mcpCatalog = join(temporary, 'runtime-mcp-catalog.json');
+    const mcpNotify = join(temporary, 'runtime-mcp-notify.txt');
+    const originalMcpTool = { name: 'echo', description: 'Runtime isolated echo', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } };
+    await writeFile(mcpCatalog, JSON.stringify([originalMcpTool]));
+    await writeFile(mcpNotify, '0');
+    await writeFile(mcpScript, `import {appendFileSync,readFileSync,watchFile} from 'node:fs';
+import {createInterface} from 'node:readline';
+const [log,catalog,notification,endpoint]=process.argv.slice(2);
+const record=event=>appendFileSync(log,JSON.stringify({event,endpoint})+'\\n');
+const send=value=>process.stdout.write(JSON.stringify(value)+'\\n');
+const reply=(id,result)=>send({jsonrpc:'2.0',id,result});
+if(process.version!=='v22.13.0'||process.env.OPENAI_API_KEY||process.env.ANTHROPIC_API_KEY||process.env.LITE_DATA_DIR)process.exit(3);
+record('spawn');
+watchFile(notification,{interval:10},(now,old)=>{if(now.mtimeMs!==old.mtimeMs){record('changed');send({jsonrpc:'2.0',method:'notifications/tools/list_changed'});}});
+createInterface({input:process.stdin}).on('line',line=>{
+  if(line.length>1048576)process.exit(4);
+  const message=JSON.parse(line);if(message.id===undefined)return;record(message.method);
+  if(message.method==='initialize')reply(message.id,{protocolVersion:'2025-03-26',capabilities:{tools:{listChanged:true}},serverInfo:{name:'runtime-isolated',version:'1'}});
+  else if(message.method==='tools/list')reply(message.id,{tools:JSON.parse(readFileSync(catalog,'utf8'))});
+  else if(message.method==='tools/call')reply(message.id,{content:[{type:'text',text:'Runtime MCP executed at '+endpoint}]});
+  else reply(message.id,{});
+});
+process.stdin.on('end',()=>process.exit(0));
+`);
+    const mcpConfig = (endpoint: string) => ({ runtime: { command: runtime!, args: [mcpScript, mcpLog, mcpCatalog, mcpNotify, endpoint], env: { HOME: temporary, PATH: '/usr/bin:/bin' } } });
+    const mcpRecords = async (): Promise<{ event: string; endpoint: string }[]> => {
+      try { return (await readFile(mcpLog, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }
+    };
+    const countMcp = async (event: string) => (await mcpRecords()).filter(record => record.event === event).length;
+    const mcpAction = async (action: 'refresh' | 'reconnect') => {
+      const status = await api('/mcp');
+      return api(`/mcp/runtime/${action}`, { expectedRevision: status.servers[0].revision, expectedConfigRevision: status.configRevision });
+    };
+    const awaitMcpIdle = async (path: string) => { await expect.poll(async () => (await api(path)).session.status, { timeout: 5000, interval: 10 }).toBe('idle'); };
+    const awaitMcpPermission = async (path: string) => {
+      await expect.poll(async () => (await api(path)).permissions.length, { timeout: 5000, interval: 10 }).toBe(1);
+      return (await api(path)).permissions[0];
+    };
+    const settingsBeforeMcp = await api('/settings');
+    await api('/settings', { mcpServers: mcpConfig('original'), expectedMcpConfigRevision: settingsBeforeMcp.mcpConfigRevision }, 'PATCH');
+    const coldMcp = await api('/mcp');
+    expect(coldMcp.servers).toMatchObject([{ name: 'runtime', status: 'disconnected', tools: [] }]);
+    expect((await api('/settings')).mcpConfigRevision).toBe(coldMcp.configRevision);
+    const coldRefresh = await fetch(`${app.base}/api/mcp/runtime/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: coldMcp.servers[0].revision, expectedConfigRevision: coldMcp.configRevision }) });
+    expect(coldRefresh.status).toBe(409);
+    await coldRefresh.json();
+    const coldProbe = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP cold probe'], workspace, env).finished;
+    expect(coldProbe.code, coldProbe.output).toBe(0);
+    expect(providerCalls).toHaveLength(13);
+    expect(providerCalls.at(-1)?.tools?.some(tool => tool.function.name.startsWith('mcp_'))).toBe(false);
+    expect(await mcpRecords()).toEqual([]);
+    await mcpAction('reconnect');
+    const connectedMcp = await api('/mcp');
+    expect(connectedMcp.servers).toMatchObject([{ name: 'runtime', status: 'connected', tools: [{ remoteName: 'echo' }] }]);
+    expect(await countMcp('spawn')).toBe(1); expect(await countMcp('tools/list')).toBe(1);
+    const mcpSession = await api('/sessions', { title: 'Runtime MCP history', mode: 'build', permissionMode: 'ask' });
+    const mcpPath = `/sessions/${mcpSession.id}`;
+    const mcpBaseline = await api(mcpPath);
+    await api(`${mcpPath}/messages`, { content: 'runtime MCP execute with explicit approval' });
+    const permission = await awaitMcpPermission(mcpPath);
+    expect(advertisedMcpName).toBe(connectedMcp.servers[0].tools[0].name);
+    expect(providerCalls.at(-1)?.tools?.some(tool => tool.function.name === advertisedMcpName)).toBe(true);
+    expect(await countMcp('tools/call')).toBe(0);
+    await api(`${mcpPath}/permissions/${permission.id}`, { decision: 'allow' });
+    await awaitMcpIdle(mcpPath);
+    const mcpCompleted = await api(mcpPath);
+    expect(mcpCompleted.messages.at(-1).content).toBe('Runtime MCP complete.');
+    expect(mcpCompleted.messages.some((message: { role: string; content: string }) => message.role === 'tool' && message.content.includes('Runtime MCP executed at original'))).toBe(true);
+    expect(providerCalls).toHaveLength(15); expect(await countMcp('tools/call')).toBe(1);
+    const mcpCheckpoint = mcpCompleted.history.undoId;
+    const mcpUndone = await api(`${mcpPath}/history/undo`, { checkpointId: mcpCheckpoint });
+    expect((await api(mcpPath)).messages).toEqual(mcpBaseline.messages);
+    const mcpActionsBeforeRestart = await mcpRecords();
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
+    app = await start(false);
+    expect((await api('/mcp')).servers).toMatchObject([{ name: 'runtime', status: 'disconnected', tools: [] }]);
+    expect((await api(mcpPath)).history).toEqual(mcpUndone);
+    await api('/settings'); await api('/mcp');
+    expect(await mcpRecords()).toEqual(mcpActionsBeforeRestart);
+    expect(await api(`${mcpPath}/history/redo`, { checkpointId: mcpCheckpoint })).toEqual(mcpCompleted.history);
+    expect((await api(mcpPath)).messages).toEqual(mcpCompleted.messages);
+    expect(await mcpRecords()).toEqual(mcpActionsBeforeRestart); expect(providerCalls).toHaveLength(15);
+    const restartProbe = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP restart probe'], workspace, env).finished;
+    expect(restartProbe.code, restartProbe.output).toBe(0);
+    expect(providerCalls).toHaveLength(16);
+    expect(providerCalls.at(-1)?.tools?.some(tool => tool.function.name.startsWith('mcp_'))).toBe(false);
+    expect(await mcpRecords()).toEqual(mcpActionsBeforeRestart);
+    await mcpAction('reconnect');
+    expect(await countMcp('spawn')).toBe(2); expect(await countMcp('tools/list')).toBe(2);
+    // A pending approval refers to the originally advertised connection. Even
+    // connecting a replacement cannot redirect that accepted turn's tool call.
+    const replacedSession = await api('/sessions', { title: 'Runtime MCP config lease', mode: 'build', permissionMode: 'ask' });
+    const replacedPath = `/sessions/${replacedSession.id}`;
+    await api(`${replacedPath}/messages`, { content: 'runtime MCP await endpoint review' });
+    const replacedPermission = await awaitMcpPermission(replacedPath);
+    const beforeReplacement = await api('/settings');
+    await api('/settings', { mcpServers: mcpConfig('replacement'), expectedMcpConfigRevision: beforeReplacement.mcpConfigRevision }, 'PATCH');
+    expect((await api('/mcp')).servers[0]).toMatchObject({ status: 'disconnected', tools: [] });
+    expect(await countMcp('spawn')).toBe(2);
+    await mcpAction('reconnect');
+    expect(await countMcp('spawn')).toBe(3); expect(await countMcp('tools/list')).toBe(3);
+    await api(`${replacedPath}/permissions/${replacedPermission.id}`, { decision: 'allow' });
+    await awaitMcpIdle(replacedPath);
+    expect(providerCalls).toHaveLength(18); expect(await countMcp('tools/call')).toBe(1);
+    expect((await api(replacedPath)).messages.some((message: { role: string; content: string }) => message.role === 'tool' && /stale|changed|no longer/i.test(message.content))).toBe(true);
+    // An unsolicited catalog-change notification invalidates the lease but
+    // cannot discover a new catalog or execute anything by itself.
+    const changedSession = await api('/sessions', { title: 'Runtime MCP catalog lease', mode: 'build', permissionMode: 'ask' });
+    const changedPath = `/sessions/${changedSession.id}`;
+    await api(`${changedPath}/messages`, { content: 'runtime MCP await catalog review' });
+    const changedPermission = await awaitMcpPermission(changedPath);
+    await writeFile(mcpCatalog, JSON.stringify([{ ...originalMcpTool, description: 'Reviewed changed runtime catalog' }]));
+    await writeFile(mcpNotify, '1');
+    await expect.poll(async () => (await api('/mcp')).servers[0].status, { timeout: 5000, interval: 10 }).toBe('stale');
+    expect((await api('/mcp')).servers[0].tools).toEqual([]);
+    expect(await countMcp('tools/list')).toBe(3);
+    await api(`${changedPath}/permissions/${changedPermission.id}`, { decision: 'allow' });
+    await awaitMcpIdle(changedPath);
+    expect(providerCalls).toHaveLength(20); expect(await countMcp('tools/call')).toBe(1);
+    await mcpAction('refresh');
+    expect(await countMcp('spawn')).toBe(3); expect(await countMcp('tools/list')).toBe(4);
+    const freshSession = await api('/sessions', { title: 'Runtime MCP reviewed catalog', mode: 'build', permissionMode: 'ask' });
+    const freshPath = `/sessions/${freshSession.id}`;
+    await api(`${freshPath}/messages`, { content: 'runtime MCP explicitly use reviewed catalog' });
+    const freshPermission = await awaitMcpPermission(freshPath);
+    expect(await countMcp('tools/call')).toBe(1);
+    await api(`${freshPath}/permissions/${freshPermission.id}`, { decision: 'allow' });
+    await awaitMcpIdle(freshPath);
+    expect((await mcpRecords()).filter(record => record.event === 'tools/call')).toEqual([{ event: 'tools/call', endpoint: 'original' }, { event: 'tools/call', endpoint: 'replacement' }]);
+    expect(providerCalls).toHaveLength(22); expect(catalogCalls).toBe(1);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    expect((await api(`${profilePath}/profile`)).pinned).toEqual(profilePinned.pinned);
     // Validate the installed native PTY on this exact ABI without starting a
     // login shell (which would read the real user's startup files).
     const pty = await processResult(runtime!, ['--input-type=module', '-e', `import {createRequire} from 'node:module'; const require=createRequire(${JSON.stringify(join(installation, 'package.json'))}); const {spawn}=require('node-pty'); const p=spawn('/bin/sh',['-c','printf "PTY_RUNTIME_OK\\n"'],{cwd:process.cwd(),env:{PATH:'/usr/bin:/bin',HOME:process.cwd(),TERM:'xterm'}}); p.onData(s=>process.stdout.write(s)); p.onExit(e=>process.exit(e.exitCode)); setTimeout(()=>process.exit(2),3000).unref();`], workspace, env).finished;

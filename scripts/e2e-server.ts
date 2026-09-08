@@ -6,6 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
 import { attachTerminals } from '../server/terminal.js';
+import { McpManager } from '../server/mcp.js';
 
 const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
@@ -31,6 +32,12 @@ const mock=createServer(async(req,res)=>{
       if(res.destroyed)return;
     }
     if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('MCP_BROWSER')&&data.messages.at(-1)?.role!=='tool'){
+    const external=data.tools?.find((tool:any)=>tool.function?.name.startsWith('mcp_'));
+    if(external){toolCall=true;emit({tool_calls:[{index:0,id:'browser-mcp-call',type:'function',function:{name:external.function.name,arguments:JSON.stringify({text:prompt})}}]});}
+    else emit({content:'No connected MCP tool is available for this turn.'});
+  }else if(prompt.includes('MCP_BROWSER')){
+    emit({content:'MCP tool finished. Inspect its activity card for the recorded result.'});
   }else if(prompt.includes('PROFILE_BROWSER forbidden write')&&data.messages.at(-1)?.role!=='tool'){
     toolCall=true;emit({tool_calls:[{index:0,id:'profile-forbidden-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'profile-forbidden.txt',content:'This excluded tool must never execute.\n'})}}]});
   }else if(prompt.includes('ask fixture question')&&data.messages.at(-1)?.role!=='tool'){
@@ -49,7 +56,8 @@ const mock=createServer(async(req,res)=>{
 await new Promise<void>(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
-const{app,runner}=createApp({store});
+const mcp=new McpManager(()=>store.settings().mcpServers);
+const{app,runner}=createApp({store,external:mcp});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
 app.get('/fixture/profiles',(_req,res)=>res.json({requests:profileRequests}));
 app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
@@ -58,5 +66,5 @@ const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}}
 const server=app.listen(3211,'127.0.0.1',()=>console.log('Lite E2E ready at http://127.0.0.1:3211'));
 const terminals=attachTerminals(server,store);
 let closing=false;
-async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
+async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close(),mcp.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
 process.on('SIGINT',close);process.on('SIGTERM',close);

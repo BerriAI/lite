@@ -10,7 +10,7 @@ import { Runner } from '../server/runner.js';
 import { EventBus } from '../server/events.js';
 import { modelCatalog } from '../server/budget.js';
 import { applyEvent } from '../client/src/api.js';
-import type { Message, Provider, SessionDetail, ToolDefinition } from '../shared/types.js';
+import type { Message, Provider, SessionDetail } from '../shared/types.js';
 
 const until = async (check: () => boolean) => { const deadline = Date.now() + 4000; while (!check()) { if (Date.now() > deadline) throw new Error('Timed out waiting for context audit'); await new Promise(resolve => setTimeout(resolve, 5)); } };
 const listen = (server: Server) => new Promise<string>(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
@@ -22,16 +22,15 @@ const isSummary = (body: any) => body.messages?.[0]?.content?.startsWith('Summar
 
 describe('independent context durability audit', () => {
   let directory: string, store: Store, runner: Runner, appServer: Server, firstServer: Server, secondServer: Server, url: string, secondUrl: string, provider: Provider;
-  let calls: { destination: string; body: any }[], respond: (destination: string, body: any, res: ServerResponse) => void, definitions: () => Promise<ToolDefinition[]>;
+  let calls: { destination: string; body: any }[], respond: (destination: string, body: any, res: ServerResponse) => void;
   beforeEach(async () => {
     modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-context-audit-'))); store = new Store(join(directory, 'state')); calls = [];
-    definitions = async () => [];
     respond = (_destination, body, res) => text(res, isSummary(body) ? 'Earlier context summarized.' : 'Finished');
     const server = (destination: string) => createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push({ destination, body }); respond(destination, body, res); });
     firstServer = server('original'); secondServer = server('replacement'); secondUrl = await listen(secondServer);
     provider = { id: 'audit', name: 'Audit', kind: 'openai', baseUrl: await listen(firstServer), contextWindows: { 'audit-model': 16384 } };
     store.saveSettings({ workspace: directory, providers: [provider], defaultProvider: provider.id, defaultModel: 'audit-model' });
-    const app = createApp({ store, external: { definitions: () => definitions(), execute: async () => 'unused' } }); runner = app.runner; appServer = createServer(app.app); url = await listen(appServer);
+    const app = createApp({ store, external: { capture: () => ({definitions:[],scope:()=> 'context-audit',assertCurrent:()=>{},execute:async()=> 'unused',release:()=>{}}) } }); runner = app.runner; appServer = createServer(app.app); url = await listen(appServer);
   });
   afterEach(async () => { runner.stopAll(); await runner.whenIdle(); vi.restoreAllMocks(); modelCatalog.clear(); await close(appServer); await close(firstServer); await close(secondServer); store.close(); await rm(directory, { recursive: true, force: true }); });
   const api = async (path: string, method = 'GET', data?: unknown) => { const response = await fetch(url + '/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); expect(response.ok).toBe(true); return response.json(); };
@@ -44,7 +43,11 @@ describe('independent context durability audit', () => {
   it.each(['proactive', 'reactive'])('%s summary retains the accepted provider configuration across settings changes', async mode => {
     if (mode === 'reactive') store.saveSettings({ providers: [{ ...provider, contextWindows: {} }] });
     const { session } = seed(); let release!: () => void, waiting = false;
-    if (mode === 'proactive') definitions = () => new Promise(resolve => { waiting = true; release = () => resolve([]); });
+    if (mode === 'proactive') {
+      // MCP capture is synchronous now; hold the existing asynchronous system read instead.
+      const prompt=(runner as any).systemPrompt.bind(runner);
+      vi.spyOn(runner as any,'systemPrompt').mockImplementation(async(...args:unknown[])=>{const text=await prompt(...args);await new Promise<void>(resolve=>{waiting=true;release=resolve;});return text;});
+    }
     else respond = (_destination, body, res) => { if (calls.length === 1) { waiting = true; release = () => overflow(res); } else text(res, isSummary(body) ? 'Summary' : 'Finished'); };
     runner.start(session.id, 'Latest'); await until(() => waiting);
     await api('/settings', 'PATCH', { providers: [{ ...provider, baseUrl: secondUrl }] });

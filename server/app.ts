@@ -2,7 +2,7 @@ import express, { type Express, type Response } from 'express';
 import { z } from 'zod';
 import { realpath, stat, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
@@ -15,7 +15,7 @@ import type { Message, Settings } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
-const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).optional()});
+const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -30,7 +30,7 @@ export interface AuthService {
   connected(providerId:string):boolean;
   disconnect(providerId:string):any;
 }
-export interface AppOptions { store?:Store; external?:ExternalTools & {status?:()=>Promise<any>}; auth?:AuthService; }
+export interface AppOptions { store?:Store; external?:ExternalTools; auth?:AuthService; }
 
 export function createApp(options:AppOptions = {}) {
   const store=options.store || new Store(),bus=new EventBus(store),runner=new Runner(store,bus,options.external);
@@ -47,7 +47,9 @@ export function createApp(options:AppOptions = {}) {
     next();
   });
   app.use('/api',express.json({limit:'12mb'}));
-  const publicSettings=()=>{const s=store.publicSettings();return{...s,providers:s.providers.map(p=>p.kind==='codex'?{...p,configured:options.auth?.connected(p.id)||false}:p)}};
+  const mcpConfigRevision=()=>options.external?.configRevision?.()??createHash('sha256').update(JSON.stringify(store.settings().mcpServers,(_key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value)).digest('hex');
+  const mcpStatus=()=>({servers:options.external?.status?.()??[],configRevision:mcpConfigRevision()});
+  const publicSettings=()=>{const s=store.publicSettings();return{...s,mcpConfigRevision:mcpConfigRevision(),providers:s.providers.map(p=>p.kind==='codex'?{...p,configured:options.auth?.connected(p.id)||false}:p)}};
   const workspace=async(value:unknown)=>{const root=await realpath(resolve(queryString(value)||store.settings().workspace));if(!(await stat(root)).isDirectory())throw httpError(400,'Workspace must be a directory.');return root;};
   const checkProvider=(id:string|undefined)=>{if(id&&!store.settings().providers.some(p=>p.id===id))throw httpError(400,'Provider not found. Choose a connected provider.');};
   const requestSignal=(res:Response)=>{const controller=new AbortController();res.once('close',()=>{if(!res.writableEnded)controller.abort();});return controller.signal;};
@@ -58,12 +60,14 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/health',(_req,res)=>res.json({ok:true,version:'0.1.0'}));
   app.get('/api/settings',(_req,res)=>res.json(publicSettings()));
   app.patch('/api/settings',async(req,res)=>{
-    const patch=settingsSchema.parse(req.body) as Partial<Settings>;
+    const {expectedMcpConfigRevision,...parsed}=settingsSchema.parse(req.body);
+    const patch=parsed as Partial<Settings>;
     if(patch.workspace)patch.workspace=await workspace(patch.workspace);
+    if(patch.mcpServers&&expectedMcpConfigRevision!==undefined&&expectedMcpConfigRevision!==mcpConfigRevision())throw httpError(409,'Saved MCP configuration changed. Review it before saving your changes.');
     const current=store.settings(),providers=patch.providers||current.providers;
     if(!providers.some(p=>p.id===(patch.defaultProvider||current.defaultProvider)))throw httpError(400,'Default provider must be in the provider list.');
     if(patch.mcpServers)for(const[name,config]of Object.entries(patch.mcpServers))if(config.env)for(const[key,value]of Object.entries(config.env))if(value==='••••••••')config.env[key]=current.mcpServers[name]?.env?.[key]||'';
-    store.saveSettings(patch);res.json(publicSettings());
+    store.saveSettings(patch);options.external?.status?.();res.json(publicSettings());
   });
   app.get('/api/models',async(req,res)=>{
     const provider=store.settings().providers.find(p=>p.id===(queryString(req.query.providerId)||store.settings().defaultProvider));
@@ -205,7 +209,17 @@ export function createApp(options:AppOptions = {}) {
     }
     res.json({commands});
   });
-  app.get('/api/mcp',async(_req,res)=>res.json({servers:await options.external?.status?.()||[]}));
+  app.get('/api/mcp',(_req,res)=>res.json(mcpStatus()));
+  for(const action of ['refresh','reconnect'] as const)app.post(`/api/mcp/:name/${action}`,async(req,res)=>{
+    const name=z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).parse(req.params.name);
+    const input=z.object({expectedRevision:z.string().min(1).max(128),expectedConfigRevision:z.string().min(1).max(128)}).strict().parse(req.body);
+    const operation=options.external?.[action];if(!operation)throw httpError(503,'MCP lifecycle operations are unavailable.');
+    await runner.externalOperation(signal=>{
+      if(input.expectedConfigRevision!==mcpConfigRevision())throw httpError(409,'Saved MCP configuration changed. Review it before connecting tools.');
+      return operation.call(options.external,name,input.expectedRevision,signal);
+    },requestSignal(res));
+    res.json(mcpStatus());
+  });
   app.post('/api/auth/codex/start',async(req,res)=>{if(!options.auth)throw httpError(503,'Subscription login is unavailable.');const{providerId,method}=z.object({providerId:z.string(),method:z.enum(['browser','device']).default('device')}).parse(req.body);if(!store.settings().providers.some(p=>p.id===providerId&&p.kind==='codex'))throw httpError(400,'Add a ChatGPT subscription provider first.');res.json(await options.auth.start(providerId,method));});
   app.get('/api/auth/codex/:loginId',(req,res)=>{if(!options.auth)throw httpError(503,'Subscription login is unavailable.');res.json(options.auth.status(req.params.loginId));});
   app.delete('/api/auth/codex/:providerId',async(req,res)=>{if(!options.auth)throw httpError(503,'Subscription login is unavailable.');await options.auth.disconnect(req.params.providerId);res.json({ok:true});});

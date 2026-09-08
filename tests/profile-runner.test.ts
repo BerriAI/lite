@@ -7,6 +7,7 @@ import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
 import * as profiles from '../server/profiles.js';
 import { estimateRequest } from '../server/budget.js';
+import type { ExternalToolLease } from '../server/external.js';
 import type { ProfileChoice, Session, ToolDefinition } from '../shared/types.js';
 
 const listen=(server:Server)=>new Promise<string>(resolve=>server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${(server.address() as {port:number}).port}`)));
@@ -18,7 +19,7 @@ const tool=(res:ServerResponse,name:string,args:unknown)=>{res.writeHead(200,{'C
 describe('profile Runner and API integration',()=>{
   let directory:string,store:Store,server:Server,providerServer:Server,url:string,runner:ReturnType<typeof createApp>['runner'];
   let calls:any[],respond:(body:any,res:ServerResponse)=>void;
-  const external={definitions:vi.fn<()=>Promise<ToolDefinition[]>>(),execute:vi.fn()};
+  const external={capture:vi.fn<()=>ExternalToolLease>(),execute:vi.fn()};
   const manifest={version:1,profiles:[
     {id:'review',name:'Reviewer',description:'Review only',instructions:'PINNED_PROFILE: inspect carefully, never invent tests.',tools:['read_file','todo_read'],defaultModel:{providerId:'secondary',model:'profile-model'},defaultMode:'plan',skills:['testing']},
     {id:'writer',name:'Writer',instructions:'PINNED_WRITER',tools:['read_file','write_file','bash','todo_write']},
@@ -37,7 +38,8 @@ describe('profile Runner and API integration',()=>{
     providerServer=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
     const baseUrl=await listen(providerServer);store=new Store(join(directory,'state'));
     store.saveSettings({workspace:directory,providers:[{id:'primary',name:'Primary',kind:'openai',baseUrl},{id:'secondary',name:'Secondary',kind:'openai',baseUrl}],defaultProvider:'primary',defaultModel:'app-model'});
-    external.definitions.mockReset().mockResolvedValue([{type:'function',function:{name:'mcp_example',description:'External tool',parameters:{type:'object'}}}]);external.execute.mockReset().mockResolvedValue('External completed');
+    external.execute.mockReset().mockResolvedValue('External completed');
+    external.capture.mockReset().mockImplementation(()=>({definitions:[{type:'function',function:{name:'mcp_example',description:'External tool',parameters:{type:'object'}}}],scope:()=> 'profile-fixture',assertCurrent:()=>{},execute:external.execute,release:()=>{}}));
     const app=createApp({store,external});runner=app.runner;server=createServer(app.app);url=await listen(server);
   });
   afterEach(async()=>{runner.stopAll();await runner.whenIdle();vi.restoreAllMocks();await close(server);await close(providerServer);store.close();await rm(directory,{recursive:true,force:true});});
@@ -45,7 +47,7 @@ describe('profile Runner and API integration',()=>{
   it('catalog and preactivation preview are explicit bounded reads with no session, grants or provider work',async()=>{
     const source=await catalog();expect(source.workspace).toBe(directory);expect(source.profiles[0].instructions).toBeUndefined();expect(source.skills[0].body).toBeUndefined();
     const preview=await api('/profiles/preview',{workspace:directory,choice:{profileId:'review',skillIds:['testing'],catalogRevision:source.revision}});
-    expect(preview.status).toBe(200);expect(preview.body.active.tools).toEqual(['read_file','todo_read']);expect(preview.body.pinned.instructions).toContain('PINNED_PROFILE');expect(preview.body.pinned.skills[0].body).toContain('PINNED_SKILL');expect(preview.body.source.status).toBe('current');expect(store.sessions()).toEqual([]);expect(calls).toEqual([]);expect(external.definitions).not.toHaveBeenCalled();
+    expect(preview.status).toBe(200);expect(preview.body.active.tools).toEqual(['read_file','todo_read']);expect(preview.body.pinned.instructions).toContain('PINNED_PROFILE');expect(preview.body.pinned.skills[0].body).toContain('PINNED_SKILL');expect(preview.body.source.status).toBe('current');expect(store.sessions()).toEqual([]);expect(calls).toEqual([]);expect(external.capture).not.toHaveBeenCalled();
   });
 
   it('new profiles use complete explicit pair then profile defaults then app defaults, with explicit mode precedence',async()=>{
@@ -103,18 +105,18 @@ describe('profile Runner and API integration',()=>{
   it('pinned instruction framing is below constraints, counted once, and included in actual request estimate',async()=>{
     const s=await create(await choice('review',['testing']));await run(s.id);const sent=calls[0],system=sent.messages[0].content as string;
     expect(system.indexOf('Pinned project profile')).toBeGreaterThan(system.indexOf('Never reveal API keys'));expect(system.match(/PINNED_PROFILE/g)).toHaveLength(1);expect(system.match(/PINNED_SKILL/g)).toHaveLength(1);
-    const context=store.messages(s.id).at(-1)!.context!,estimated=estimateRequest({system,messages:sent.messages.slice(1),tools:sent.tools});expect(context.estimatedInputTokens).toBe(estimated.estimatedInputTokens);expect(external.definitions).not.toHaveBeenCalled();
+    const context=store.messages(s.id).at(-1)!.context!,estimated=estimateRequest({system,messages:sent.messages.slice(1),tools:sent.tools});expect(context.estimatedInputTokens).toBe(estimated.estimatedInputTokens);expect(external.capture).not.toHaveBeenCalled();
   });
 
   it.each(['write_file','bash','mcp_example','task'])('profile advertisement and dispatch deny malicious omitted %s even with auto and existing grants',async(name)=>{
     const s=await create(await choice(),{providerId:'primary',model:'app-model',mode:'build',permissionMode:'auto'});store.grantTool(s.id,name,'remembered');
     respond=(body,res)=>body.messages.at(-1).role==='tool'?reply(res):tool(res,name,{path:'forbidden.txt',content:'bad',command:'printf bad > forbidden.txt',prompt:'Do it'});
-    await run(s.id);expect(calls[0].tools.map((t:ToolDefinition)=>t.function.name)).toEqual(['read_file','todo_read','ask_user']);expect(store.messages(s.id).flatMap(m=>m.toolCalls??[])[0].status).toBe('denied');expect(runner.permissions(s.id)).toEqual([]);expect(store.changes(s.id)).toEqual([]);expect(external.execute).not.toHaveBeenCalled();expect(external.definitions).not.toHaveBeenCalled();await expect(readFile(join(directory,'forbidden.txt'))).rejects.toMatchObject({code:'ENOENT'});expect(calls).toHaveLength(2);
+    await run(s.id);expect(calls[0].tools.map((t:ToolDefinition)=>t.function.name)).toEqual(['read_file','todo_read','ask_user']);expect(store.messages(s.id).flatMap(m=>m.toolCalls??[])[0].status).toBe('denied');expect(runner.permissions(s.id)).toEqual([]);expect(store.changes(s.id)).toEqual([]);expect(external.execute).not.toHaveBeenCalled();expect(external.capture).not.toHaveBeenCalled();await expect(readFile(join(directory,'forbidden.txt'))).rejects.toMatchObject({code:'ENOENT'});expect(calls).toHaveLength(2);
   });
 
   it('Plan intersects allowed mutable tools while skills-only leaves Build tools and MCP available',async()=>{
     const s=await create(await choice('writer'),{mode:'plan'});await run(s.id);expect(calls[0].tools.map((t:ToolDefinition)=>t.function.name)).toEqual(['read_file','ask_user']);
-    const skills=await create(await choice(null,['testing']));await run(skills.id);expect(skills.profile?.tools).toBeNull();expect(calls[1].tools.map((t:ToolDefinition)=>t.function.name)).toEqual(expect.arrayContaining(['write_file','bash','mcp_example','ask_user']));expect(external.definitions).toHaveBeenCalledOnce();
+    const skills=await create(await choice(null,['testing']));await run(skills.id);expect(skills.profile?.tools).toBeNull();expect(calls[1].tools.map((t:ToolDefinition)=>t.function.name)).toEqual(expect.arrayContaining(['write_file','bash','mcp_example','ask_user']));expect(external.capture).toHaveBeenCalledOnce();
   });
 
   it('ask_user remains an explicit interaction with an empty profile allowlist in Plan and auto mode',async()=>{
