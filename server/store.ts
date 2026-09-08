@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { completeToolBoundary } from './context.js';
 import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider } from '../shared/types.js';
 
 export class Store {
@@ -17,6 +18,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS messages_session ON messages(session_id);
       CREATE TABLE IF NOT EXISTS todos (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS changes (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, path TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id,path));
+      CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);`);
     // An interrupted process must never leave a session stuck running.
@@ -81,6 +83,19 @@ export class Store {
     try { this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id); for (const message of messages) this.saveMessage(message); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
+  compactHistory(id: string, messages: Message[]): Session {
+    this.db.exec('BEGIN');
+    try {
+      const source=this.session(id);
+      const archive=this.createSession({...source,id:randomUUID(),title:`${source.title} · before compaction`,parentId:id,createdAt:Date.now(),updatedAt:Date.now(),archived:true});
+      for(const message of this.messages(id))this.saveMessage({...message,id:randomUUID(),sessionId:archive.id});
+      this.saveTodos(archive.id,this.todos(id));
+      this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
+      for(const message of messages)this.saveMessage(message);
+      this.db.exec('COMMIT');
+      return archive;
+    } catch(error) { this.db.exec('ROLLBACK');throw error; }
+  }
   todos(id: string): Todo[] { const row = this.db.prepare('SELECT data FROM todos WHERE session_id=?').get(id) as {data:string}|undefined; return row ? JSON.parse(row.data) : []; }
   saveTodos(id: string, todos: Todo[]) { this.db.prepare('INSERT INTO todos(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id, JSON.stringify(todos)); }
   changes(id: string): FileChange[] { return (this.db.prepare('SELECT data FROM changes WHERE session_id=?').all(id) as {data:string}[]).map(r => JSON.parse(r.data)); }
@@ -89,6 +104,16 @@ export class Store {
     this.db.prepare('INSERT INTO changes(session_id,path,data) VALUES(?,?,?) ON CONFLICT(session_id,path) DO UPDATE SET data=excluded.data').run(id, change.path, JSON.stringify({ ...change, before: previous ? previous.before : change.before }));
   }
   clearChanges(id: string) { this.db.prepare('DELETE FROM changes WHERE session_id=?').run(id); }
+  clearChange(id: string, path: string) { this.db.prepare('DELETE FROM changes WHERE session_id=? AND path=?').run(id,path); }
+  toolGrants(id: string): { tool: string; scope: string }[] {
+    this.session(id);
+    return this.db.prepare('SELECT tool,scope FROM tool_grants WHERE session_id=? ORDER BY tool').all(id) as {tool:string;scope:string}[];
+  }
+  grantTool(id: string, tool: string, scope: string) {
+    this.session(id);
+    this.db.prepare('INSERT INTO tool_grants(session_id,tool,scope) VALUES(?,?,?) ON CONFLICT(session_id,tool) DO UPDATE SET scope=excluded.scope').run(id,tool,scope);
+  }
+  clearToolGrants(id: string) { this.session(id); this.db.prepare('DELETE FROM tool_grants WHERE session_id=?').run(id); }
   event(event: RunEvent): RunEvent {
     const result = this.db.prepare('INSERT INTO events(session_id,data) VALUES(?,?)').run(event.sessionId, JSON.stringify(event));
     return { ...event, id: Number(result.lastInsertRowid) };
@@ -102,9 +127,9 @@ export class Store {
     const end = messageId ? messages.findIndex(m => m.id === messageId) : messages.length - 1;
     if (messageId && end < 0) throw Object.assign(new Error('Message not found'), {status:404});
     const session = this.createSession({ ...source, id:randomUUID(), title:`${source.title} (fork)`, parentId:id, createdAt:Date.now(), updatedAt:Date.now(), archived:false });
-    const copied = messages.slice(0,end+1);
-    // A branch boundary cannot contain tool calls without their matching results.
-    while (copied.at(-1)?.role === 'assistant' && copied.at(-1)?.toolCalls?.length) copied.pop();
+    // Trim before the earliest crossing group, including partially resolved parallel
+    // calls and interrupted runs whose last message is already a tool result.
+    const copied = messages.slice(0, completeToolBoundary(messages, end + 1));
     // Tool IDs belong to provider history, not database keys. Preserve them and
     // signed provider metadata together; only persisted message IDs are new.
     for (const m of copied) this.saveMessage({ ...m, id:randomUUID(), sessionId:session.id });

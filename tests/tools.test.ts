@@ -9,7 +9,7 @@ import { PassThrough } from 'node:stream';
 import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { assertReadablePath, executeTool, gitStatus, isReadOnlyTool, listFiles, readFile, resolveWorkspacePath, searchFiles, toolDefinitions, type ToolContext } from '../server/tools.js';
+import { assertReadablePath, executeTool, gitStatus, isReadOnlyTool, listFiles, readCommand, readFile, resolveWorkspacePath, restoreChanges, searchFiles, toolDefinitions, type ToolContext } from '../server/tools.js';
 import type { FileChange, Todo } from '../shared/types.js';
 
 const exec = promisify(execFile);
@@ -273,6 +273,93 @@ describe('file reads and reversible edits', () => {
   });
 });
 
+describe('safe command loading and undo', () => {
+  it('reads bounded command text without allowing secret aliases or arbitrary state', async () => {
+    await put('.lite/commands/review.md', '# Review\nCheck the changes.');
+    expect(await readCommand(workspace, '.lite/commands/review.md')).toContain('Check the changes.');
+    await put('.env', 'SYNTHETIC_SECRET');
+    await put('.lite/token.md', 'SYNTHETIC_SECRET');
+    await expect(readCommand(workspace, '.lite/token.md')).rejects.toThrow(/command/);
+    await fs.symlink(path.join(workspace, '.env'), path.join(workspace, '.lite/commands/secret.md'));
+    await expect(readCommand(workspace, '.lite/commands/secret.md')).rejects.toThrow(/protected/i);
+    await fs.link(path.join(workspace, '.env'), path.join(workspace, '.lite/commands/hard.md'));
+    await expect(readCommand(workspace, '.lite/commands/hard.md')).rejects.toThrow(/Hard-linked/);
+    await put('.lite/commands/.env.md', 'SYNTHETIC_SECRET');
+    await expect(readCommand(workspace, '.lite/commands/.env.md')).rejects.toThrow(/protected/i);
+    await put('.lite/commands/large.md', 'x'.repeat(70_000));
+    await expect(readCommand(workspace, '.lite/commands/large.md')).rejects.toThrow(/too large/);
+    await put('.config/commands/review.md', 'source command');
+    expect(await readCommand(workspace, '.config/commands/review.md')).toBe('source command');
+  });
+  it('restores replacements, creations and deletions with exact bytes and success callbacks', async () => {
+    await put('edited', 'after\n');
+    await fs.chmod(path.join(workspace, 'edited'), 0o755);
+    await put('created', 'new');
+    const snapshots: FileChange[] = [{ path: 'edited', before: 'before\r\n', after: 'after\n' }, { path: 'created', before: null, after: 'new' }, { path: 'missing/deleted', before: 'restored', after: null }];
+    const restored: FileChange[] = [];
+    await restoreChanges(workspace, snapshots, change => { restored.push(change); });
+    expect(restored).toEqual(snapshots);
+    expect(await fs.readFile(path.join(workspace, 'edited'), 'utf8')).toBe('before\r\n');
+    expect((await fs.stat(path.join(workspace, 'edited'))).mode & 0o777).toBe(0o755);
+    await expect(fs.stat(path.join(workspace, 'created'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await fs.readFile(path.join(workspace, 'missing/deleted'), 'utf8')).toBe('restored');
+  });
+  it('preflights every file before mutating any, including protected and symlink targets', async () => {
+    await put('first', 'after');
+    await put('second', 'external change');
+    const callback = vi.fn();
+    await expect(restoreChanges(workspace, [{ path: 'first', before: 'before', after: 'after' }, { path: 'second', before: 'before', after: 'expected' }], callback)).rejects.toMatchObject({ status: 409 });
+    expect(await fs.readFile(path.join(workspace, 'first'), 'utf8')).toBe('after');
+    expect(callback).not.toHaveBeenCalled();
+    await fs.symlink(path.join(workspace, 'first'), path.join(workspace, 'alias'));
+    await expect(restoreChanges(workspace, [{ path: 'alias', before: 'bad', after: 'after' }], callback)).rejects.toThrow(/Symlink/);
+    for (const file of ['.env', '.git/config', '.lite/auth.json']) {
+      await put(file, 'protected');
+      await expect(restoreChanges(workspace, [{ path: file, before: 'bad', after: 'protected' }], callback)).rejects.toThrow(/Protected|\.git/);
+    }
+    await fs.link(path.join(workspace, 'first'), path.join(workspace, 'hard'));
+    await expect(restoreChanges(workspace, [{ path: 'hard', before: 'bad', after: 'after' }], callback)).rejects.toMatchObject({ status: 409 });
+  });
+  it('detects intervening changes after preflight and only reports completed restores', async () => {
+    await put('first', 'after');
+    await put('second', 'after');
+    const snapshots: FileChange[] = [{ path: 'first', before: 'before', after: 'after' }, { path: 'second', before: 'before', after: 'after' }];
+    const restored: string[] = [];
+    await expect(restoreChanges(workspace, snapshots, async change => {
+      restored.push(change.path);
+      await fs.writeFile(path.join(workspace, 'second'), 'external change');
+    })).rejects.toMatchObject({ status: 409 });
+    expect(restored).toEqual(['first']);
+    expect(await fs.readFile(path.join(workspace, 'first'), 'utf8')).toBe('before');
+    expect(await fs.readFile(path.join(workspace, 'second'), 'utf8')).toBe('external change');
+  });
+  it('rejects a parent symlink swapped after preflight without touching its new target', async () => {
+    await put('first', 'after');
+    await put('nested/second', 'after');
+    await fs.writeFile(path.join(outside, 'second'), 'outside');
+    await expect(restoreChanges(workspace, [{ path: 'first', before: 'before', after: 'after' }, { path: 'nested/second', before: 'before', after: 'after' }], async () => {
+      await fs.rename(path.join(workspace, 'nested'), path.join(workspace, 'old-nested'));
+      await fs.symlink(outside, path.join(workspace, 'nested'));
+    })).rejects.toThrow(/Symlink/);
+    expect(await fs.readFile(path.join(outside, 'second'), 'utf8')).toBe('outside');
+    expect(await fs.readFile(path.join(workspace, 'old-nested/second'), 'utf8')).toBe('after');
+  });
+  it('rejects inode replacement even when bytes match and stops on callback failure', async () => {
+    await put('first', 'after');
+    await put('second', 'after');
+    const snapshots: FileChange[] = [{ path: 'first', before: 'before', after: 'after' }, { path: 'second', before: 'before', after: 'after' }];
+    await expect(restoreChanges(workspace, snapshots, async () => {
+      await fs.rename(path.join(workspace, 'second'), path.join(workspace, 'old-second'));
+      await fs.writeFile(path.join(workspace, 'second'), 'after');
+    })).rejects.toMatchObject({ status: 409 });
+    expect(await fs.readFile(path.join(workspace, 'second'), 'utf8')).toBe('after');
+    await put('first', 'after');
+    await expect(restoreChanges(workspace, snapshots, () => { throw new Error('Cannot persist progress'); })).rejects.toThrow('Cannot persist progress');
+    expect(await fs.readFile(path.join(workspace, 'first'), 'utf8')).toBe('before');
+    expect(await fs.readFile(path.join(workspace, 'second'), 'utf8')).toBe('after');
+  });
+});
+
 describe('grep', () => {
   it('searches regex and literal strings, with filters and case options', async () => {
     await put('src/a.ts', 'Alpha\nfoo.bar\nfooXbar\n');
@@ -450,5 +537,89 @@ describe('git status', () => {
   it('rejects external git metadata paths instead of reading them', async () => {
     await fs.symlink(outside, path.join(workspace, '.git'));
     await expect(gitStatus(workspace)).rejects.toThrow(/outside/);
+  });
+  async function worktreeFixture() {
+    const repository = path.join(temporary, 'repository');
+    await fs.mkdir(repository);
+    await exec('git', ['init', '--quiet', '--initial-branch=main'], { cwd: repository });
+    await fs.writeFile(path.join(repository, 'tracked.txt'), 'one\n');
+    await fs.writeFile(path.join(repository, 'old name.txt'), 'rename\n');
+    await exec('git', ['add', '.'], { cwd: repository });
+    await exec('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '--quiet', '-m', 'fixture'], { cwd: repository });
+    await exec('git', ['-c', 'core.hooksPath=/dev/null', 'worktree', 'add', '--quiet', '-b', 'feature/test', workspace], { cwd: repository });
+    const pointer = (await fs.readFile(path.join(workspace, '.git'), 'utf8')).trim().slice(8);
+    return { repository, commonDir: path.join(repository, '.git'), gitDir: path.resolve(workspace, pointer) };
+  }
+  it('supports clean, dirty, and renamed files in a registered external worktree without weakening file boundaries', async () => {
+    const { gitDir } = await worktreeFixture();
+    expect(await gitStatus(workspace)).toEqual({ branch: 'feature/test', files: [], isRepo: true });
+    await put('tracked.txt', 'two\n');
+    await put('new file.txt', 'untracked');
+    await exec('git', ['mv', 'old name.txt', 'new name.txt'], { cwd: workspace });
+    const result = await gitStatus(workspace);
+    expect(result.branch).toBe('feature/test');
+    expect(result.files).toEqual(expect.arrayContaining([{ path: 'tracked.txt', status: 'M' }, { path: 'new file.txt', status: '??' }, { path: 'new name.txt', status: 'R' }]));
+    await expect(resolveWorkspacePath(workspace, gitDir)).rejects.toThrow(/outside/);
+    await expect(readFile(workspace, path.join(gitDir, 'HEAD'))).rejects.toThrow(/outside/);
+    await fs.writeFile(path.join(workspace, '.git'), `gitdir: ${path.relative(workspace, gitDir)}\n`);
+    expect((await gitStatus(workspace)).isRepo).toBe(true);
+    const alias = path.join(temporary, 'workspace-alias');
+    await fs.symlink(workspace, alias);
+    expect((await gitStatus(alias)).branch).toBe('feature/test');
+  });
+  it('does not execute repository filters, fsmonitor, hooks, or global configuration', async () => {
+    const { repository, commonDir } = await worktreeFixture();
+    const marker = path.join(temporary, 'must-not-execute');
+    const hook = path.join(temporary, 'hook');
+    await fs.writeFile(hook, `#!/bin/sh\nprintf unsafe > '${marker}'\n`, { mode: 0o755 });
+    const hooks = path.join(temporary, 'hooks');
+    await fs.mkdir(hooks);
+    await fs.copyFile(hook, path.join(hooks, 'post-index-change'));
+    await fs.chmod(path.join(hooks, 'post-index-change'), 0o755);
+    for (const [key, value] of [['core.fsmonitor', hook], ['core.hooksPath', hooks], ['filter.unsafe.clean', hook], ['filter.unsafe.process', hook], ['filter.unsafe.required', 'true'], ['core.worktree', outside]]) {
+      await exec('git', ['--git-dir', commonDir, 'config', key, value], { cwd: repository });
+    }
+    await put('.gitattributes', '*.txt filter=unsafe\n');
+    await put('tracked.txt', 'changed\n');
+    const global = path.join(temporary, 'global-config');
+    await fs.writeFile(global, '[this is not valid configuration');
+    vi.stubEnv('GIT_CONFIG_GLOBAL', global);
+    vi.stubEnv('GIT_DIR', outside);
+    vi.stubEnv('GIT_WORK_TREE', outside);
+    vi.stubEnv('GIT_CONFIG_COUNT', '1');
+    vi.stubEnv('GIT_CONFIG_KEY_0', 'core.fsmonitor');
+    vi.stubEnv('GIT_CONFIG_VALUE_0', hook);
+    expect((await gitStatus(workspace)).files).toContainEqual({ path: 'tracked.txt', status: 'M' });
+    await expect(fs.stat(marker)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+  it('rejects arbitrary external targets and a registration belonging to another worktree', async () => {
+    await put('.git', `gitdir: ${outside}\n`);
+    await expect(gitStatus(workspace)).rejects.toThrow(/Unregistered/);
+    await fs.unlink(path.join(workspace, '.git'));
+    const { gitDir } = await worktreeFixture();
+    await fs.writeFile(path.join(gitDir, 'gitdir'), `${path.join(outside, '.git')}\n`);
+    await expect(gitStatus(workspace)).rejects.toThrow(/does not point back/);
+  });
+  it('rejects escaping commondir pointers and symlinked registration metadata', async () => {
+    const { gitDir } = await worktreeFixture();
+    await fs.writeFile(path.join(gitDir, 'commondir'), `${outside}\n`);
+    await expect(gitStatus(workspace)).rejects.toThrow(/does not point back/);
+    await fs.writeFile(path.join(gitDir, 'commondir'), '../..\n');
+    const backlink = await fs.readFile(path.join(gitDir, 'gitdir'), 'utf8');
+    await fs.unlink(path.join(gitDir, 'gitdir'));
+    await fs.writeFile(path.join(outside, 'backlink'), backlink);
+    await fs.symlink(path.join(outside, 'backlink'), path.join(gitDir, 'gitdir'));
+    await expect(gitStatus(workspace)).rejects.toThrow(/symlinks/);
+  });
+  it('rejects symlinked indexes and config includes without returning their contents', async () => {
+    const { repository, commonDir, gitDir } = await worktreeFixture();
+    const secret = path.join(outside, 'secret');
+    await fs.writeFile(secret, 'SYNTHETIC_SECRET');
+    await exec('git', ['--git-dir', commonDir, 'config', 'include.path', secret], { cwd: repository });
+    await expect(gitStatus(workspace)).rejects.toThrow(/includes are not supported/);
+    await exec('git', ['--git-dir=/dev/null', 'config', '--no-includes', '--file', path.join(commonDir, 'config'), '--unset', 'include.path'], { cwd: repository });
+    await fs.unlink(path.join(gitDir, 'index'));
+    await fs.symlink(secret, path.join(gitDir, 'index'));
+    await expect(gitStatus(workspace)).rejects.toThrow(/symlinks/);
   });
 });

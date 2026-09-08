@@ -25,7 +25,7 @@ test('asks before changing files and records an approved tool result',async({pag
   await fresh(page);await send(page,'create fixture');await expect(page.getByRole('region',{name:'Permission requested'})).toBeVisible();
   await page.getByRole('button',{name:'Allow once'}).click();await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
   await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('The file operation is complete.');
-  await page.getByText('Write file',{exact:true}).click();await expect(page.getByText('Created result.txt',{exact:false})).toBeVisible();
+  await page.getByText('Write file',{exact:true}).click();await expect(page.getByText(/(?:Created|Updated|Wrote) result\.txt/)).toBeVisible();
   await page.screenshot({path:'test-results/tool-approved.png',fullPage:true,animations:'disabled'});
 });
 
@@ -49,6 +49,29 @@ test('discovers models and attaches workspace context',async({page})=>{
   await fresh(page);await page.getByRole('button',{name:'test-model'}).click();await expect(page.getByRole('dialog',{name:'Choose a model'})).toBeVisible();await page.getByRole('button',{name:'test-fast',exact:true}).click();
   await page.getByRole('button',{name:'Add workspace file context'}).click();await page.getByRole('textbox',{name:'Search workspace files'}).fill('hello.ts');await page.getByRole('button',{name:'src/hello.ts'}).click();
   await expect(page.getByRole('button',{name:'Remove hello.ts'})).toBeVisible();await send(page,'Read this attached source');await expect(page.getByRole('article',{name:'Your message'})).toContainText('src/hello.ts');await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
+});
+
+test('terminal executes real commands, persists on hide and reload, and ends explicitly',async({page,request})=>{
+  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await fresh(page);await send(page,'terminal workspace');await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('Your workspace is ready.');await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
+  const sessionId=page.url().split('#session/')[1];
+  const detail=await (await request.get(`/api/sessions/${sessionId}`)).json();
+  const fileUrl=`/api/file?${new URLSearchParams({workspace:detail.session.workspace,path:'terminal-browser.txt'})}`;
+  async function command(text:string){await page.locator('.xterm-helper-textarea').focus();await page.keyboard.insertText(text);await page.keyboard.press('Enter');}
+  async function content(){const res=await request.get(fileUrl);return res.ok()?(await res.json()).content:'';}
+  await page.getByRole('button',{name:'Open terminal',exact:true}).click();
+  const pane=page.getByRole('region',{name:'Session terminal'});await expect(pane.getByRole('status')).toHaveText('Connected');
+  await command("export LITE_BROWSER_VALUE=kept; printf '%s' first > terminal-browser.txt");await expect.poll(content).toBe('first');
+  await page.getByRole('button',{name:'Hide terminal',exact:true}).click();await expect(pane).toHaveCount(0);
+  await page.reload();await expect(page.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();await page.getByRole('button',{name:'Open terminal',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Connected');
+  await command('printf "%s" "$LITE_BROWSER_VALUE" > terminal-browser.txt');await expect.poll(content).toBe('kept');
+  await command("printf '\\nTerminal is ready. State survived reconnection.\\n'");
+  await page.screenshot({path:'test-results/terminal-desktop.png',fullPage:true,animations:'disabled'});
+  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'test-results/terminal-mobile.png',fullPage:true,animations:'disabled'});
+  await pane.getByRole('button',{name:'End shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Shell ended.');
+  await pane.getByRole('button',{name:'Reconnect / new shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Connected');
+  await command('printf "%s" "${LITE_BROWSER_VALUE:-fresh}" > terminal-browser.txt');await expect.poll(content).toBe('fresh');
+  await pane.getByRole('button',{name:'End shell',exact:true}).click();expect(errors).toEqual([]);
 });
 
 test('settings save, test connection, validation and dark appearance',async({page})=>{

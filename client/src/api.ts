@@ -49,6 +49,7 @@ function reduceEvent(detail: SessionDetail, event: RunEvent): SessionDetail {
       return { ...detail, session: { ...detail.session, status: 'waiting' }, permissions: [...detail.permissions.filter(p => p.id !== permission.id), permission] };
     }
     case 'permission_resolved': return { ...detail, permissions: detail.permissions.filter(p => p.id !== (data.id ?? data.requestId ?? data.permissionId)) };
+    case 'reset': return { ...detail, messages: data.messages };
     case 'todos': return { ...detail, todos: data.todos ?? data };
     case 'done': return { ...detail, session: { ...detail.session, status: data.status === 'error' ? 'error' : 'idle' } };
     case 'error': return { ...detail, session: { ...detail.session, status: 'error' } };

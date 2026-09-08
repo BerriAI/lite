@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createServer as createViteServer } from 'vite';
 import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
+import { attachTerminals } from '../server/terminal.js';
 
 const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
@@ -19,7 +20,7 @@ const mock=createServer(async(req,res)=>{
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
   let toolCall=false;
   if(prompt.includes('create fixture')&&data.messages.at(-1)?.role!=='tool'){
-    toolCall=true;emit({tool_calls:[{index:0,id:'fixture-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'result.txt',content:'Created by the browser test.\n'})}}]});
+    toolCall=true;emit({tool_calls:[{index:0,id:'fixture-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'result.txt',content:`Created by the browser test.\n${prompt}\n`})}}]});
   }else{
     emit({reasoning_content:'Checking the request and preparing a clear response.'});
     const text=prompt.includes('create fixture')?'The file operation is complete. Check the activity card for its result.':prompt.includes('Summarize this coding session')?'The user asked for a fixture response. A small test workspace is available. Continue from here.':'Hello from Lite.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
@@ -33,6 +34,7 @@ store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',
 const{app,runner}=createApp({store});
 const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);
 const server=app.listen(3211,'127.0.0.1',()=>console.log('Lite E2E ready at http://127.0.0.1:3211'));
+const terminals=attachTerminals(server,store);
 let closing=false;
-async function close(){if(closing)return;closing=true;runner.stopAll();server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
+async function close(){if(closing)return;closing=true;runner.stopAll();await terminals.close();server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
 process.on('SIGINT',close);process.on('SIGTERM',close);

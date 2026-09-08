@@ -10,6 +10,7 @@ const { Store } = await import('./store.js');
 const { McpManager } = await import('./mcp.js');
 const { CodexAuth } = await import('./auth.js');
 const { configureCodexAuth } = await import('./providers.js');
+const { attachTerminals } = await import('./terminal.js');
 const store = new Store();
 const mcp = new McpManager(() => store.settings().mcpServers);
 const auth = new CodexAuth(store.directory);
@@ -31,13 +32,14 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('LITE_P
 const server = app.listen(port,'127.0.0.1', () => {
   console.log(`\n  ≋ Lite\n  Your ideas, up to speed.\n\n  http://localhost:${port}\n  Workspace: ${store.settings().workspace}\n  Press Ctrl+C to stop.\n`);
 });
+const terminals = attachTerminals(server,store);
 server.on('error',error => { console.error(error.message); process.exitCode=1; });
 let closing=false;
 async function close() {
   if(closing)return;closing=true;
   runner.stopAll();
   const timeout=setTimeout(()=>process.exit(0),3000);timeout.unref();
-  await Promise.allSettled([mcp.close(), Promise.resolve(auth.close()),vite?.close()]);
+  await Promise.allSettled([terminals.close(), mcp.close(), Promise.resolve(auth.close()),vite?.close()]);
   server.close(()=>{store.close();process.exit(0);});
   server.closeAllConnections();
 }

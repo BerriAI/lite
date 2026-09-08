@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import { configureCodexAuth, endpoint, listModels, parseSSE, streamCompletion } from '../server/providers.js';
+import { configureCodexAuth, endpoint, listModels, parseSSE, ProviderError, streamCompletion, type ProviderRetry } from '../server/providers.js';
 import type { Provider, StreamChunk } from '../shared/types.js';
 
 const servers: Server[] = [];
@@ -20,9 +20,9 @@ async function mock(handler: (req: IncomingMessage, res: ServerResponse, body: a
 const frame = (data: any) => `data: ${JSON.stringify(data)}\r\n\r\n`;
 const choice = (delta: any, finish_reason: string | null = null) => ({ choices: [{ index: 0, delta, finish_reason }] });
 const provider = (baseUrl: string): Provider => ({ id: 'test', kind: 'openai', name: 'Test', baseUrl, apiKey: 'test-secret-never-expose' });
-async function collect(p: Provider, signal = new AbortController().signal): Promise<StreamChunk[]> {
+async function collect(p: Provider, signal = new AbortController().signal, onRetry?: (retry: ProviderRetry) => void): Promise<StreamChunk[]> {
   const chunks: StreamChunk[] = [];
-  for await (const chunk of streamCompletion({ provider: p, model: 'my-model', messages: [{ role: 'user', content: 'hello' }], signal })) chunks.push(chunk);
+  for await (const chunk of streamCompletion({ provider: p, model: 'my-model', messages: [{ role: 'user', content: 'hello' }], signal, onRetry })) chunks.push(chunk);
   return chunks;
 }
 
@@ -96,6 +96,103 @@ describe('provider protocol', () => {
     try { await collect(provider(base)); } catch (e) { expect(String(e)).not.toContain('test-secret-never-expose'); }
     const streamed = await mock((_req, res) => { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(frame(choice({ content: 'partial' })) + frame({ error: { message: 'test-secret-never-expose', type: 'overloaded_error' } })); });
     await expect(collect(provider(streamed))).rejects.toThrow('stream failed');
+  });
+  it('retries transient HTTP responses before streaming and reports only safe retry fields', async () => {
+    let requests = 0;
+    const bodies: any[] = [], retries: ProviderRetry[] = [];
+    const base = await mock((_req, res, body) => {
+      requests++; bodies.push(body);
+      if (requests < 3) {
+        res.writeHead(requests === 1 ? 429 : 503, { 'Content-Type': 'application/json', 'Retry-After': '0' });
+        res.end(JSON.stringify({ error: { type: requests === 1 ? 'rate_limit_error' : 'overloaded_error', message: 'private upstream request information' } }));
+      } else { res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end(frame(choice({ content: 'recovered' }, 'stop')) + 'data: [DONE]\n\n'); }
+    });
+    const chunks = await collect(provider(base), new AbortController().signal, retry => retries.push(retry));
+    expect(requests).toBe(3); expect(bodies[0]).toEqual(bodies[1]); expect(bodies[1]).toEqual(bodies[2]);
+    expect(chunks.filter(chunk => chunk.type === 'text').map(chunk => chunk.text).join('')).toBe('recovered');
+    expect(retries).toEqual([{ attempt: 1, delayMs: 0, status: 429 }, { attempt: 2, delayMs: 0, status: 503 }]);
+  });
+  it.each([408, 429, 500, 502, 503, 504, 529])('bounds HTTP %i to two retries and retains structured safe failure', async status => {
+    let requests = 0; const retries: ProviderRetry[] = [];
+    const base = await mock((_req, res) => { requests++; res.writeHead(status, { 'Content-Type': 'application/json', 'Retry-After': '0' }); res.end(JSON.stringify({ error: { code: 'server_error', message: 'test-secret-never-expose' } })); });
+    let failure: unknown;
+    try { await collect(provider(base), new AbortController().signal, retry => retries.push(retry)); } catch (error) { failure = error; }
+    expect(requests).toBe(3); expect(retries).toHaveLength(2);
+    expect(failure).toBeInstanceOf(ProviderError);
+    expect(failure).toMatchObject({ status, code: 'server_error', retryable: true, contextOverflow: false });
+    expect(String(failure)).not.toContain('test-secret-never-expose');
+    expect(JSON.stringify(failure)).not.toContain('test-secret-never-expose');
+  });
+  it.each([
+    { status: 429, error: { code: 'insufficient_quota' }, code: 'insufficient_quota' },
+    { status: 429, error: { type: 'billing_hard_limit_reached' }, code: 'billing_hard_limit_reached' },
+    { status: 429, error: { code: 'rate_limit_exceeded', type: 'insufficient_quota' }, code: 'insufficient_quota' },
+    { status: 429, error: { message: 'You exceeded your current quota; inspect your billing plan.' }, code: 'insufficient_quota' },
+    { status: 503, error: { type: 'authentication_error' }, code: 'authentication_error' },
+    { status: 500, error: { message: 'The model does not exist.' }, code: 'model_not_found' },
+    { status: 500, error: { code: 'invalid_request_error' }, code: 'invalid_request_error' },
+    { status: 401, error: { code: 'server_error' }, code: 'server_error' },
+    { status: 403, error: { type: 'permission_error' }, code: 'permission_error' },
+    { status: 404, error: { code: 'model_not_found' }, code: 'model_not_found' },
+    { status: 400, error: { code: 'invalid_request_error' }, code: 'invalid_request_error' },
+    { status: 501, error: { code: 'server_error' }, code: 'server_error' },
+  ])('does not retry permanent response $status / $code', async ({ status, error, code }) => {
+    let requests = 0; const onRetry = vi.fn();
+    const base = await mock((_req, res) => { requests++; res.writeHead(status, { 'Content-Type': 'application/json', 'Retry-After': '0' }); res.end(JSON.stringify({ error })); });
+    await expect(collect(provider(base), new AbortController().signal, onRetry)).rejects.toMatchObject({ status, code, retryable: false });
+    expect(requests).toBe(1); expect(onRetry).not.toHaveBeenCalled();
+  });
+  it.each([
+    { type: 'invalid_request_error', message: 'prompt is too long: 1000 tokens' },
+    { code: 'context_length_exceeded', message: 'test-secret-never-expose' },
+    { message: 'This model has a maximum context length of 1000 tokens.' },
+  ])('classifies context overflow without exposing provider messages', async error => {
+    let requests = 0;
+    const base = await mock((_req, res) => { requests++; res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error })); });
+    await expect(collect(provider(base))).rejects.toMatchObject({ status: 400, code: 'context_length_exceeded', contextOverflow: true, retryable: false });
+    expect(requests).toBe(1);
+  });
+  it.each([
+    { header: '100000', expected: 30_000 },
+    { header: 'Wed, 01 Jan 2100 00:00:00 GMT', expected: 30_000 },
+    { header: 'not-a-time', expected: 500 },
+    { header: '-1', expected: 500 },
+    { header: undefined, expected: 500 },
+  ])('caps or defaults Retry-After $header and aborts before replay', async ({ header, expected }) => {
+    let requests = 0; const controller = new AbortController(), retries: ProviderRetry[] = [];
+    const base = await mock((_req, res) => { requests++; res.writeHead(503, { 'Content-Type': 'application/json', ...(header ? { 'Retry-After': header } : {}) }); res.end('{}'); });
+    await expect(collect(provider(base), controller.signal, retry => { retries.push(retry); queueMicrotask(() => controller.abort()); })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(retries).toEqual([{ attempt: 1, status: 503, delayMs: expected }]); expect(requests).toBe(1);
+  });
+  it('never replays an ambiguous network failure even when the transport error includes a status', async () => {
+    const fetcher = vi.fn(async () => { throw Object.assign(new Error('test-secret-never-expose'), { status: 503 }); });
+    vi.stubGlobal('fetch', fetcher); const onRetry = vi.fn();
+    await expect(collect(provider('https://example.test'), new AbortController().signal, onRetry)).rejects.toMatchObject({ name: 'ProviderError', code: 'network_error', retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(onRetry).not.toHaveBeenCalled();
+  });
+  it('never retries a disconnected HTTP error body with missing classification details', async () => {
+    const fetcher = vi.fn(async () => new Response(new ReadableStream({ start(controller) { controller.error(new Error('test-secret-never-expose')); } }), { status: 503, headers: { 'Retry-After': '0' } }));
+    vi.stubGlobal('fetch', fetcher); const onRetry = vi.fn();
+    await expect(collect(provider('https://example.test'), new AbortController().signal, onRetry)).rejects.toMatchObject({ name: 'ProviderError', status: 503, code: 'network_error', retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(onRetry).not.toHaveBeenCalled();
+  });
+  it('never retries a partial SSE error or a disconnected response stream', async () => {
+    let requests = 0; const onRetry = vi.fn();
+    const base = await mock((_req, res) => {
+      requests++; res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Retry-After': '0' });
+      res.end(frame(choice({ content: 'visible' })) + frame({ error: { type: 'overloaded_error', status: 503, message: 'test-secret-never-expose' } }));
+    });
+    const iterator = streamCompletion({ provider: provider(base), model: 'my-model', messages: [], signal: new AbortController().signal, onRetry });
+    expect((await iterator.next()).value).toEqual({ type: 'text', text: 'visible' });
+    await expect(iterator.next()).rejects.toMatchObject({ name: 'ProviderError', code: 'overloaded_error', retryable: false });
+    expect(requests).toBe(1); expect(onRetry).not.toHaveBeenCalled();
+    let reader: ReadableStreamDefaultController<Uint8Array>;
+    const fetcher = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { reader = controller; controller.enqueue(new TextEncoder().encode(frame(choice({ content: 'partial' })))); } }), { headers: { 'Content-Type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetcher);
+    const stream = streamCompletion({ provider: provider(base), model: 'my-model', messages: [], signal: new AbortController().signal, onRetry });
+    await stream.next(); reader!.error(new Error('test-secret-never-expose'));
+    await expect(stream.next()).rejects.toMatchObject({ name: 'ProviderError', code: 'stream_interrupted', retryable: false });
+    expect(fetcher).toHaveBeenCalledTimes(1); expect(onRetry).not.toHaveBeenCalled();
   });
   it('does not forward API credentials through redirects', async () => {
     let hits = 0;

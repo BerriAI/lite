@@ -138,6 +138,10 @@ export async function assertReadablePath(workspace: string, filePath: string): P
 
 async function readTextFile(workspace: string, filePath: string, maxBytes: number, complete = false): Promise<{ absolute: string; content: string; truncated: boolean }> {
   const absolute = await assertReadablePath(workspace, filePath);
+  return readAbsoluteText(absolute, maxBytes, complete);
+}
+
+async function readAbsoluteText(absolute: string, maxBytes: number, complete = false): Promise<{ absolute: string; content: string; truncated: boolean }> {
   // O_NONBLOCK avoids hanging on FIFOs; O_NOFOLLOW catches last-component swaps.
   const handle = await fs.open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
@@ -168,6 +172,36 @@ async function readTextFile(workspace: string, filePath: string, maxBytes: numbe
 export async function readFile(workspace: string, filePath: string): Promise<{ path: string; content: string; truncated?: boolean }> {
   const result = await readTextFile(workspace, filePath, READ_LIMIT);
   return { path: portable(path.relative(await fs.realpath(workspace), result.absolute)), content: result.content, ...(result.truncated ? { truncated: true } : {}) };
+}
+
+/** Command loading has one narrow exception to the private .lite state policy. */
+export async function readCommand(workspace: string, filePath: string): Promise<string> {
+  const root = await fs.realpath(workspace);
+  const absolute = await resolveWorkspacePath(workspace, filePath);
+  const candidate = path.resolve(workspace, filePath);
+  const lexical = portable(path.relative(within(path.resolve(workspace), candidate) ? path.resolve(workspace) : root, candidate));
+  const canonical = portable(path.relative(root, absolute));
+  const commandPath = (relative: string) => /^\.lite\/commands\/[^/]+\.md$/.test(relative) && !protectedPath(path.posix.basename(relative));
+  const allowedDirectory = (relative: string) => relative.split('/').length === 3 && relative.split('/')[1] === 'commands' && relative.endsWith('.md');
+  if (!allowedDirectory(lexical) || (!commandPath(lexical) && protectedPath(lexical)) || (!commandPath(canonical) && protectedPath(canonical))) throw new Error('Invalid or protected command file.');
+  // Reject redirection entirely; a command cannot use even an in-workspace
+  // symlink to bypass credential checks or alias another private command file.
+  await noSymlinkPath(root, lexical);
+  if (path.resolve(root, lexical) !== absolute) throw new Error('Command symlink redirection is forbidden.');
+  const result = await readAbsoluteText(absolute, 64 * 1024, true);
+  return result.content;
+}
+
+async function noSymlinkPath(root: string, filePath: string): Promise<string> {
+  const absolute = path.resolve(root, filePath);
+  if (!within(root, absolute)) throw new Error('Path is outside the workspace.');
+  let current = root;
+  for (const part of path.relative(root, absolute).split(path.sep).filter(Boolean)) {
+    current = path.join(current, part);
+    try { if ((await fs.lstat(current)).isSymbolicLink()) throw new Error('Symlink redirection is forbidden for this operation.'); }
+    catch (error) { if (hasCode(error, 'ENOENT')) break; throw error; }
+  }
+  return absolute;
 }
 
 export async function listFiles(workspace: string, filePath = ''): Promise<FileEntry[]> {
@@ -300,6 +334,96 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
   return bounded(`${edit ? `Updated ${relative} (${replacements} replacement${replacements === 1 ? '' : 's'})` : `${before === null ? 'Created' : 'Wrote'} ${relative}`}\n${patch}`);
 }
 
+interface RestoreTarget { change: FileChange; absolute: string; identity: { dev: number; ino: number } | null }
+function restoreConflict(filePath: string): Error {
+  return Object.assign(new Error(`Cannot restore ${filePath}: file changed or is no longer safe. Remaining changes were not restored.`), { status: 409 });
+}
+async function restorePath(root: string, filePath: string): Promise<string> {
+  const absolute = await noSymlinkPath(root, filePath);
+  if (await writablePath(root, filePath) !== absolute) throw restoreConflict(filePath);
+  return absolute;
+}
+async function checkRestoreDescriptor(handle: Awaited<ReturnType<typeof fs.open>>, target: RestoreTarget): Promise<void> {
+  const stat = await handle.stat();
+  if (!stat.isFile() || stat.nlink !== 1 || stat.size > EDIT_LIMIT || (target.identity && (target.identity.dev !== stat.dev || target.identity.ino !== stat.ino))) throw restoreConflict(target.change.path);
+  const bytes = Buffer.alloc(EDIT_LIMIT + 1);
+  let length = 0;
+  while (length < bytes.length) {
+    const { bytesRead } = await handle.read(bytes, length, bytes.length - length, length);
+    if (!bytesRead) break;
+    length += bytesRead;
+  }
+  if (target.change.after === null || !bytes.subarray(0, length).equals(Buffer.from(target.change.after, 'utf8'))) throw restoreConflict(target.change.path);
+  target.identity ??= { dev: stat.dev, ino: stat.ino };
+}
+
+/** Preflight all targets, then recheck each descriptor immediately before undo.
+ * Not a transaction against unrelated external writers: completed callbacks are
+ * durable progress; callers must retain pending records when a later file fails.
+ */
+export async function restoreChanges(workspace: string, changes: FileChange[], onRestored: (change: FileChange) => void | Promise<void>): Promise<void> {
+  if (!Array.isArray(changes) || changes.length > 10_000 || typeof onRestored !== 'function') throw new Error('Invalid restore request.');
+  const root = await fs.realpath(workspace);
+  const targets: RestoreTarget[] = [];
+  const seen = new Set<string>();
+  for (const value of changes) {
+    if (!value || typeof value.path !== 'string' || !value.path || [value.before, value.after].some(text => text !== null && (typeof text !== 'string' || Buffer.byteLength(text) > EDIT_LIMIT || text.includes('\0')))) throw new Error('Invalid file-change snapshot.');
+    const change = { path: value.path, before: value.before, after: value.after };
+    const absolute = await restorePath(root, change.path);
+    if (seen.has(absolute)) throw new Error('Duplicate restore targets are not allowed.');
+    seen.add(absolute);
+    const target: RestoreTarget = { change, absolute, identity: null };
+    if (change.after === null) {
+      try { await fs.lstat(absolute); throw restoreConflict(change.path); }
+      catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
+    } else {
+      let handle;
+      try {
+        handle = await fs.open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+        await checkRestoreDescriptor(handle, target);
+      } catch (error) { if (hasCode(error, 'ENOENT') || hasCode(error, 'ELOOP')) throw restoreConflict(change.path); throw error; }
+      finally { await handle?.close(); }
+    }
+    targets.push(target);
+  }
+  for (const target of targets) {
+    const { change, absolute } = target;
+    if (await restorePath(root, change.path) !== absolute) throw restoreConflict(change.path);
+    if (change.after === null && change.before === null) {
+      try { await fs.lstat(absolute); throw restoreConflict(change.path); }
+      catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
+    } else {
+      if (change.after === null) {
+        await fs.mkdir(path.dirname(absolute), { recursive: true });
+        await restorePath(root, change.path);
+      }
+      const flags = constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK | (change.after === null ? constants.O_CREAT | constants.O_EXCL : 0);
+      let handle;
+      try {
+        handle = await fs.open(absolute, flags, 0o666);
+        const descriptor = await handle.stat();
+        await restorePath(root, change.path);
+        const current = await fs.lstat(absolute);
+        if (!current.isFile() || current.nlink !== 1 || current.dev !== descriptor.dev || current.ino !== descriptor.ino) throw restoreConflict(change.path);
+        if (change.after !== null) await checkRestoreDescriptor(handle, target);
+        if (change.before === null) await fs.unlink(absolute);
+        else {
+          const content = Buffer.from(change.before, 'utf8');
+          let offset = 0;
+          while (offset < content.length) {
+            const { bytesWritten } = await handle.write(content, offset, content.length - offset, offset);
+            if (!bytesWritten) throw new Error('Restore could not write file contents.');
+            offset += bytesWritten;
+          }
+          await handle.truncate(content.length);
+        }
+      } catch (error) { if (hasCode(error, 'ENOENT') || hasCode(error, 'EEXIST') || hasCode(error, 'ELOOP')) throw restoreConflict(change.path); throw error; }
+      finally { await handle?.close(); }
+    }
+    await onRestored({ ...change });
+  }
+}
+
 interface ProcessResult { output: string; code: number | null; signal: NodeJS.Signals | null; cancelled: boolean; timedOut: boolean; truncated: boolean }
 async function runProcess(command: string, args: string[], cwd: string, signal: AbortSignal | undefined, timeout: number, env = process.env): Promise<ProcessResult> {
   checkAbort(signal);
@@ -366,24 +490,98 @@ async function runProcess(command: string, args: string[], cwd: string, signal: 
   });
 }
 
+// This exception is private to Git status. Other tools still cannot resolve or
+// read external worktree metadata. Git's reciprocal registration is evidence of
+// a local worktree, not authentication against another process with the same UID.
+async function gitMetadataPath(value: string, optional = false): Promise<Awaited<ReturnType<typeof fs.lstat>> | null> {
+  let stat;
+  try { stat = await fs.lstat(value); }
+  catch (error) { if (optional && hasCode(error, 'ENOENT')) return null; throw error; }
+  if (stat.isSymbolicLink() || await fs.realpath(value) !== path.resolve(value)) throw new Error('Unsafe Git metadata: symlinks outside the validated metadata layout are forbidden.');
+  if (!stat.isDirectory() && (!stat.isFile() || stat.nlink > 1)) throw new Error('Unsafe Git metadata: expected a regular, non-hard-linked file.');
+  return stat;
+}
+async function gitMetadataText(value: string, maximum = 4096): Promise<string> {
+  const stat = await gitMetadataPath(value);
+  if (!stat?.isFile() || stat.size > maximum) throw new Error('Invalid or oversized Git metadata file.');
+  const handle = await fs.open(value, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const current = await handle.stat();
+    if (!current.isFile() || current.nlink > 1 || current.size > maximum) throw new Error('Git metadata changed while being validated.');
+    const bytes = Buffer.alloc(maximum + 1);
+    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+    if (bytesRead > maximum || bytes.subarray(0, bytesRead).includes(0)) throw new Error('Invalid Git metadata text.');
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, bytesRead));
+  } finally { await handle.close(); }
+}
+function gitPointer(value: string): string {
+  const line = value.replace(/\r?\n$/, '');
+  if (!line || /[\0\r\n]/.test(line)) throw new Error('Invalid Git metadata pointer.');
+  return line;
+}
+async function statusMetadata(root: string): Promise<{ gitDir: string; commonDir: string } | null> {
+  const entry = path.join(root, '.git');
+  const stat = await gitMetadataPath(entry, true);
+  if (!stat) return null;
+  if (stat.isDirectory()) return { gitDir: entry, commonDir: entry };
+  const pointer = gitPointer(await gitMetadataText(entry));
+  if (!pointer.startsWith('gitdir: ')) throw new Error('Invalid Git worktree metadata pointer.');
+  const gitDir = path.resolve(root, pointer.slice(8));
+  if (path.basename(path.dirname(gitDir)) !== 'worktrees' || ['.', '..'].includes(path.basename(gitDir))) throw new Error('Unregistered external Git metadata: expected a worktree registration.');
+  const commonDir = path.dirname(path.dirname(gitDir));
+  if (!(await gitMetadataPath(gitDir))?.isDirectory() || !(await gitMetadataPath(commonDir))?.isDirectory()) throw new Error('Invalid Git worktree metadata directories.');
+  const common = gitPointer(await gitMetadataText(path.join(gitDir, 'commondir')));
+  const backlink = gitPointer(await gitMetadataText(path.join(gitDir, 'gitdir')));
+  if (path.resolve(gitDir, common) !== commonDir || path.resolve(gitDir, backlink) !== entry) throw new Error('Git worktree registration does not point back to this workspace.');
+  for (const directory of ['objects', 'refs']) {
+    if (!(await gitMetadataPath(path.join(commonDir, directory)))?.isDirectory()) throw new Error('Git worktree common directory is not a repository.');
+  }
+  await gitMetadataText(path.join(commonDir, 'HEAD'));
+  await gitMetadataText(path.join(gitDir, 'HEAD'));
+  await gitMetadataText(path.join(commonDir, 'config'), READ_LIMIT);
+  return { gitDir, commonDir };
+}
+async function safeStatusConfig(gitDir: string, commonDir: string, root: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+  const nullFile = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  const settings = ['core.fsmonitor=false', 'core.untrackedCache=false', `core.hooksPath=${nullFile}`, `core.excludesFile=${nullFile}`, `core.attributesFile=${nullFile}`, `core.worktree=${root}`, 'core.bare=false', 'core.sparseCheckout=false', 'submodule.recurse=false', 'protocol.allow=never', 'core.alternateRefsCommand='];
+  for (const directory of new Set([gitDir, commonDir])) {
+    for (const name of ['HEAD', 'index', 'packed-refs', 'shallow', 'info', 'info/exclude', 'objects', 'objects/info', 'objects/info/alternates', 'objects/info/http-alternates', 'refs']) {
+      const file = path.join(directory, name);
+      const stat = await gitMetadataPath(file, true);
+      if (stat && name.endsWith('alternates') && (await gitMetadataText(file)).trim()) throw new Error('External Git object alternates are not supported for safe status.');
+    }
+  }
+  // Parse local files only: never follow include/includeIf, and never expose
+  // parser errors or config values (which may contain credentials) in results.
+  for (const file of new Set([path.join(commonDir, 'config'), path.join(gitDir, 'config.worktree')])) {
+    if (!await gitMetadataPath(file, true)) continue;
+    await gitMetadataText(file, READ_LIMIT);
+    const parsed = await runProcess('git', [`--git-dir=${nullFile}`, 'config', '--no-includes', '--file', file, '--null', '--list'], root, undefined, 2000, env);
+    if (parsed.code !== 0 || parsed.timedOut || parsed.truncated) throw new Error('Could not safely parse Git configuration.');
+    for (const item of parsed.output.split('\0')) {
+      const key = item.split('\n', 1)[0];
+      if (/^include(?:if\..+)?\.path$/i.test(key)) throw new Error('Git configuration includes are not supported for safe status.');
+      const filter = /^filter\.(.+)\.(?:clean|process|required)$/i.exec(key);
+      if (filter) settings.push(`filter.${filter[1]}.clean=`, `filter.${filter[1]}.process=`, `filter.${filter[1]}.required=false`);
+    }
+  }
+  return [...new Set(settings)].flatMap(setting => ['-c', setting]);
+}
+
 export async function gitStatus(workspace: string): Promise<{ branch: string; files: { path: string; status: string }[]; isRepo: boolean }> {
   const empty = { branch: '', files: [], isRepo: false };
   const root = await resolveWorkspacePath(workspace, '');
-  try {
-    const metadata = await resolveWorkspacePath(root, '.git');
-    if ((await fs.stat(metadata)).isFile()) {
-      const value = (await readTextFile(root, '.git', 4096, true)).content.trim();
-      if (!value.startsWith('gitdir: ')) return empty;
-      await resolveWorkspacePath(root, value.slice(8));
-    }
-  } catch (error) { if (hasCode(error, 'ENOENT')) return empty; throw error; }
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
-  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CEILING_DIRECTORIES: path.dirname(root), GIT_OPTIONAL_LOCKS: '0' });
+  const metadata = await statusMetadata(root);
+  if (!metadata) return empty;
+  const env = Object.fromEntries(Object.entries(shellEnvironment()).filter(([key]) => !key.startsWith('GIT_')));
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_CEILING_DIRECTORIES: path.dirname(root), GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' });
   let result: ProcessResult;
-  try { result = await runProcess('git', ['--no-optional-locks', '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', 'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=normal'], root, undefined, 5000, env); }
-  catch (error) { if (errorMessage(error).includes('ENOENT')) return empty; throw error; }
+  try {
+    const config = await safeStatusConfig(metadata.gitDir, metadata.commonDir, root, env);
+    result = await runProcess('git', ['--no-optional-locks', `--git-dir=${metadata.gitDir}`, `--work-tree=${root}`, ...config, 'status', '--porcelain=v1', '-z', '--branch', '--untracked-files=normal', '--ignore-submodules=all'], root, undefined, 5000, env);
+  } catch (error) { if (errorMessage(error).includes('ENOENT')) return empty; throw error; }
   if (result.timedOut) throw new Error('Git status timed out.');
-  if (result.code !== 0) throw new Error(`Git status failed: ${bounded(result.output, 2000)}`);
+  if (result.code !== 0) throw new Error(`Git status failed (exit ${result.code ?? 'unknown'}); check repository metadata.`);
   const records = result.output.split('\0');
   if (result.truncated) records.pop();
   const branchLine = records.shift() ?? '';

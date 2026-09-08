@@ -11,6 +11,7 @@
     "lite": "bin/lite.mjs"
   },
   "scripts": {
+    "postinstall": "node scripts/prepare-terminal.mjs",
     "dev": "tsx watch server/index.ts",
     "build": "vite build && tsup server/index.ts --format esm --platform node --target node22 --out-dir dist/server --external vite",
     "start": "node dist/server/index.js",

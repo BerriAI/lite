@@ -11,6 +11,24 @@ export interface ProviderMessage {
 export interface CompletionOptions {
   provider: Provider; model: string; messages: ProviderMessage[]; tools?: ToolDefinition[];
   signal: AbortSignal; system?: string;
+  /** Reports a scheduled retry, not a guarantee that a failed attempt was unbilled. */
+  onRetry?: (retry: ProviderRetry) => void;
+}
+export interface ProviderRetry { attempt: number; delayMs: number; status: number }
+/** Safe local error fields. retryable classifies the failure; it never grants an extra retry budget. */
+export class ProviderError extends Error {
+  readonly status?: number;
+  readonly code?: string;
+  readonly retryable: boolean;
+  readonly contextOverflow: boolean;
+  constructor(message: string, details: { status?: number; code?: string; retryable?: boolean; contextOverflow?: boolean } = {}) {
+    super(message);
+    this.name = 'ProviderError';
+    this.status = details.status;
+    this.code = details.code;
+    this.retryable = details.retryable ?? false;
+    this.contextOverflow = details.contextOverflow ?? false;
+  }
 }
 export interface CodexCredential { accessToken: string; accountId?: string; residency?: string }
 let codexCredentials: ((providerId: string) => Promise<CodexCredential>) | undefined;
@@ -22,48 +40,108 @@ const CODEX_BASE = 'https://chatgpt.com/backend-api/codex';
 /** Base URLs are API roots, not operation URLs. Preserve custom gateway prefixes. */
 export function endpoint(base: string, operation: string): string {
   let url: URL;
-  try { url = new URL(base); } catch { throw new Error('Provider base URL must be a valid HTTP or HTTPS URL.'); }
+  try { url = new URL(base); } catch { throw new ProviderError('Provider base URL must be a valid HTTP or HTTPS URL.'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
-    throw new Error('Provider base URL must use HTTP(S), without credentials, query parameters, or fragments.');
+    throw new ProviderError('Provider base URL must use HTTP(S), without credentials, query parameters, or fragments.');
   let path = url.pathname.replace(/\/+$/, '').replace(/\/(chat\/completions|messages|responses|models)$/, '');
   path = path.replace(/(?:\/v1){2,}(?=\/|$)/g, '/v1');
   if (!path) path = '/v1';
   url.pathname = `${path}/${operation}`;
   return url.toString();
 }
-function errorCode(value: any): string {
-  const code = value?.error?.code || value?.error?.type || value?.code;
-  // Do not surface provider-generated text: it can contain credentials or prompt data.
-  const known = new Set(['invalid_api_key', 'insufficient_quota', 'rate_limit_exceeded', 'overloaded_error', 'authentication_error', 'permission_error', 'model_not_found', 'context_length_exceeded', 'invalid_request_error', 'server_error']);
-  return typeof code === 'string' && known.has(code) ? `, ${code}` : '';
+const TRANSIENT_STATUSES = new Set([408, 429, 500, 502, 503, 504, 529]);
+const MAX_RETRIES = 2;
+const MAX_RETRY_DELAY_MS = 30_000;
+const PERMANENT_CODES = new Set([
+  'invalid_api_key', 'insufficient_quota', 'quota_exceeded', 'quota_exhausted', 'usage_limit_reached',
+  'billing_hard_limit_reached', 'billing_not_active', 'budget_exceeded', 'insufficient_credits',
+  'authentication_error', 'permission_error', 'permission_denied', 'unauthorized',
+  'model_not_found', 'model_not_supported', 'invalid_model', 'invalid_request_error',
+  'invalid_request', 'invalid_argument', 'unsupported_parameter',
+  'context_length_exceeded', 'context_window_exceeded', 'prompt_too_long', 'input_too_long',
+]);
+const KNOWN_CODES = new Set([...PERMANENT_CODES, 'rate_limit_exceeded', 'rate_limit_error', 'overloaded_error', 'server_error', 'api_error', 'timeout_error']);
+function errorDetails(body: any): { code?: string; permanent: boolean; contextOverflow: boolean } {
+  const error = body?.error ?? body;
+  const codes = [error?.code, error?.type, body?.code, body?.type].filter((v): v is string => typeof v === 'string');
+  // Inspect messages only for classification; never expose raw codes, bodies, headers, or causes.
+  const message = typeof error?.message === 'string' ? error.message.slice(0, 8192) : '';
+  const contextOverflow = codes.some(code => ['context_length_exceeded', 'context_window_exceeded', 'prompt_too_long', 'input_too_long'].includes(code)) ||
+    /maximum context length|context (?:window|length).{0,40}(?:exceed|limit)|(?:prompt|input) (?:is )?too long|exceeds? (?:the )?(?:maximum )?(?:context|input token)/i.test(message);
+  const quota = /(?:quota|credits?|budget|balance).{0,40}(?:exhausted|exceeded|insufficient|too low)|(?:insufficient|exhausted).{0,20}(?:quota|credits?|balance)|billing (?:hard )?limit|exceeded (?:your )?(?:current )?quota/i.test(message);
+  const authentication = /invalid (?:api[ -]?key|authentication)|incorrect api[ -]?key|authentication (?:failed|required)|permission denied/i.test(message);
+  const invalidModel = /model.{0,80}(?:does not exist|not found|not supported|not available)|(?:unknown|invalid|unsupported) model/i.test(message);
+  const invalidRequest = /invalid (?:request|parameter|argument)|unsupported (?:parameter|argument)|unrecognized request argument/i.test(message);
+  const permanent = contextOverflow || quota || authentication || invalidModel || invalidRequest || codes.some(code => PERMANENT_CODES.has(code));
+  const code = contextOverflow ? 'context_length_exceeded' : quota ? 'insufficient_quota' : authentication ? 'authentication_error' :
+    invalidModel ? 'model_not_found' : invalidRequest ? 'invalid_request_error' :
+    codes.find(code => PERMANENT_CODES.has(code)) || codes.find(code => KNOWN_CODES.has(code));
+  return { code, permanent, contextOverflow };
 }
-function httpError(status: number, body?: any): Error {
+function httpError(status: number, body?: any): ProviderError {
+  const { code, permanent, contextOverflow } = errorDetails(body);
   const advice: Record<number, string> = {
     400: 'Check the model, tool support, and request settings.',
     401: 'Check your API key or sign in again.', 403: 'Check account entitlements and workspace permissions.',
     404: 'Check the base URL and model ID.', 408: 'The provider timed out.',
     429: 'Rate limit or quota reached. Wait before trying again.',
   };
-  return new Error(`Provider request failed (HTTP ${status}${errorCode(body)}). ${advice[status] || 'The provider could not complete this request.'}`);
+  return new ProviderError(`Provider request failed (HTTP ${status}${code ? `, ${code}` : ''}). ${contextOverflow ? 'The conversation exceeds the model context window. Shorten or compact it.' : advice[status] || 'The provider could not complete this request.'}`,
+    { status, code, contextOverflow, retryable: TRANSIENT_STATUSES.has(status) && !permanent });
 }
-async function request(url: string, init: RequestInit): Promise<Response> {
-  let response: Response;
-  try { response = await fetch(url, { ...init, redirect: 'error' }); }
-  catch {
-    if (init.signal?.aborted) throw init.signal.reason || new DOMException('Request cancelled', 'AbortError');
-    throw new Error('Cannot reach provider. Check the base URL, network, and TLS configuration.');
+function streamError(body: any): ProviderError {
+  const { code, contextOverflow } = errorDetails(body);
+  return new ProviderError(`Provider stream failed${code ? `, ${code}` : ''}.`, { code, contextOverflow });
+}
+function retryDelay(header: string | null, attempt: number): number {
+  let milliseconds = Number.NaN;
+  if (header && header.length < 128) {
+    const value = header.trim();
+    if (/^\d+(?:\.\d+)?$/.test(value)) milliseconds = Number(value) * 1000;
+    else if (!/^[+-]?[\d.]+$/.test(value)) milliseconds = Date.parse(value) - Date.now();
   }
-  if (!response.ok) {
+  return Number.isFinite(milliseconds) ? Math.min(MAX_RETRY_DELAY_MS, Math.max(0, milliseconds)) : 500 * 2 ** (attempt - 1);
+}
+function waitForRetry(delayMs: number, signal?: AbortSignal | null): Promise<void> {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, delayMs);
+    const abort = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(signal?.reason || new DOMException('Request cancelled', 'AbortError')); };
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+}
+async function request(url: string, init: RequestInit, retry?: { onRetry?: CompletionOptions['onRetry'] }): Promise<Response> {
+  for (let retries = 0; ; retries++) {
+    init.signal?.throwIfAborted();
+    let response: Response;
+    try { response = await fetch(url, { ...init, redirect: 'error' }); }
+    catch {
+      if (init.signal?.aborted) throw init.signal.reason || new DOMException('Request cancelled', 'AbortError');
+      // A disconnected POST may have been processed and billed. Never automatically replay it.
+      throw new ProviderError('Cannot reach provider. Check the base URL, network, and TLS configuration. The request was not retried; it may have reached the provider.', { code: 'network_error' });
+    }
+    if (response.ok) return response;
     let body: any;
-    try { body = await response.json(); } catch { /* Do not expose a gateway's HTML error page. */ }
-    throw httpError(response.status, body);
+    try { body = await response.json(); }
+    catch (error) {
+      init.signal?.throwIfAborted();
+      // Non-JSON gateway pages still carry an explicit HTTP status. A disconnected
+      // body is different: don't replay when an error's quota/type details were lost.
+      if (!(error instanceof SyntaxError)) throw new ProviderError('Provider error response was interrupted. No automatic retry was attempted.', { status: response.status, code: 'network_error' });
+    }
+    init.signal?.throwIfAborted();
+    const error = httpError(response.status, body);
+    if (!retry || !error.retryable || retries >= MAX_RETRIES) throw error;
+    const attempt = retries + 1, delayMs = retryDelay(response.headers.get('retry-after'), attempt);
+    // The callback carries only numeric local fields, never provider text or credential-bearing data.
+    retry.onRetry?.({ attempt, delayMs, status: response.status });
+    await waitForRetry(delayMs, init.signal);
   }
-  return response;
 }
 
 /** Streaming decoder tolerates split UTF-8, CRLF, comments, and multiline data fields. */
 export async function* parseSSE(response: Response, signal: AbortSignal): AsyncGenerator<{ event: string; data: string }> {
-  if (!response.body) throw new Error('Provider returned an empty streaming response.');
+  if (!response.body) throw new ProviderError('Provider returned an empty streaming response.');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '', event = '', fields: string[] = [], eventSize = 0;
@@ -83,7 +161,7 @@ export async function* parseSSE(response: Response, signal: AbortSignal): AsyncG
     if (key === 'event') event = content;
     if (key === 'data') {
       eventSize += content.length;
-      if (eventSize > MAX_EVENT_BYTES) throw new Error('Provider stream event exceeded the size limit.');
+      if (eventSize > MAX_EVENT_BYTES) throw new ProviderError('Provider stream event exceeded the size limit.');
       fields.push(content);
     }
   }
@@ -103,13 +181,17 @@ export async function* parseSSE(response: Response, signal: AbortSignal): AsyncG
         if (parsed) yield parsed;
       }
       buffer = buffer.slice(offset);
-      if (buffer.length > MAX_EVENT_BYTES) throw new Error('Provider stream line exceeded the size limit.');
+      if (buffer.length > MAX_EVENT_BYTES) throw new ProviderError('Provider stream line exceeded the size limit.');
       if (done) {
         if (buffer) { const parsed = line(buffer); if (parsed) yield parsed; }
         const parsed = line(''); if (parsed) yield parsed;
         break;
       }
     }
+  } catch (error) {
+    if (signal.aborted) throw signal.reason || new DOMException('Request cancelled', 'AbortError');
+    if (error instanceof ProviderError) throw error;
+    throw new ProviderError('Provider stream connection was interrupted. No automatic retry was attempted.', { code: 'stream_interrupted' });
   } finally {
     signal.removeEventListener('abort', onAbort);
     await reader.cancel().catch(() => {});
@@ -117,7 +199,7 @@ export async function* parseSSE(response: Response, signal: AbortSignal): AsyncG
   }
 }
 function jsonEvent(data: string): any {
-  try { return JSON.parse(data); } catch { throw new Error('Provider returned malformed streaming JSON.'); }
+  try { return JSON.parse(data); } catch { throw new ProviderError('Provider returned malformed streaming JSON.'); }
 }
 function usage(value: any): Usage {
   return {
@@ -139,7 +221,7 @@ async function* chatStream(response: Response, signal: AbortSignal, scope: { pro
   for await (const { data } of parseSSE(response, signal)) {
     if (data.trim() === '[DONE]') { if (!toolsSeen) finished = true; break; }
     const chunk = jsonEvent(data);
-    if (chunk.error) throw new Error(`Provider stream failed${errorCode(chunk)}.`);
+    if (chunk.error) throw streamError(chunk);
     if (chunk.usage) yield { type: 'usage', usage: usage(chunk.usage) };
     // n is always one; don't combine unrelated alternatives into one assistant message.
     const choice = chunk.choices?.find((c: any) => (c.index ?? 0) === 0);
@@ -158,18 +240,18 @@ async function* chatStream(response: Response, signal: AbortSignal, scope: { pro
     for (const item of delta.reasoning_items || []) if (!reasoningItems.some(existing => JSON.stringify(existing) === JSON.stringify(item))) reasoningItems.push(item);
     if (Array.isArray(delta.tool_calls)) for (const call of delta.tool_calls) {
       toolsSeen = true;
-      if (!Number.isInteger(call.index) || call.index < 0) throw new Error('Provider returned a tool call without a valid stream index.');
+      if (!Number.isInteger(call.index) || call.index < 0) throw new ProviderError('Provider returned a tool call without a valid stream index.');
       yield { type: 'tool', tool: {
         index: call.index, id: call.id, name: call.function?.name, arguments: call.function?.arguments,
       } };
     }
     if (choice.finish_reason) {
-      if (choice.finish_reason === 'length') throw new Error('The model reached its output limit. No partial tool calls were executed.');
-      if (choice.finish_reason === 'content_filter') throw new Error('The provider stopped the response because of content filtering.');
+      if (choice.finish_reason === 'length') throw new ProviderError('The model reached its output limit. No partial tool calls were executed.');
+      if (choice.finish_reason === 'content_filter') throw new ProviderError('The provider stopped the response because of content filtering.');
       finished = true;
     }
   }
-  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+  if (!finished) throw new ProviderError('Provider stream ended before completion. No partial tool calls were executed.');
   yield* remember();
 }
 
@@ -184,7 +266,7 @@ function imagePart(value: any): any {
   const match = url.match(/^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)$/);
   if (match) return { type: 'image', source: { type: 'base64', media_type: match[1], data: match[2] } };
   if (/^https:\/\//.test(url)) return { type: 'image', source: { type: 'url', url } };
-  throw new Error('This provider requires HTTPS or base64 image attachments.');
+  throw new ProviderError('This provider requires HTTPS or base64 image attachments.');
 }
 function anthropicMessages(messages: ProviderMessage[], providerId: string, model: string): any[] {
   const result: any[] = [];
@@ -203,7 +285,7 @@ function anthropicMessages(messages: ProviderMessage[], providerId: string, mode
       else if (message.content) content.push({ type: 'text', text: message.content });
       for (const call of message.tool_calls || []) {
         let input: unknown;
-        try { input = JSON.parse(call.function.arguments); } catch { throw new Error('Conversation contains invalid tool arguments.'); }
+        try { input = JSON.parse(call.function.arguments); } catch { throw new ProviderError('Conversation contains invalid tool arguments.'); }
         content.push({ type: 'tool_use', id: call.id, name: call.function.name, input });
       }
     }
@@ -218,7 +300,7 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
   const thinking = new Map<number, any>();
   for await (const { event, data } of parseSSE(response, signal)) {
     const chunk = jsonEvent(data), type = chunk.type || event;
-    if (type === 'error') throw new Error(`Provider stream failed${errorCode(chunk)}.`);
+    if (type === 'error') throw streamError(chunk);
     if (type === 'message_start' && chunk.message?.usage) {
       tokens = usage(chunk.message.usage);
       // Anthropic's input_tokens excludes cache writes and hits; normalize total input.
@@ -245,7 +327,7 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
     }
     if (type === 'message_delta') {
       if (chunk.usage?.output_tokens !== undefined) tokens.outputTokens = chunk.usage.output_tokens;
-      if (chunk.delta?.stop_reason === 'max_tokens') throw new Error('The model reached its output limit. No partial tool calls were executed.');
+      if (chunk.delta?.stop_reason === 'max_tokens') throw new ProviderError('The model reached its output limit. No partial tool calls were executed.');
     }
     if (type === 'message_stop') {
       const blocks = [...thinking].sort(([a], [b]) => a - b).map(([, block]) => block).filter(block => block.type === 'redacted_thinking' || block.signature);
@@ -253,7 +335,7 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
       finished = true; yield { type: 'usage', usage: tokens }; break;
     }
   }
-  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+  if (!finished) throw new ProviderError('Provider stream ended before completion. No partial tool calls were executed.');
 }
 function scopedMetadata(message: ProviderMessage, providerId: string, model: string): Record<string, any> {
   const data = message.providerMetadata;
@@ -299,7 +381,7 @@ async function* responsesStream(response: Response, signal: AbortSignal, scope: 
   for await (const { data } of parseSSE(response, signal)) {
     if (data.trim() === '[DONE]') break;
     const chunk = jsonEvent(data);
-    if (chunk.type === 'error' || chunk.type === 'response.failed') throw new Error(`Provider stream failed${errorCode(chunk.response || chunk)}.`);
+    if (chunk.type === 'error' || chunk.type === 'response.failed') throw streamError(chunk.response || chunk);
     if (chunk.type === 'response.output_text.delta') yield { type: 'text', text: chunk.delta };
     if (['response.reasoning_summary_text.delta', 'response.reasoning_text.delta'].includes(chunk.type)) yield { type: 'reasoning', text: chunk.delta };
     if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
@@ -321,22 +403,22 @@ async function* responsesStream(response: Response, signal: AbortSignal, scope: 
       const complete = chunk.item.arguments || '';
       if (!current) yield { type: 'tool', tool: { index: chunk.output_index, id: chunk.item.call_id, name: chunk.item.name, arguments: complete } };
       else if (complete !== current.arguments) {
-        if (!complete.startsWith(current.arguments)) throw new Error('Provider returned inconsistent tool argument deltas.');
+        if (!complete.startsWith(current.arguments)) throw new ProviderError('Provider returned inconsistent tool argument deltas.');
         yield { type: 'tool', tool: { index: chunk.output_index, arguments: complete.slice(current.arguments.length) } };
       }
     }
-    if (chunk.type === 'response.incomplete') throw new Error('Provider returned an incomplete response. No partial tool calls were executed.');
+    if (chunk.type === 'response.incomplete') throw new ProviderError('Provider returned an incomplete response. No partial tool calls were executed.');
     if (chunk.type === 'response.completed') {
       if (responseItems.size) yield { type: 'metadata', metadata: { ...scope, responseItems: [...responseItems].sort(([a], [b]) => a - b).map(([, item]) => item) } };
       if (chunk.response?.usage) yield { type: 'usage', usage: usage(chunk.response.usage) };
       finished = true; break;
     }
   }
-  if (!finished) throw new Error('Provider stream ended before completion. No partial tool calls were executed.');
+  if (!finished) throw new ProviderError('Provider stream ended before completion. No partial tool calls were executed.');
 }
 
 async function getCodexCredential(provider: Provider): Promise<CodexCredential> {
-  if (!codexCredentials) throw new Error('ChatGPT is not connected. Sign in through this application first.');
+  if (!codexCredentials) throw new ProviderError('ChatGPT is not connected. Sign in through this application first.');
   return codexCredentials(provider.id);
 }
 function codexHeaders(credential: CodexCredential): Record<string, string> {
@@ -350,11 +432,11 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
   const { provider, model, messages, system, tools } = options;
   const signal = AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
   signal.throwIfAborted();
-  if (!model) throw new Error('Select a model before sending a message.');
+  if (!model) throw new ProviderError('Select a model before sending a message.');
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
   let body: any, url: string;
   if (provider.kind === 'anthropic') {
-    if (!provider.apiKey) throw new Error('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
+    if (!provider.apiKey) throw new ProviderError('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
     headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
     const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
     body = { model, max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model), ...(instructions ? { system: instructions } : {}),
@@ -374,10 +456,10 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
       stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
     url = endpoint(provider.baseUrl, 'chat/completions');
   }
-  const response = await request(url, { method: 'POST', headers, body: JSON.stringify(body), signal });
+  const response = await request(url, { method: 'POST', headers, body: JSON.stringify(body), signal }, { onRetry: options.onRetry });
   if (!response.headers.get('content-type')?.includes('text/event-stream')) {
     await response.body?.cancel();
-    throw new Error('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
+    throw new ProviderError('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
   }
   if (provider.kind === 'anthropic') yield* anthropicStream(response, signal, { providerId: provider.id, model });
   else if (provider.kind === 'codex') yield* responsesStream(response, signal, { providerId: provider.id, model });
@@ -392,16 +474,16 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
     url = `${CODEX_BASE}/models?client_version=0.1.0`;
   } else {
     if (provider.kind === 'anthropic') {
-      if (!provider.apiKey) throw new Error('Anthropic requires an API key.');
+      if (!provider.apiKey) throw new ProviderError('Anthropic requires an API key.');
       headers = { 'x-api-key': provider.apiKey, 'anthropic-version': '2023-06-01' };
     } else if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'models');
   }
   const response = await request(url, { headers, signal: requestSignal });
   let result: any;
-  try { result = await response.json(); } catch { throw new Error('Provider returned an invalid model catalog.'); }
+  try { result = await response.json(); } catch { throw new ProviderError('Provider returned an invalid model catalog.'); }
   const data = Array.isArray(result) ? result : result.data || result.models;
-  if (!Array.isArray(data)) throw new Error('Provider returned an unsupported model catalog. Configure explicit model IDs instead.');
+  if (!Array.isArray(data)) throw new ProviderError('Provider returned an unsupported model catalog. Configure explicit model IDs instead.');
   const models: Model[] = data.filter((m: any) => m && (m.id || m.slug)).map((m: any) => ({
     id: m.id || m.slug, name: m.display_name || m.name || m.id || m.slug, providerId: provider.id,
     ...(Number.isFinite(m.context_window) ? { contextWindow: m.context_window } : {}),

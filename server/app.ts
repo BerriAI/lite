@@ -1,13 +1,13 @@
 import express, { type Express } from 'express';
 import { z } from 'zod';
-import { realpath, stat, readFile as fsRead, writeFile, unlink, readdir } from 'node:fs/promises';
-import { resolve, join, dirname } from 'node:path';
+import { realpath, stat, readdir } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
 import { listModels } from './providers.js';
-import { listFiles, readFile, searchFiles, gitStatus, resolveWorkspacePath, assertReadablePath } from './tools.js';
+import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath, assertReadablePath } from './tools.js';
 import type { Message, Settings } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional()});
@@ -72,7 +72,7 @@ export function createApp(options:AppOptions = {}) {
     // Imports are inert history: no tools execute and no imported path is opened.
     const settings=store.settings();
     const session=store.createSession({...imported.session,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'});
-    for(const message of imported.messages)store.saveMessage({...message,id:randomUUID(),sessionId:session.id} as Message);
+    for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
   app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
@@ -100,6 +100,8 @@ export function createApp(options:AppOptions = {}) {
   });
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/permissions/:requestId',(req,res)=>{const{decision}=z.object({decision:z.enum(['allow','always','deny'])}).parse(req.body);runner.decide(req.params.id,req.params.requestId,decision);res.json({ok:true});});
+  app.get('/api/sessions/:id/tool-grants',(req,res)=>res.json({tools:store.toolGrants(req.params.id).map(g=>g.tool)}));
+  app.delete('/api/sessions/:id/tool-grants',(req,res)=>{store.clearToolGrants(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/fork',(req,res)=>{runner.assertIdle(req.params.id);const input=z.object({messageId:z.string().optional()}).parse(req.body||{});res.status(201).json(store.fork(req.params.id,input.messageId));});
   app.post('/api/sessions/:id/compact',async(req,res)=>{await runner.compact(req.params.id);res.json({ok:true});});
   app.get('/api/sessions/:id/export',(req,res)=>{const id=req.params.id;res.setHeader('Content-Disposition',`attachment; filename="lite-session-${id}.json"`);res.json({session:store.session(id),messages:store.messages(id),todos:store.todos(id)});});
@@ -109,23 +111,19 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/git',async(req,res)=>res.json(await gitStatus(await workspace(req.query.workspace))));
   app.get('/api/sessions/:id/changes',(req,res)=>{store.session(req.params.id);res.json({changes:store.changes(req.params.id)});});
   app.post('/api/sessions/:id/undo',async(req,res)=>{
-    const id=req.params.id;runner.assertIdle(id);const session=store.session(id),changes=store.changes(id);
-    const targets: {path:string,before:string|null}[]=[];
-    for(const change of changes){
-      const path=await resolveWorkspacePath(session.workspace,change.path,{allowMissing:true});let current:string|null=null;
-      try{current=await fsRead(path,'utf8');}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
-      if(current!==change.after)throw httpError(409,`${change.path} was changed outside this session. No files were restored.`);
-      targets.push({path,before:change.before});
-    }
-    for(const target of targets){if(target.before===null){await unlink(target.path).catch(error=>{if(error.code!=='ENOENT')throw error;});}else await writeFile(target.path,target.before,'utf8');}
-    store.clearChanges(id);res.json({ok:true});
+    const id=req.params.id;
+    await runner.exclusive(id,async()=>{
+      const session=store.session(id);
+      await restoreChanges(session.workspace,store.changes(id),change=>store.clearChange(id,change.path));
+    });
+    res.json({ok:true});
   });
   app.get('/api/commands',async(req,res)=>{
     const root=await workspace(req.query.workspace),commands:{name:string,description:string,content:string}[]=[];
     for(const dir of ['.lite/commands','.claude/commands']){
       let names:string[]=[];try{names=await readdir(await resolveWorkspacePath(root,dir));}catch{continue;}
       for(const name of names.filter(n=>n.endsWith('.md')).slice(0,100)){
-        try{const content=(await fsRead(await resolveWorkspacePath(root,join(dir,name)),'utf8')).slice(0,30000);commands.push({name:name.slice(0,-3),description:content.split('\n').find(l=>l.trim()&&!l.startsWith('---'))?.replace(/^#+\s*/,'').slice(0,120)||name,content});}catch{/* Skip unreadable commands. */}
+        try{const content=await readCommand(root,join(dir,name));commands.push({name:name.slice(0,-3),description:content.split('\n').find(l=>l.trim()&&!l.startsWith('---'))?.replace(/^#+\s*/,'').slice(0,120)||name,content});}catch{/* Skip unreadable commands. */}
       }
     }
     res.json({commands});
