@@ -32,7 +32,7 @@ npm start
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
-- Reversible file-tool changes with external-edit conflict checks; Git status and file review.
+- Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - MCP tools over local stdio or remote Streamable HTTP, with SSE fallback.
 - LiteLLM/OpenAI-compatible APIs, native Anthropic API keys, and explicit ChatGPT connection where account/provider policies permit it.
@@ -61,6 +61,14 @@ Provider errors produce a nonzero exit status, including with `--json`. Ctrl+C/S
 During a response, **Queue** or Enter appends a follow-up; Shift+Enter adds a newline. Queued messages run in order only after an uninterrupted successful response. Stop, provider errors, denied/failed tools, and server restarts hold the remaining queue for explicit **Resume**. **Pause** holds future items without stopping the current response; **Stop** also cancels that response. Remove an item before it starts. Queues are local to each session, limited to 20 items and 16 MiB of serialized content, and file context is snapshotted when queued.
 
 Draft text and attachments stay separate for each session and are saved in this browser when storage allows it. Drafts are not shared across devices or browsers. Large drafts remain in memory with a warning when they exceed the 1 MiB per-draft / 2 MiB total browser-storage budget. File uploads allow up to six files, 3 MiB per file, and 200,000 characters per text file; selected file context sent to the model is bounded separately. An accepted message clears only the draft that was submitted, not newer typing.
+
+## Undo, redo, and recovery
+
+The **Turn history** strip restores the last accepted user turn, including its conversation, todos, and recorded file-tool edits. **Redo** restores the saved state without another model request or tool execution. Your unsent draft stays intact; queued messages remain paused for explicit Resume. A new accepted turn replaces the redo branch, but typing, queued drafts, or rejected submissions do not.
+
+File restoration refuses conflicting external edits. If an operation was only partly applied or the process stopped during a recorded edit, **Recover history** reconciles saved file snapshots before allowing another run. It never replays shell commands or infers that an interrupted tool succeeded. Incomplete provider tool history is archived and replaced with a safe prefix and an explicit recovery notice. Torn writes or files matching neither snapshot require manual repair. Graceful shutdown stops new work and allows up to five seconds for cancellation and bookkeeping; a forced or timed-out exit can still require recovery. Manual compaction archives the old conversation and updates its checkpoint in one SQLite transaction.
+
+Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can expire; oversized turns explicitly report that undo is unavailable. Imports and forks copy conversation only, not ownership of another session’s file changes. Older sessions without checkpoints keep their legacy session-wide recorded-file restoration action. **Shell, terminal, MCP, network, Git, and database effects are not reversed.**
 
 ## Providers and subscriptions
 

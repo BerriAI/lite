@@ -75,7 +75,7 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),queue:store.queue(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
   app.patch('/api/sessions/:id',(req,res)=>{
     const patch=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional()}).parse(req.body);
     if(patch.model||patch.providerId||patch.mode||patch.permissionMode)runner.assertIdle(req.params.id);
@@ -122,9 +122,26 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/search',async(req,res)=>res.json({files:await searchFiles(await workspace(req.query.workspace),queryString(req.query.q))}));
   app.get('/api/git',async(req,res)=>res.json(await gitStatus(await workspace(req.query.workspace))));
   app.get('/api/sessions/:id/changes',(req,res)=>{store.session(req.params.id);res.json({changes:store.changes(req.params.id)});});
+  app.get('/api/sessions/:id/history',(req,res)=>res.json(runner.history.state(req.params.id)));
+  const publishHistory=(id:string)=>{
+    bus.emit(id,'reset',{messages:store.messages(id)});
+    bus.emit(id,'todos',store.todos(id));bus.emit(id,'queue',store.queue(id));
+    bus.emit(id,'session',store.session(id));bus.emit(id,'history',runner.history.state(id));
+  };
+  for(const direction of ['undo','redo','recover'] as const)app.post(`/api/sessions/:id/history/${direction}`,async(req,res)=>{
+    const id=req.params.id;
+    const checkpointId=direction==='recover'?undefined:z.object({checkpointId:z.string().min(1).max(100)}).parse(req.body).checkpointId;
+    const state=await runner.exclusive(id,async()=>{
+      try {return direction==='recover'?await runner.history.recover(id):await runner.history[direction](id,checkpointId!);}
+      finally {publishHistory(id);}
+    });
+    res.json(state);
+  });
   app.post('/api/sessions/:id/undo',async(req,res)=>{
     const id=req.params.id;
     await runner.exclusive(id,async()=>{
+      runner.history.assertReady(id);
+      if(runner.history.hasCheckpoints(id))throw httpError(409,'This session has turn checkpoints. Use Undo last turn instead of session-wide file restoration.');
       const session=store.session(id);
       await restoreChanges(session.workspace,store.changes(id),change=>store.clearChange(id,change.path));
     });

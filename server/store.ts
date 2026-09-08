@@ -87,7 +87,9 @@ export class Store {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   compactHistory(id: string, messages: Message[]): Session {
-    this.db.exec('BEGIN');
+    // A savepoint is atomic standalone and also participates in History.compact's
+    // outer transaction, so an archive cannot commit before its checkpoint does.
+    this.db.exec('SAVEPOINT lite_compaction');
     try {
       const source=this.session(id);
       const archive=this.createSession({...source,id:randomUUID(),title:`${source.title} · before compaction`,parentId:id,createdAt:Date.now(),updatedAt:Date.now(),archived:true});
@@ -95,9 +97,9 @@ export class Store {
       this.saveTodos(archive.id,this.todos(id));
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
       for(const message of messages)this.saveMessage(message);
-      this.db.exec('COMMIT');
+      this.db.exec('RELEASE SAVEPOINT lite_compaction');
       return archive;
-    } catch(error) { this.db.exec('ROLLBACK');throw error; }
+    } catch(error) { this.db.exec('ROLLBACK TO SAVEPOINT lite_compaction; RELEASE SAVEPOINT lite_compaction');throw error; }
   }
   todos(id: string): Todo[] { const row = this.db.prepare('SELECT data FROM todos WHERE session_id=?').get(id) as {data:string}|undefined; return row ? JSON.parse(row.data) : []; }
   saveTodos(id: string, todos: Todo[]) { this.db.prepare('INSERT INTO todos(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id, JSON.stringify(todos)); }

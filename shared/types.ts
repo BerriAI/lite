@@ -1,3 +1,5 @@
+import type { HistoryState } from './history.js';
+
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
 export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
@@ -17,7 +19,7 @@ export interface FileEntry { name: string; path: string; type: 'file' | 'directo
 export interface FileChange { path: string; before: string | null; after: string | null; }
 export interface QueuedMessage { id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }
 export interface QueueState { items: QueuedMessage[]; paused: boolean; reason?: string; manualPause?: boolean; }
-export interface SessionDetail { lastEventId?: number; session: Session; messages: Message[]; todos: Todo[]; permissions: PermissionRequest[]; queue?: QueueState; }
-export interface RunEvent { id?: number; type: 'session' | 'message' | 'delta' | 'reasoning' | 'tool' | 'permission' | 'permission_resolved' | 'todos' | 'reset' | 'queue' | 'done' | 'error'; sessionId: string; data: any; }
+export interface SessionDetail { lastEventId?: number; session: Session; messages: Message[]; todos: Todo[]; permissions: PermissionRequest[]; queue?: QueueState; history?: HistoryState; }
+export interface RunEvent { id?: number; type: 'session' | 'message' | 'delta' | 'reasoning' | 'tool' | 'permission' | 'permission_resolved' | 'todos' | 'reset' | 'queue' | 'history' | 'done' | 'error'; sessionId: string; data: any; }
 export interface ToolDefinition { type: 'function'; function: { name: string; description: string; parameters: Record<string,unknown> }; }
 export interface StreamChunk { type: 'text' | 'reasoning' | 'tool' | 'usage' | 'metadata'; metadata?: Record<string,unknown>; text?: string; tool?: { index: number; id?: string; name?: string; arguments?: string }; usage?: Usage; }

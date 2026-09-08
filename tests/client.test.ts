@@ -297,3 +297,101 @@ describe('session-scoped asynchronous responses', () => {
     }
   });
 });
+
+const undoable = { hasCheckpoints: true, canUndo: true, canRedo: false, undoId: 'turn-1' };
+const redoable = { hasCheckpoints: true, canUndo: false, canRedo: true, redoId: 'turn-1' };
+const historyRegion = () => element<HTMLElement>('[aria-label="Turn history"]');
+async function confirmHistory(label: string) {
+  await clickText(label, historyRegion());
+  expect(element('.modal h2').textContent).toBe(`${label}?`);
+  await clickText(label, element<HTMLElement>('.modal'));
+}
+
+describe('turn history UI', () => {
+  it.each(['undo', 'redo'] as const)('restores an authoritative snapshot after %s without touching drafts or replaying providers', async action => {
+    localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'keep my draft', attachments: [{ name: 'draft.txt', content: 'keep context' }] }));
+    const server = appServer([detail('a', { history: action === 'undo' ? undoable : redoable })]);
+    const pending = deferred<object>();
+    server.mutation = (path, method) => { expect(`${method} ${path}`).toBe(`POST /api/sessions/a/history/${action}`); return pending.promise; };
+    await mountApp();
+    await confirmHistory(action === 'undo' ? 'Undo last turn' : 'Redo turn');
+    const request = vi.mocked(fetch).mock.calls.find(([path]) => path === `/api/sessions/a/history/${action}`)!;
+    expect(JSON.parse(request[1]!.body as string)).toEqual({ checkpointId: 'turn-1' });
+    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    server.details.set('a', detail('a', { history: action === 'undo' ? redoable : undoable, lastEventId: 15, queue: { items: [], paused: true, reason: 'History changed. Resume explicitly.' }, messages: [] }));
+    await act(async () => pending.resolve({}));
+    expect(element<HTMLTextAreaElement>('#message-input').value).toBe('keep my draft');
+    expect(stored('a')?.attachments[0].content).toBe('keep context');
+    expect(element('.queue-status').textContent).toBe('Paused');
+    expect(document.querySelector('.conversation-content')?.textContent).not.toContain('History a');
+    expect(server.requests.filter(request => request.startsWith('POST'))).toEqual([`POST /api/sessions/a/history/${action}`]);
+    expect(element('.toast').textContent).toContain(action === 'undo' ? 'Last turn undone' : 'without replay');
+  });
+
+  it('refreshes after partial failure, displays recovery paths, and leaves normal sends disabled', async () => {
+    const server = appServer([detail('a', { history: undoable })]), pending = deferred<object>();
+    server.mutation = () => pending.promise;
+    await mountApp(); await confirmHistory('Undo last turn');
+    server.details.set('a', detail('a', { lastEventId: 15, history: { ...undoable, canUndo: false, pendingRecovery: { reason: 'Finish interrupted undo before continuing.', paths: ['src/changed.ts'] } } }));
+    await act(async () => pending.reject(new Error('File changed during restoration')));
+    expect(element('.global-alert').textContent).toContain('File changed');
+    expect(element('.history-recovery').textContent).toContain('src/changed.ts');
+    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect(element<HTMLTextAreaElement>('#message-input').disabled).toBe(true);
+    server.mutation = (path, method) => {
+      expect(`${method} ${path}`).toBe('POST /api/sessions/a/history/recover');
+      server.details.set('a', detail('a', { lastEventId: 20, history: redoable })); return {};
+    };
+    await confirmHistory('Recover history');
+    expect(document.querySelector('.history-recovery')).toBeNull();
+    expect(element<HTMLTextAreaElement>('#message-input').disabled).toBe(false);
+  });
+
+  it('does not apply a late history result or error to a different active session', async () => {
+    const server = appServer([detail('a', { history: undoable }), detail('b', { history: redoable })]), pending = deferred<object>();
+    server.mutation = () => pending.promise;
+    await mountApp(); await confirmHistory('Undo last turn');
+    await click('.session-link[title="Session b"]');
+    await act(async () => pending.reject(new Error('Session a restore failed')));
+    expect(element('.topbar-title').textContent).toBe('Session b');
+    expect(element('.conversation-content').textContent).toContain('History b');
+    expect(document.querySelector('.global-alert')).toBeNull();
+    expect(document.querySelector('.toast')).toBeNull();
+    expect(server.requests.filter(request => request === 'GET /api/sessions/a')).toHaveLength(2);
+  });
+
+  it('refuses a stale confirmation after SSE changes the current checkpoint', async () => {
+    const server = appServer([detail('a', { history: undoable })]);
+    await mountApp(); await clickText('Undo last turn', historyRegion());
+    server.details.set('a', detail('a', { lastEventId: 11, history: { ...undoable, undoId: 'turn-2' } }));
+    await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, type: 'history', sessionId: 'a', data: { ...undoable, undoId: 'turn-2' } }));
+    await clickText('Undo last turn', element<HTMLElement>('.modal'));
+    expect(element('.global-alert').textContent).toContain('Turn history changed');
+    expect(server.requests.some(request => request.startsWith('POST'))).toBe(false);
+  });
+
+  it('blocks history during message preparation but leaves queue enabled during active runs', async () => {
+    localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'prepare this', attachments: [] }));
+    const server = appServer([detail('a', { history: undoable })]), pending = deferred<object>();
+    server.mutation = () => pending.promise;
+    await mountApp(); await click('[aria-label="Send message"]');
+    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect(historyRegion().textContent).toContain('message preparation');
+    await act(async () => pending.reject(new Error('preparation failed')));
+    expect(stored('a')?.text).toBe('prepare this');
+    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(false);
+    await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, type: 'session', sessionId: 'a', data: { status: 'running' } }));
+    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect(element<HTMLButtonElement>('[aria-label="Add to queue"]').disabled).toBe(false);
+    expect(element<HTMLButtonElement>('[aria-label="Stop generation"]').disabled).toBe(false);
+  });
+
+  it.each([false, true])('only exposes session-wide legacy undo when hasCheckpoints is false (%s)', async hasCheckpoints => {
+    appServer([detail('a', { history: { hasCheckpoints, canUndo: false, canRedo: false } })]);
+    await mountApp(); await click('[aria-label="Session actions"]');
+    const labels = [...element('.session-menu').querySelectorAll('button')].map(button => button.textContent);
+    expect(labels.includes('Undo session file changes')).toBe(!hasCheckpoints);
+    expect(labels).toContain('Undo last turn'); expect(labels).toContain('Redo turn');
+    expect(document.querySelector('[aria-label="Undo session file changes"]')).toBeNull();
+  });
+});

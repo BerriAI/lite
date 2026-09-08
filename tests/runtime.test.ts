@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () => {
-  it('serves production and CLI, streams a real mock-provider workflow, and persists through restart', async () => {
+  it('serves production and CLI and preserves exact turn undo/redo across restarts without provider replay', async () => {
     temporary = await realpath(await mkdtemp(join(tmpdir(), 'lite-runtime-')));
     const installation = join(temporary, 'installation');
     const workspace = join(temporary, 'workspace');
@@ -52,6 +52,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(version.code).toBe(0);
     expect(version.output.trim()).toMatch(/^v22\.13\.0$/);
     const providerCalls: unknown[] = [];
+    const fixtureContent = String.fromCharCode(0xfeff) + 'persisted runtime output — exact UTF-8\r\nno final newline';
     const provider = createServer(async (req, res) => {
       if (req.url === '/v1/models') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'runtime-model' }] })); return; }
       const chunks: Buffer[] = [];
@@ -60,7 +61,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       providerCalls.push(request);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const emit = (delta: unknown) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`);
-      if (request.messages.at(-1)?.role !== 'tool') emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: 'persisted runtime output\n' }) } }] });
+      if (request.messages.at(-1)?.role !== 'tool') emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: fixtureContent }) } }] });
       else { emit({ content: 'Runtime ' }); emit({ content: 'complete.' }); }
       res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: request.messages.at(-1)?.role === 'tool' ? 'stop' : 'tool_calls' }] })}\n\n`);
       res.end('data: [DONE]\n\n');
@@ -96,6 +97,9 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(initial.providers[0].apiKey).toBeUndefined();
     await api('/settings', { providers: [{ id: 'runtime', name: 'Runtime mock', kind: 'openai', baseUrl: `http://127.0.0.1:${providerPort}`, apiKey: 'synthetic-runtime-only' }], defaultProvider: 'runtime', defaultModel: 'runtime-model' }, 'PATCH');
     const session = await api('/sessions', { title: 'Node runtime fixture', permissionMode: 'auto' });
+    const sessionPath = `/sessions/${session.id}`;
+    const baseline = await api(sessionPath);
+    expect(baseline.history).toMatchObject({ hasCheckpoints: false, canUndo: false, canRedo: false });
     const streamAbort = new AbortController();
     const response = await fetch(`${app.base}/api/sessions/${session.id}/events`, { signal: streamAbort.signal });
     const events: { type: string; data: unknown }[] = [];
@@ -123,15 +127,57 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     await streamed;
     streamAbort.abort();
     expect(events.some(event => event.type === 'delta'), JSON.stringify(events)).toBe(true);
-    expect(await readFile(join(workspace, 'runtime.txt'), 'utf8')).toBe('persisted runtime output\n');
+    const fixtureBytes = Buffer.from(fixtureContent, 'utf8');
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     expect(providerCalls).toHaveLength(2);
-    expect((await api(`/sessions/${session.id}`)).messages.at(-1).content).toBe('Runtime complete.');
+    const completed = await api(sessionPath);
+    expect(completed.messages.at(-1).content).toBe('Runtime complete.');
+    expect(completed.history).toMatchObject({ hasCheckpoints: true, canUndo: true, canRedo: false });
+    expect(completed.history.undoId).toEqual(expect.any(String));
+    expect(completed.history.pendingRecovery).toBeUndefined();
+    const checkpointId = completed.history.undoId;
+    const recorded = await api(`${sessionPath}/changes`);
+    expect(recorded.changes).toEqual([{ path: 'runtime.txt', before: null, after: fixtureContent }]);
     app.child.kill('SIGTERM');
     expect((await app.finished).code).toBe(0);
     app = await start(true);
-    const persisted = await api(`/sessions/${session.id}`);
-    expect(persisted.messages.at(-1).content).toBe('Runtime complete.');
+    const persisted = await api(sessionPath);
+    expect(persisted.messages).toEqual(completed.messages);
+    expect(persisted.todos).toEqual(completed.todos);
+    expect(persisted.history).toEqual(completed.history);
     expect(persisted.session.status).toBe('idle');
+    expect(await api(`${sessionPath}/changes`)).toEqual(recorded);
+    expect(providerCalls).toHaveLength(2);
+    const undone = await api(`${sessionPath}/history/undo`, { checkpointId });
+    expect(undone).toMatchObject({ hasCheckpoints: true, canUndo: false, canRedo: true, redoId: checkpointId });
+    expect(undone.pendingRecovery).toBeUndefined();
+    const undoneDetail = await api(sessionPath);
+    expect(undoneDetail.messages).toEqual(baseline.messages);
+    expect(undoneDetail.todos).toEqual(baseline.todos);
+    expect(undoneDetail.queue.paused).toBe(true);
+    expect(await api(`${sessionPath}/changes`)).toEqual({ changes: [] });
+    await expect(readFile(join(workspace, 'runtime.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(providerCalls).toHaveLength(2);
+    // Restart while undone: the redo branch must be persisted, not reconstructed
+    // by calling the provider or executing the original write tool a second time.
+    app.child.kill('SIGTERM');
+    expect((await app.finished).code).toBe(0);
+    app = await start(false);
+    const restartedUndone = await api(sessionPath);
+    expect(restartedUndone.history).toEqual(undone);
+    expect(restartedUndone.messages).toEqual(baseline.messages);
+    expect(restartedUndone.todos).toEqual(baseline.todos);
+    expect(restartedUndone.queue.paused).toBe(true);
+    await expect(readFile(join(workspace, 'runtime.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(providerCalls).toHaveLength(2);
+    const redone = await api(`${sessionPath}/history/redo`, { checkpointId: restartedUndone.history.redoId });
+    expect(redone).toEqual(completed.history);
+    const restored = await api(sessionPath);
+    expect(restored.messages).toEqual(completed.messages);
+    expect(restored.todos).toEqual(completed.todos);
+    expect(await api(`${sessionPath}/changes`)).toEqual(recorded);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    expect(providerCalls).toHaveLength(2);
     const cli = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'sessions', '--url', app.base], workspace, env).finished;
     expect(cli.code).toBe(0);
     expect(cli.output).toContain(session.id);

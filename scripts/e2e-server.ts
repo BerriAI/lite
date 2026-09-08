@@ -9,10 +9,12 @@ import { attachTerminals } from '../server/terminal.js';
 
 const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
+let providerRequests=0;
 const mock=createServer(async(req,res)=>{
   if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'}]}));return;}
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);let data:any;
   try{data=JSON.parse(Buffer.concat(chunks).toString());}catch{res.writeHead(400);res.end();return;}
+  providerRequests++;
   const lastUser=data.messages.filter((m:any)=>m.role==='user').at(-1)?.content||'';
   const prompt=typeof lastUser==='string'?lastUser:JSON.stringify(lastUser);
   if(prompt.includes('provider failure')){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
@@ -32,9 +34,10 @@ await new Promise<void>(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
 const{app,runner}=createApp({store});
+app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
 const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);
 const server=app.listen(3211,'127.0.0.1',()=>console.log('Lite E2E ready at http://127.0.0.1:3211'));
 const terminals=attachTerminals(server,store);
 let closing=false;
-async function close(){if(closing)return;closing=true;runner.stopAll();await terminals.close();server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
+async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
 process.on('SIGINT',close);process.on('SIGTERM',close);

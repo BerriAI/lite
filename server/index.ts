@@ -37,10 +37,13 @@ server.on('error',error => { console.error(error.message); process.exitCode=1; }
 let closing=false;
 async function close() {
   if(closing)return;closing=true;
-  runner.stopAll();
-  const timeout=setTimeout(()=>process.exit(0),3000);timeout.unref();
-  await Promise.allSettled([terminals.close(), mcp.close(), Promise.resolve(auth.close()),vite?.close()]);
-  server.close(()=>{store.close();process.exit(0);});
+  const timeout=setTimeout(()=>{console.error('Shutdown timed out. Interrupted work may require recovery after restart.');process.exit(1);},5000);
+  const disconnected=new Promise<void>(resolve=>server.close(()=>resolve()));
   server.closeAllConnections();
+  runner.stopAll();
+  const results=await Promise.allSettled([runner.whenIdle(),disconnected,terminals.close(),mcp.close(),Promise.resolve(auth.close()),vite?.close()]);
+  const failed=results.some(result=>result.status==='rejected');
+  if(failed)console.error('A resource could not close cleanly. Review interrupted work after restart.');
+  store.close();clearTimeout(timeout);process.exit(failed?1:0);
 }
 process.on('SIGTERM',close);process.on('SIGINT',close);

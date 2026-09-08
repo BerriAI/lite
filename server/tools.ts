@@ -16,6 +16,7 @@ export interface ToolContext {
   sessionId: string;
   signal: AbortSignal;
   onChange: (change: FileChange) => void | Promise<void>;
+  prepareChange?: (change: FileChange) => void | Promise<void>;
   onTodos: (todos: Todo[]) => void | Promise<void>;
   getTodos: () => Todo[];
   delegate?: (prompt: string) => Promise<string>;
@@ -307,6 +308,9 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
   if (after.includes('\0')) throw new Error('Binary content is not supported.');
   if (after === before) return 'No changes: the file already has the requested content.';
   checkAbort(context.signal);
+  const relative = portable(path.relative(await fs.realpath(context.workspace), absolute));
+  await context.prepareChange?.({ path: relative, before, after });
+  checkAbort(context.signal);
   await fs.mkdir(path.dirname(absolute), { recursive: true });
   absolute = await writablePath(context.workspace, filePath);
   // Recheck the file after async work, and use O_EXCL for new files. Do not silently
@@ -327,11 +331,18 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
     await handle.truncate(0);
     await handle.writeFile(after, 'utf8');
   } finally { await handle.close(); }
-  const relative = portable(path.relative(await fs.realpath(context.workspace), absolute));
   // Once the mutation happened, always record it, even if cancellation arrived.
   await context.onChange({ path: relative, before, after });
   const patch = createPatch(relative, before ?? '', after, 'before', 'after', { timeout: 250, maxEditLength: 10_000 }) ?? '[Diff omitted: change is too large to render quickly.]';
   return bounded(`${edit ? `Updated ${relative} (${replacements} replacement${replacements === 1 ? '' : 's'})` : `${before === null ? 'Created' : 'Wrote'} ${relative}`}\n${patch}`);
+}
+
+/** Read a recovery target with the same policy as undo; never follows aliases. */
+export async function readRestoreTarget(workspace: string, filePath: string): Promise<string | null> {
+  const root = await fs.realpath(workspace);
+  const absolute = await restorePath(root, filePath);
+  try { return (await readAbsoluteText(absolute, EDIT_LIMIT, true)).content; }
+  catch (error) { if (hasCode(error, 'ENOENT')) return null; throw error; }
 }
 
 interface RestoreTarget { change: FileChange; absolute: string; identity: { dev: number; ino: number } | null }

@@ -360,6 +360,27 @@ summary::-webkit-details-marker { display: none; }
 .animated-ellipsis { animation: pulse 1.2s infinite; }
 .connection-status { color: var(--amber); font-size: 10px; display: flex; align-items: center; gap: 7px; padding: 17px 0 0; line-height: 1.6; }
 .chat-composer { width: min(100%, 816px); align-self: center; padding: 12px 36px 22px; background: var(--bg); }
+.turn-history { min-width: 0; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.history-toolbar, .history-toolbar > strong, .history-actions { display: flex; align-items: center; gap: 8px; }
+.history-toolbar { justify-content: space-between; flex-wrap: wrap; }
+.history-toolbar > strong { color: var(--secondary); font-size: 11px; font-weight: 550; }
+.history-actions { gap: 14px; flex-wrap: wrap; }
+.history-actions .text-button { font-size: 11px; min-height: 28px; }
+.history-reason, .history-scope { color: var(--secondary); font-size: 11px; line-height: 1.6; margin: 6px 0 0; }
+.history-scope > summary { cursor: pointer; color: var(--muted); }
+.history-scope p { margin: 7px 0 0; }
+.history-recovery { background: var(--amber-soft); color: var(--amber); border: 1px solid var(--border); border-radius: 6px; padding: 11px; margin-top: 9px; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.history-recovery > strong { display: flex; align-items: center; gap: 7px; }
+.history-recovery p { margin: 7px 0; }
+.history-recovery ul { max-height: 100px; overflow: auto; padding-left: 20px; margin: 8px 0; }
+.history-recovery code { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-recovery .button { margin-top: 4px; }
+@media (max-width: 480px) {
+  .turn-history { padding: 8px 10px; }
+  .history-toolbar > strong { width: 100%; }
+  .history-actions { width: 100%; gap: 18px; }
+  .history-actions .text-button { min-height: 32px; }
+}
 .scroll-bottom { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; box-shadow: var(--shadow); font-size: 10px; color: var(--secondary); }
 .message-attachments { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .message-attachments > span { display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); background: var(--surface); padding: 6px 8px; border-radius: 5px; font-size: 10px; color: var(--secondary); }
