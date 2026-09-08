@@ -13,11 +13,12 @@ const command = help ? 'help' : !raw.length || raw[0].startsWith('--') ? 'serve'
 const options = new Map();
 const positional = [];
 let base;
-const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session']);
-const booleanOptions = new Set(['--plan', '--auto', '--json']);
+const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills']);
+const booleanOptions = new Set(['--plan', '--build', '--auto', '--json']);
 const supported = {
   serve: new Set(['--port', '--workspace']),
-  run: new Set(['--url', '--model', '--provider', '--session', '--plan', '--auto', '--json']),
+  run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
+  profiles: new Set(['--url', '--workspace', '--json']),
   sessions: new Set(['--url']), models: new Set(['--url', '--provider']), export: new Set(['--url']),
 };
 const option = (name, fallback) => options.get(name) ?? fallback;
@@ -44,9 +45,17 @@ function parse() {
   if (command === 'export' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: lite export <session-id>');
   if (!['run', 'export'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use lite --help.`);
   if (command === 'run' && options.has('--session')) {
-    const override = ['--model', '--provider', '--plan', '--auto'].find(name => options.has(name));
+    const override = ['--model', '--provider', '--profile', '--skills', '--plan', '--build', '--auto'].find(name => options.has(name));
     if (override) throw new Error(`${override} cannot be combined with --session. Change the existing session settings in Lite, or start a new session.`);
   }
+  if (options.has('--plan') && options.has('--build')) throw new Error('--plan and --build cannot be combined.');
+  if (options.has('--profile') && !validProfileId(option('--profile'))) throw new Error('--profile requires a lowercase ID of 1–64 letters, digits, or hyphens, starting with a letter or digit.');
+  const skills = selectedSkills();
+  if (options.has('--profile') || skills.length) {
+    if (options.has('--provider') !== options.has('--model')) throw new Error('Profile or skill selection requires both --provider and --model, or neither. Profile defaults are a provider/model pair.');
+    if (['--provider', '--model'].some(name => options.has(name) && !option(name).trim())) throw new Error('Profile provider/model overrides must both be nonblank.');
+  }
+  if (options.has('--workspace') && !option('--workspace').trim()) throw new Error('--workspace requires a nonblank path.');
   const port = option('--port', process.env.LITE_PORT || '3210');
   if (command === 'serve' && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) throw new Error('--port must be an integer between 1 and 65535.');
   base = option('--url', process.env.LITE_URL || `http://localhost:${process.env.LITE_PORT || 3210}`);
@@ -57,10 +66,13 @@ function parse() {
   }
 }
 
-// Model-authored prompts and output are data, never terminal escape sequences.
+// Model- and configuration-authored content is data, never terminal escape sequences.
 function terminalText(value, multiline = false) {
-  return String(value ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, character =>
-    multiline && (character === '\n' || character === '\t') ? character : `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  return String(value ?? '').replace(/[\p{Cc}\p{Cf}]/gu, character => {
+    if (multiline && (character === '\n' || character === '\t')) return character;
+    const code = character.codePointAt(0);
+    return code > 0xffff ? `\\u{${code.toString(16)}}` : `\\u${code.toString(16).padStart(4, '0')}`;
+  });
 }
 
 async function api(path, body, signal) {
@@ -74,17 +86,81 @@ async function api(path, body, signal) {
   return data;
 }
 
+function validProfileId(value) { return typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(value); }
+function selectedSkills() {
+  const value = option('--skills');
+  if (value === undefined || value === 'none') return [];
+  const ids = value.split(',');
+  if (ids.length > 8 || ids.some(id => !validProfileId(id))) throw new Error('--skills requires up to 8 comma-separated lowercase IDs (1–64 letters, digits, or hyphens); use --skills none for no skills.');
+  if (new Set(ids).size !== ids.length) throw new Error('--skills contains duplicate IDs. Select each skill only once.');
+  if (ids.includes('none')) throw new Error('--skills none cannot be combined with other skill IDs.');
+  return ids;
+}
+async function profileCatalog(workspace) {
+  const catalog = await api(`/profiles?workspace=${encodeURIComponent(workspace)}`);
+  if (!catalog || typeof catalog.workspace !== 'string' || !catalog.workspace.trim() || typeof catalog.revision !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.revision) ||
+      !Array.isArray(catalog.profiles) || catalog.profiles.length > 32 || !Array.isArray(catalog.skills) || catalog.skills.length > 64 || !Array.isArray(catalog.diagnostics))
+    throw new Error('The Lite server returned an invalid profile catalog. Update the server and retry.');
+  for (const entries of [catalog.profiles, catalog.skills]) {
+    if (entries.some(entry => !entry || !validProfileId(entry.id) || typeof entry.name !== 'string' || !entry.name.trim() || entry.name.length > 200) || new Set(entries.map(entry => entry.id)).size !== entries.length)
+      throw new Error('The Lite server returned invalid or duplicate profile/skill IDs. Update the server and retry.');
+  }
+  const text = (value, limit) => typeof value === 'string' && value.length <= limit;
+  if (catalog.profiles.some(profile => !Array.isArray(profile.tools) || profile.tools.some(tool => !text(tool, 64)) ||
+        (profile.description !== undefined && !text(profile.description, 2000)) ||
+        (profile.defaultMode !== undefined && !['plan', 'build'].includes(profile.defaultMode)) ||
+        (profile.defaultModel !== undefined && (!profile.defaultModel || !text(profile.defaultModel.providerId, 64) || !text(profile.defaultModel.model, 250))) ||
+        (profile.skills !== undefined && (!Array.isArray(profile.skills) || profile.skills.length > 64 || profile.skills.some(id => !validProfileId(id)) || new Set(profile.skills).size !== profile.skills.length))) ||
+      catalog.skills.some(skill => !text(skill.description, 2000)) ||
+      catalog.diagnostics.length > 65 || catalog.diagnostics.some(item => !item || !text(item.path, 4096) || !text(item.code, 100) || !text(item.message, 2000)))
+    throw new Error('The Lite server returned an invalid profile catalog. Update the server and retry.');
+  return catalog;
+}
+function catalogDiagnostics(catalog) {
+  for (const diagnostic of catalog.diagnostics) process.stderr.write(`Profile catalog: ${terminalText(diagnostic?.path)} (${terminalText(diagnostic?.code)}): ${terminalText(diagnostic?.message)}\n`);
+}
+async function listProfiles() {
+  const catalog = await profileCatalog(resolve(option('--workspace', process.cwd())));
+  if (options.has('--json')) { console.log(JSON.stringify(catalog)); return; }
+  console.log(`Workspace: ${terminalText(catalog.workspace)}\nProfiles:`);
+  if (!catalog.profiles.length) console.log('  None configured.');
+  for (const profile of catalog.profiles) {
+    const defaults = [profile.defaultMode, profile.defaultModel ? `${profile.defaultModel.providerId}/${profile.defaultModel.model}` : undefined].filter(Boolean);
+    console.log(`  ${profile.id}  ${terminalText(profile.name)}${defaults.length ? `  [${defaults.map(value => terminalText(value)).join(', ')}]` : ''}`);
+    if (profile.description) console.log(`    ${terminalText(profile.description)}`);
+    if (profile.skills?.length) console.log(`    Recommended only (not selected): ${profile.skills.map(value => terminalText(value)).join(', ')}`);
+  }
+  console.log('Skills:');
+  if (!catalog.skills.length) console.log('  None configured.');
+  for (const skill of catalog.skills) console.log(`  ${skill.id}  ${terminalText(skill.name)}${skill.description ? ` — ${terminalText(skill.description)}` : ''}`);
+  catalogDiagnostics(catalog);
+  console.log('Skills activate only when explicitly selected with --skills. Profiles never grant tool approval.');
+}
+async function newRunSession() {
+  const profileId = option('--profile', null), skillIds = selectedSkills();
+  const explicitChoice = options.has('--profile') || options.has('--skills');
+  const activeChoice = profileId !== null || skillIds.length > 0;
+  const input = { workspace: process.cwd(), model: option('--model'), providerId: option('--provider'),
+    ...(options.has('--plan') ? { mode: 'plan' } : options.has('--build') || !activeChoice ? { mode: 'build' } : {}),
+    permissionMode: options.has('--auto') ? 'auto' : 'ask' };
+  if (explicitChoice) {
+    const catalog = await profileCatalog(input.workspace);
+    if (profileId !== null && !catalog.profiles.some(profile => profile.id === profileId)) throw new Error(`Unknown project profile: ${profileId}. Use lite profiles to inspect this workspace.`);
+    for (const id of skillIds) if (!catalog.skills.some(skill => skill.id === id)) throw new Error(`Unknown project skill: ${id}. Use lite profiles to inspect this workspace.`);
+    catalogDiagnostics(catalog);
+    input.workspace = catalog.workspace;
+    input.profile = { profileId, skillIds, catalogRevision: catalog.revision };
+  }
+  return api('/sessions', input);
+}
 async function runPrompt(prompt) {
   const existingId = option('--session');
-  const session = existingId ? { id: existingId } : await api('/sessions', {
-    workspace: process.cwd(), model: option('--model'), providerId: option('--provider'),
-    mode: options.has('--plan') ? 'plan' : 'build', permissionMode: options.has('--auto') ? 'auto' : 'ask',
-  });
+  const session = existingId ? { id: existingId } : await newRunSession();
   const path = `/sessions/${encodeURIComponent(session.id)}`;
   const controller = new AbortController();
   let cancellation, interrupted = false, started = false, finished = false, reported = false, activeInput;
   const inputTasks = new Set(), seenQuestions = new Set(), seenPermissions = new Set();
-  const reportSession = () => { if (!reported) { process.stderr.write(`\nSession: ${session.id}\n`); reported = true; } };
+  const reportSession = () => { if (!reported) { process.stderr.write(`\nSession: ${terminalText(session.id)}\n`); reported = true; } };
   const dismissInput = (kind, id) => {
     if (!activeInput || (kind && (activeInput.kind !== kind || activeInput.id !== id))) return;
     const input = activeInput; activeInput = undefined;
@@ -222,15 +298,24 @@ try {
   lite run "your prompt"    Run a coding task on a running server
   lite sessions            List recent sessions
   lite models              List available models
+  lite profiles            List project profiles, skills, and diagnostics
   lite export <session>    Export a session as JSON
 
 Server: --port 3210, --workspace PATH
 Client: --url URL (or LITE_URL)
-Run:    --model ID, --provider ID, --session ID, --plan, --auto, --json
+Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
+        --profile ID, --skills ID,ID (or none)
 Models: --provider ID
+Profiles: --workspace PATH (default current directory), --json
 
---session continues existing settings; model, provider, and permission
-flags cannot override it. --json emits newline-delimited run events.
+--session continues existing settings; model, provider, profile, skills,
+mode, and permission flags cannot override it. --json emits newline-delimited
+run events, or a single catalog object for lite profiles.
+A selected profile supplies model/provider and mode defaults. Override its
+model with BOTH --provider and --model; --build overrides a Plan default.
+--plan and --build conflict. Unprofiled runs keep the existing Build default.
+Skills default to NONE. Recommendations never activate automatically.
+Profile selection uses the server's canonical catalog for the current directory.
 Tools ask for approval by default. --auto explicitly allows shell
 commands and edits; it is not a sandbox. Keys stay server-side.
 Questions require your answer in an interactive terminal or the Lite app.
@@ -241,10 +326,11 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     const child = spawn(process.execPath, entry.map(value => value.startsWith('dist/') || value.startsWith('server/') ? resolve(root, value) : value), {
       cwd: root, stdio: 'inherit', env: { ...process.env, LITE_WORKSPACE: option('--workspace', process.cwd()), LITE_PORT: option('--port', process.env.LITE_PORT || '3210') },
     });
-    child.on('error', error => { console.error(`Lite: ${error.message}`); process.exitCode = 1; });
+    child.on('error', error => { console.error(`Lite: ${terminalText(error.message)}`); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });
     process.on('SIGINT', () => child.kill('SIGINT')); process.on('SIGTERM', () => child.kill('SIGTERM'));
   } else if (command === 'run') await runPrompt(positional[0]);
+  else if (command === 'profiles') await listProfiles();
   else if (command === 'sessions') {
     for (const session of (await api('/sessions')).sessions) console.log(`${session.id}  ${session.status.padEnd(8)}  ${session.title}`);
   } else if (command === 'models') {
@@ -254,6 +340,6 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     for (const model of data.models) console.log(`${model.id}  (${model.providerId})`);
   } else if (command === 'export') console.log(JSON.stringify(await api(`/sessions/${encodeURIComponent(positional[0])}/export`), null, 2));
 } catch (error) {
-  console.error(`Lite: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with lite serve first.' : error.message}`);
+  console.error(`Lite: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with lite serve first.' : terminalText(error.message)}`);
   process.exitCode = process.exitCode || 1;
 }

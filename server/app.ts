@@ -1,4 +1,4 @@
-import express, { type Express } from 'express';
+import express, { type Express, type Response } from 'express';
 import { z } from 'zod';
 import { realpath, stat, readdir } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
@@ -8,6 +8,8 @@ import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
 import { listModels } from './providers.js';
 import { modelCatalog } from './budget.js';
+import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
+import type { ProfileDetail } from '../shared/profiles.js';
 import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
 import type { Message, Settings } from '../shared/types.js';
 
@@ -15,6 +17,9 @@ const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),na
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).optional()});
 const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional()});
+const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
+const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
 const attachmentSchema = z.object({name:z.string().max(255),path:z.string().max(4096).optional(),content:z.string().max(200000).optional(),mimeType:z.string().max(100).optional(),dataUrl:z.string().max(6000000).regex(/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/).optional()});
 const inputSchema = z.object({content:z.string().max(200000),attachments:z.array(attachmentSchema).max(10).optional()}).refine(v=>v.content.trim() || v.attachments?.length,'A message or attachment is required');
 const queryString = (value:unknown) => typeof value === 'string' ? value : '';
@@ -45,6 +50,11 @@ export function createApp(options:AppOptions = {}) {
   const publicSettings=()=>{const s=store.publicSettings();return{...s,providers:s.providers.map(p=>p.kind==='codex'?{...p,configured:options.auth?.connected(p.id)||false}:p)}};
   const workspace=async(value:unknown)=>{const root=await realpath(resolve(queryString(value)||store.settings().workspace));if(!(await stat(root)).isDirectory())throw httpError(400,'Workspace must be a directory.');return root;};
   const checkProvider=(id:string|undefined)=>{if(id&&!store.settings().providers.some(p=>p.id===id))throw httpError(400,'Provider not found. Choose a connected provider.');};
+  const requestSignal=(res:Response)=>{const controller=new AbortController();res.once('close',()=>{if(!res.writableEnded)controller.abort();});return controller.signal;};
+  const profileDetail=(snapshot:ProfileSnapshot|null,source:ProfileDetail['source']={status:snapshot?'current':'inactive'},diagnostics:ProfileDetail['diagnostics']=[]):ProfileDetail=>({active:snapshot?.active??null,pinned:snapshot?{instructions:snapshot.instructions,skills:snapshot.skills,sources:snapshot.sources}:null,source,diagnostics});
+  const publishConfiguration=(id:string)=>{for(const [type,data]of [['session',store.session(id)],['queue',store.queue(id)]] as const)try{bus.emit(id,type,data);}catch{console.error('Could not publish configuration update. Refresh to inspect saved state.');}};
+  app.get('/api/profiles',async(req,res)=>{const signal=requestSignal(res),root=await workspace(req.query.workspace);signal.throwIfAborted();res.json({...await readProfileCatalog(root,signal),workspace:root});});
+  app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
   app.get('/api/health',(_req,res)=>res.json({ok:true,version:'0.1.0'}));
   app.get('/api/settings',(_req,res)=>res.json(publicSettings()));
   app.patch('/api/settings',async(req,res)=>{
@@ -70,7 +80,22 @@ export function createApp(options:AppOptions = {}) {
     try{const models=await listModels(provider,AbortSignal.timeout(30000));if(provider.kind!=='codex')modelCatalog.remember(provider,models);res.json({ok:true,models:models.length});}catch(error){res.status(502).json({ok:false,error:safeError(error,store)});}
   });
   app.get('/api/sessions',(req,res)=>res.json({sessions:store.sessions(queryString(req.query.q),req.query.archived==='true')}));
-  app.post('/api/sessions',async(req,res)=>{const input=sessionSchema.parse(req.body||{});checkProvider(input.providerId);res.status(201).json(store.createSession({...input,workspace:await workspace(input.workspace)}));});
+  app.post('/api/sessions',async(req,res)=>{
+    const {profile,...input}=sessionSchema.extend({profile:profileChoiceSchema.optional()}).parse(req.body||{});
+    const nonempty=profile&&(profile.profileId!==null||profile.skillIds.length>0);
+    if(nonempty&&(input.providerId!==undefined||input.model!==undefined)&&(!input.providerId?.trim()||!input.model?.trim()))throw httpError(400,'Specify both nonempty providerId and model when overriding profile defaults.');
+    const session=await runner.prepareConfiguration(undefined,undefined,async signal=>{
+      const root=await workspace(input.workspace);signal.throwIfAborted();
+      return {root,resolved:profile?await resolveProfileChoice(root,profile,signal):undefined};
+    },({root,resolved})=>{
+      const defaults=resolved?.defaults,pair=input.providerId&&input.model?{providerId:input.providerId,model:input.model}:nonempty?defaults?.model:undefined;
+      const selection={...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
+      if(selection.mode===undefined)delete selection.mode;
+      checkProvider(selection.providerId);
+      return store.createSession(selection,resolved);
+    },requestSignal(res));
+    res.status(201).json(session);
+  });
   app.post('/api/sessions/import',async(req,res)=>{
     const imported=z.object({session:sessionSchema,messages:z.array(z.object({id:z.string(),role:z.enum(['user','assistant','tool','system']),content:z.string().max(500000),createdAt:z.number(),providerMetadata:z.record(z.string(),z.unknown()).optional(),reasoning:z.string().max(500000).optional(),toolCallId:z.string().optional(),toolCalls:z.array(z.object({id:z.string(),name:z.string(),args:z.record(z.string(),z.unknown()),status:z.enum(['pending','running','completed','error','denied']),output:z.string().optional()})).optional(),attachments:z.array(attachmentSchema).max(10).optional()})).max(10000)}).parse(req.body);
     // Imports are inert history: no tools execute and no imported path is opened.
@@ -80,10 +105,27 @@ export function createApp(options:AppOptions = {}) {
     res.status(201).json(session);
   });
   app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id/profile',async(req,res)=>{
+    const id=req.params.id,session=store.session(id),snapshot=store.profileSnapshot(id),signal=requestSignal(res);
+    const source=snapshot?await profileSourceStatus(session.workspace,snapshot,signal):{status:'inactive' as const,diagnostics:[]};
+    if((store.session(id).configRevision??0)!==(session.configRevision??0))throw httpError(409,'Session configuration changed. Refresh and try again.');
+    res.json(profileDetail(snapshot,{status:source.status},source.diagnostics));
+  });
+  app.post('/api/sessions/:id/profile',async(req,res)=>{
+    const id=req.params.id,input=z.object({expectedConfigRevision:configRevisionSchema,choice:profileChoiceSchema,selection:profileSelectionSchema.optional()}).strict().parse(req.body);
+    const result=await runner.prepareConfiguration(id,input.expectedConfigRevision,signal=>resolveProfileChoice(store.session(id).workspace,input.choice,signal),resolved=>{
+      checkProvider(input.selection?.providerId);
+      const session=store.applyProfile(id,input.expectedConfigRevision,resolved,input.selection);
+      const queue=store.queue(id);publishConfiguration(id);return{session,queue};
+    },requestSignal(res));
+    res.json(result);
+  });
   app.patch('/api/sessions/:id',(req,res)=>{
-    const patch=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional()}).parse(req.body);
-    if(patch.model||patch.providerId||patch.mode||patch.permissionMode)runner.assertIdle(req.params.id);
-    checkProvider(patch.providerId);res.json(store.updateSession(req.params.id,patch));
+    const {expectedConfigRevision,...patch}=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional(),expectedConfigRevision:configRevisionSchema.optional()}).parse(req.body);
+    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined;
+    if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
+    checkProvider(patch.providerId);const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
+    if(configChange)publishConfiguration(req.params.id);res.json(session);
   });
   app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);store.deleteSession(req.params.id);res.json({ok:true});});
   app.get('/api/sessions/:id/events',(req,res)=>{

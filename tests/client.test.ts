@@ -235,14 +235,22 @@ describe('session-scoped asynchronous responses', () => {
     expect(document.querySelector('.global-alert')).toBeNull();
   });
 
-  it('does not roll back a newer selection when an older same-session request fails', async () => {
+  it('serializes selection changes, releases the failed lock, and guards an explicit retry by revision', async () => {
     const server = appServer([detail('a')]), first = deferred<Session>(), second = deferred<Session>();
     let calls = 0; server.mutation = () => ++calls === 1 ? first.promise : second.promise;
     await mountApp();
-    await clickText('Build'); // Previous value is Build; this response must not roll back the later Plan.
+    await clickText('Build');
+    expect(element<HTMLButtonElement>('.mode-switch button:last-child').disabled).toBe(true);
     await clickText('Plan');
-    await act(async () => second.resolve(session('a', { mode: 'plan' })));
-    await act(async () => first.reject(new Error('superseded failure')));
+    expect(calls).toBe(1);
+    await act(async () => first.reject(new Error('Configuration request failed')));
+    expect(element('.mode-switch [aria-pressed="true"]').textContent).toBe('Build');
+    expect(element<HTMLButtonElement>('.mode-switch button:last-child').disabled).toBe(false);
+    await clickText('Plan');
+    expect(calls).toBe(2);
+    const patches = vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'PATCH');
+    expect(patches.map(([, options]) => JSON.parse(String(options?.body)).expectedConfigRevision)).toEqual([0, 0]);
+    await act(async () => second.resolve(session('a', { mode: 'plan', configRevision: 1 })));
     expect(element('.mode-switch [aria-pressed="true"]').textContent).toBe('Plan');
     expect(document.querySelector('.global-alert')).toBeNull();
   });

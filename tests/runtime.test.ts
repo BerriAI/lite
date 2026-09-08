@@ -51,7 +51,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     const version = await processResult(runtime!, ['--version'], temporary, env).finished;
     expect(version.code).toBe(0);
     expect(version.output.trim()).toMatch(/^v22\.13\.0$/);
-    const providerCalls: { messages: { role: string; content: any }[]; tools?: unknown[] }[] = [];
+    const providerCalls: { messages: { role: string; content: any }[]; tools?: { function: { name: string } }[] }[] = [];
     let catalogCalls = 0;
     const fixtureContent = String.fromCharCode(0xfeff) + 'persisted runtime output — exact UTF-8\r\nno final newline';
     const changedAttachment = 'External edit made after the accepted attachment snapshot.';
@@ -75,7 +75,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       else if (request.messages.at(-1)?.role !== 'tool') {
         finishReason = 'tool_calls';
         if (prompt.includes('runtime question')) emit({ tool_calls: [{ index: 0, id: 'runtime-question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Which runtime approach?', options: [{ id: 'small', label: 'Small change' }, { id: 'broad', label: 'Broader change' }] }) } }] });
-        else emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: fixtureContent }) } }] });
+        else emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: prompt.includes('runtime profile') ? 'profile-forbidden.txt' : 'runtime.txt', content: fixtureContent }) } }] });
       } else { emit({ content: 'Runtime ' }); emit({ content: 'complete.' }); }
       res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`);
       res.end('data: [DONE]\n\n');
@@ -401,6 +401,123 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
     expect(await readFile(join(workspace, latestAttachment.path), 'utf8')).toBe(changedAttachment);
+    // Profile resolution crosses the installed CLI/API boundary once. Continued
+    // turns and history must use the pinned private snapshot after files vanish.
+    const profileInstructions = 'RUNTIME_PROFILE_PRIVATE_BODY — review, never alter the fixture.';
+    const skillBody = 'RUNTIME_SKILL_PRIVATE_BODY — preserve exact UTF-8\r\nno final newline';
+    await mkdir(join(workspace, '.lite', 'skills', 'testing'), { recursive: true });
+    await writeFile(join(workspace, '.lite', 'skills', 'testing', 'SKILL.md'), skillBody);
+    await writeFile(join(workspace, '.lite', 'profiles.json'), JSON.stringify({ version: 1,
+      profiles: [{ id: 'review', name: 'Runtime Review', instructions: profileInstructions, tools: ['read_file', 'grep'], defaultModel: { providerId: 'runtime', model: 'runtime-model' }, defaultMode: 'plan', skills: ['testing'] }],
+      skills: [{ id: 'testing', name: 'Runtime Testing', description: 'Verify the pinned fixture.' }],
+    }));
+    const catalogCli = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'profiles', '--json', '--url', app.base], workspace, env).finished;
+    expect(catalogCli.code, catalogCli.output).toBe(0);
+    const profileCatalog = JSON.parse(catalogCli.output);
+    expect(profileCatalog).toMatchObject({ workspace, profiles: [{ id: 'review', skills: ['testing'] }], skills: [{ id: 'testing' }], diagnostics: [] });
+    expect(catalogCli.output).not.toContain('PRIVATE_BODY');
+    expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
+    const profileCli = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', 'Inspect the runtime profile and attempt the forbidden write.', '--profile', 'review', '--skills', 'testing', '--auto', '--url', app.base], workspace, env).finished;
+    expect(profileCli.code, profileCli.output).toBe(0);
+    const profileId = profileCli.output.match(/Session: ([\w-]+)/)?.[1]; expect(profileId).toBeTruthy();
+    const profilePath = `/sessions/${profileId}`;
+    const profileCompleted = await api(profilePath), profilePinned = await api(`${profilePath}/profile`);
+    expect(profileCompleted.session).toMatchObject({ mode: 'plan', permissionMode: 'auto', providerId: 'runtime', model: 'runtime-model', profile: { profileId: 'review', skillIds: ['testing'], revision: profileCatalog.revision, tools: ['read_file', 'grep'] } });
+    expect(profilePinned.pinned).toMatchObject({ instructions: profileInstructions, skills: [{ id: 'testing', body: skillBody, path: '.lite/skills/testing/SKILL.md' }] });
+    expect(profilePinned.source.status).toBe('current');
+    expect(profileCompleted.messages.flatMap((message: { toolCalls?: unknown[] }) => message.toolCalls ?? [])).toMatchObject([{ name: 'write_file', status: 'denied' }]);
+    expect(profileCompleted.permissions).toEqual([]); expect(profileCompleted.questions).toEqual([]);
+    expect(providerCalls).toHaveLength(9);
+    for (const request of providerCalls.slice(7)) {
+      expect(request.messages[0].content).toContain(profileInstructions); expect(request.messages[0].content).toContain(skillBody);
+      expect(request.tools?.map(tool => tool.function.name)).not.toContain('write_file');
+      expect(request.tools?.map(tool => tool.function.name)).toContain('ask_user');
+    }
+    expect(JSON.stringify(profileCompleted)).not.toContain('PRIVATE_BODY'); expect(profileCli.output).not.toContain('PRIVATE_BODY');
+    await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await rm(join(workspace, '.lite'), { recursive: true });
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
+    app = await start(true);
+    const profileRestarted = await api(profilePath), missingProfile = await api(`${profilePath}/profile`);
+    expect(profileRestarted.messages).toEqual(profileCompleted.messages); expect(profileRestarted.session.profile).toEqual(profileCompleted.session.profile);
+    expect(missingProfile.pinned).toEqual(profilePinned.pinned); expect(missingProfile.source.status).toBe('missing');
+    expect(providerCalls).toHaveLength(9); expect(catalogCalls).toBe(1);
+    // Removing Plan does not expand the pinned profile allowlist, even in Auto.
+    await api(profilePath, { mode: 'build', expectedConfigRevision: profileRestarted.session.configRevision }, 'PATCH');
+    const continuedProfile = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', 'Continue the runtime profile from pinned instructions.', '--session', profileId!, '--url', app.base], workspace, env).finished;
+    expect(continuedProfile.code, continuedProfile.output).toBe(0);
+    expect(providerCalls).toHaveLength(11);
+    for (const request of providerCalls.slice(9)) {
+      expect(request.messages[0].content).toContain(profileInstructions); expect(request.messages[0].content).toContain(skillBody);
+      expect(request.tools?.map(tool => tool.function.name)).not.toContain('write_file');
+    }
+    const profileContinued = await api(profilePath);
+    expect(profileContinued.session).toMatchObject({ mode: 'build', permissionMode: 'auto' });
+    expect(profileContinued.messages.flatMap((message: { toolCalls?: unknown[] }) => message.toolCalls ?? [])).toMatchObject([{ status: 'denied' }, { status: 'denied' }]);
+    expect(profileContinued.permissions).toEqual([]); expect(profileContinued.questions).toEqual([]);
+    expect(profileContinued.session.profile).toEqual(profileCompleted.session.profile);
+    await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    const profileFork = await api(`${profilePath}/fork`, {}), forkPath = `/sessions/${profileFork.id}`;
+    expect(profileFork.profile).toEqual(profileCompleted.session.profile);
+    expect((await api(`${forkPath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect((await api(forkPath)).messages.map((message: { content: string }) => message.content)).toEqual(profileContinued.messages.map((message: { content: string }) => message.content));
+    expect(JSON.stringify(await api(forkPath))).not.toContain('PRIVATE_BODY');
+    expect(providerCalls).toHaveLength(11);
+    await api(`${forkPath}/queue/pause`, {});
+    await api(`${forkPath}/queue`, { content: 'Do not execute this stale configuration queue.' });
+    await api(forkPath, { mode: 'plan', expectedConfigRevision: profileFork.configRevision }, 'PATCH');
+    const beforeStaleConfig = await api(forkPath);
+    const staleConfig = await fetch(app.base + '/api' + forkPath + '/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedConfigRevision: profileFork.configRevision, choice: { profileId: null, skillIds: [] } }) });
+    expect(staleConfig.status).toBe(409);
+    expect(await api(forkPath)).toEqual(beforeStaleConfig);
+    expect(beforeStaleConfig.queue).toMatchObject({ paused: true, items: [{ content: 'Do not execute this stale configuration queue.' }] });
+    expect(beforeStaleConfig.session.profile).toEqual(profileCompleted.session.profile);
+    expect(providerCalls).toHaveLength(11);
+    const profileExport = await api(`${profilePath}/export`);
+    expect(profileExport.session.profile).toEqual(profileCompleted.session.profile);
+    expect(JSON.stringify(profileExport)).not.toContain('PRIVATE_BODY');
+    const importedProfile = await api('/sessions/import', profileExport), importedProfilePath = `/sessions/${importedProfile.id}`;
+    expect(importedProfile.profile).toBeUndefined(); expect(importedProfile.permissionMode).toBe('ask');
+    expect((await api(`${importedProfilePath}/profile`)).pinned).toBeNull();
+    expect((await api(importedProfilePath)).history).toMatchObject({ hasCheckpoints: false, canUndo: false, canRedo: false });
+    expect(providerCalls).toHaveLength(11);
+    await api(`${profilePath}/compact`, {});
+    expect(providerCalls).toHaveLength(12); expect(providerCalls[11].tools).toBeUndefined();
+    expect(JSON.stringify(providerCalls[11])).not.toContain('PRIVATE_BODY');
+    const profileCompacted = await api(profilePath), profileCompactCheckpoint = profileCompacted.history.undoId;
+    const profileArchives = (await api('/sessions?archived=true')).sessions.filter((value: { parentId?: string }) => value.parentId === profileId);
+    expect(profileArchives).toHaveLength(1);
+    const profileArchivePath = `/sessions/${profileArchives[0].id}`, profileArchive = await api(profileArchivePath);
+    expect(profileArchive.session.profile).toEqual(profileCompleted.session.profile);
+    expect(profileArchive.messages.map((message: { content: string }) => message.content)).toEqual(profileContinued.messages.map((message: { content: string }) => message.content));
+    expect((await api(`${profileArchivePath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect(JSON.stringify(profileArchive)).not.toContain('PRIVATE_BODY');
+    expect(profileCompacted.session.profile).toEqual(profileCompleted.session.profile);
+    // Manual compaction refreshes the latest turn's after-snapshot rather than
+    // inventing an extra turn: undo returns to the first completed turn.
+    expect(profileCompactCheckpoint).toBe(profileContinued.history.undoId);
+    const profileUndone = await api(`${profilePath}/history/undo`, { checkpointId: profileCompactCheckpoint });
+    expect((await api(profilePath)).messages).toEqual(profileCompleted.messages);
+    expect((await api(profilePath)).session.mode).toBe('build');
+    expect((await api(`${profilePath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect(providerCalls).toHaveLength(12);
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
+    app = await start(false);
+    expect((await api(profilePath)).history).toEqual(profileUndone);
+    expect((await api(`${forkPath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect((await api(`${profileArchivePath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect((await api(`${importedProfilePath}/profile`)).pinned).toBeNull();
+    expect((await api(forkPath)).queue).toEqual({ ...beforeStaleConfig.queue, reason: 'Server restarted. Review and resume queued messages explicitly.' });
+    expect(await api(`${profilePath}/history/redo`, { checkpointId: profileCompactCheckpoint })).toEqual(profileCompacted.history);
+    const profileRestored = await api(profilePath);
+    expect(profileRestored.messages).toEqual(profileCompacted.messages); expect(profileRestored.session.profile).toEqual(profileCompacted.session.profile);
+    expect((await api(`${profilePath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    expect((await api(profileArchivePath)).messages).toEqual(profileArchive.messages);
+    expect((await api(`${profilePath}/changes`)).changes).toEqual([]);
+    expect(providerCalls).toHaveLength(12); expect(catalogCalls).toBe(1);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.lite', 'profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     // Validate the installed native PTY on this exact ABI without starting a
     // login shell (which would read the real user's startup files).
     const pty = await processResult(runtime!, ['--input-type=module', '-e', `import {createRequire} from 'node:module'; const require=createRequire(${JSON.stringify(join(installation, 'package.json'))}); const {spawn}=require('node-pty'); const p=spawn('/bin/sh',['-c','printf "PTY_RUNTIME_OK\\n"'],{cwd:process.cwd(),env:{PATH:'/usr/bin:/bin',HOME:process.cwd(),TERM:'xterm'}}); p.onData(s=>process.stdout.write(s)); p.onExit(e=>process.exit(e.exitCode)); setTimeout(()=>process.exit(2),3000).unref();`], workspace, env).finished;

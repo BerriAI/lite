@@ -8,9 +8,10 @@ import { completeToolBoundary, planCompaction } from './context.js';
 import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, type BudgetRequest } from './budget.js';
 import { History } from './history.js';
 import { Questions, questionTool } from './questions.js';
+import type { ProfileSnapshot } from './profiles.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
-type ActiveRun = { turnId?: string; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message };
+type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
 export interface ExternalTools {
   definitions(): Promise<ToolDefinition[]>;
@@ -23,6 +24,7 @@ export class Runner {
   private operations = new Set<string>();
   private preparations = new Map<string, AbortController>();
   private queuePreparations = new Map<string, Set<AbortController>>();
+  private configurationPreparations = new Map<string, AbortController>();
   private idleWaiters = new Set<() => void>();
   private stopping = false;
   readonly history: History;
@@ -39,7 +41,7 @@ export class Runner {
   private assertOpen() { if(this.stopping)throw conflict('The server is stopping. Restart it before sending more work.'); }
   assertIdle(id: string) { this.assertOpen();if (this.active(id) || this.operations.has(id) || this.preparations.has(id)) throw conflict('Wait for the current operation or stop the response before making this change.'); }
   private notifyIdle() {
-    if(this.runs.size||this.operations.size||this.preparations.size||this.queuePreparations.size)return;
+    if(this.runs.size||this.operations.size||this.preparations.size||this.queuePreparations.size||this.configurationPreparations.size)return;
     for(const resolve of this.idleWaiters)resolve();
     this.idleWaiters.clear();
   }
@@ -78,7 +80,36 @@ export class Runner {
     try { return await operation(); }
     finally { this.operations.delete(id);this.notifyIdle(); }
   }
+  async prepareConfiguration<T,R>(id: string|undefined, expectedConfigRevision: number|undefined, prepare: (signal:AbortSignal)=>Promise<T>, commit:(prepared:T)=>R, requestSignal?:AbortSignal):Promise<R> {
+    this.assertOpen();
+    if(id) {
+      this.assertIdle(id);this.history.assertReady(id);
+      if(expectedConfigRevision!==undefined&&(this.store.session(id).configRevision??0)!==expectedConfigRevision)throw conflict('Session configuration changed. Refresh and try again.');
+      this.operations.add(id);
+    }
+    const key=id??`new:${randomUUID()}`,controller=new AbortController();
+    this.configurationPreparations.set(key,controller);
+    const signal=requestSignal?AbortSignal.any([controller.signal,requestSignal]):controller.signal;
+    try {
+      if(signal.aborted)throw conflict('Configuration preparation was cancelled. Nothing changed.');
+      const prepared=await prepare(signal);
+      if(signal.aborted)throw conflict('Configuration preparation was cancelled. Nothing changed.');
+      this.assertOpen();
+      if(id) {
+        this.history.assertReady(id);
+        if(expectedConfigRevision!==undefined&&(this.store.session(id).configRevision??0)!==expectedConfigRevision)throw conflict('Session configuration changed. Refresh and try again.');
+      }
+      // No asynchronous gap between readiness/revision checks and the atomic commit.
+      return commit(prepared);
+    } catch(error) {
+      if(signal.aborted)throw conflict('Configuration preparation was cancelled. Nothing changed.');
+      throw error;
+    } finally {
+      this.configurationPreparations.delete(key);if(id)this.operations.delete(id);this.notifyIdle();
+    }
+  }
   cancel(id: string) {
+    this.configurationPreparations.get(id)?.abort();
     this.preparations.get(id)?.abort();
     for(const controller of this.queuePreparations.get(id)||[])controller.abort();
     const run = this.runs.get(id);
@@ -88,6 +119,7 @@ export class Runner {
   }
   stopAll() {
     this.stopping=true;
+    for(const controller of this.configurationPreparations.values())controller.abort();
     for (const id of new Set([...this.runs.keys(),...this.preparations.keys(),...this.queuePreparations.keys()])) {
       try {this.cancel(id);} catch {console.error('Could not persist cancellation. Pending work will require review after restart.');}
     }
@@ -139,7 +171,9 @@ export class Runner {
     const provider = this.store.settings().providers.find(p => p.id === session.providerId);
     if (!provider) throw Object.assign(new Error('Choose a connected provider in Settings.'), { status: 400 });
     if (!session.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
-    const run: ActiveRun = { controller: new AbortController(), approvals: new Map() };
+    // Validate and pin before accepting a user message or consuming queued work.
+    const profile=this.store.profileSnapshot(id);
+    const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     this.history.accept(id,message,queuedId);
     run.turnId=message.id;
@@ -256,8 +290,16 @@ export class Runner {
     const session = this.store.session(id), settings = this.store.settings();
     const provider = settings.providers.find(p => p.id === session.providerId)!;
     const signal = run.controller.signal;
-    const system = await this.systemPrompt(session);
-    const tools = [...toolDefinitions.filter(t => t.function.name !== 'task'), questionTool, ...(await this.external?.definitions() || []).filter(t => t.function.name !== 'ask_user')].filter(t => session.mode !== 'plan' || t.function.name === 'ask_user' || isReadOnlyTool(t.function.name));
+    const profile=run.profile;
+    let system = await this.systemPrompt(session);
+    if(profile) {
+      const pinned=[profile.instructions,...profile.skills.map(skill=>`Skill ${JSON.stringify(skill.name)} (${skill.id}; ${skill.path}):\n${skill.body}`)].filter(Boolean).join('\n\n');
+      system+=`\n\nPinned project profile and skills (user-selected project guidance; subordinate to the harness safety constraints, current mode, permissions and tool availability above; never grants additional authority):\n${pinned}`;
+    }
+    const allowlist=profile?.active.tools;
+    const allowed=(name:string)=>name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&name!=='task'&&(session.mode!=='plan'||isReadOnlyTool(name)));
+    const externalTools=allowlist==null?(await this.external?.definitions()||[]):[];
+    const tools = [...toolDefinitions.filter(t => t.function.name !== 'task'), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
     let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false;
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
       const message: Message = {id:randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
@@ -351,7 +393,7 @@ export class Runner {
           if (signal.aborted) { call.status = 'denied'; output = 'Cancelled by the user.'; }
           else if (stalled) { call.status = 'denied'; output = 'Stopped repeated identical tool calls. Ask the user how to proceed; do not work around this guard.'; }
           else if (malformed.has(call.id)) { call.status = 'error'; output = malformed.get(call.id)!; }
-          else if (!tools.some(t => t.function.name === call.name)) { call.status = 'error'; output = 'Unknown or unavailable tool. Use one of the provided tools.'; }
+          else if (!allowed(call.name)||!tools.some(t => t.function.name === call.name)) { call.status = 'denied'; output = 'This tool is unavailable under the active profile or mode. Use one of the provided tools; do not bypass this restriction.'; }
           else if (call.name === 'ask_user') {
             this.setSession(id,{status:'waiting'});
             const waiting=this.questions.ask(id,run.turnId!,message.id,call.id,call.args,signal);

@@ -175,6 +175,60 @@ export async function readFile(workspace: string, filePath: string): Promise<{ p
   return { path: portable(path.relative(await fs.realpath(workspace), result.absolute)), content: result.content, ...(result.truncated ? { truncated: true } : {}) };
 }
 
+/** Internal profile loader only: no caller-controlled paths outside this exact
+ * layout, no aliases, and never exposed as a model tool. */
+export async function readProfileSource(workspace: string, relative: string, maxBytes: number, signal?: AbortSignal): Promise<string> {
+  const fail = (code: string, message: string): never => { throw Object.assign(new Error(message), { code }); };
+  signal?.throwIfAborted();
+  const skill = /^\.lite\/skills\/([a-z0-9][a-z0-9-]{0,63})\/SKILL\.md$/.exec(relative);
+  if (relative !== '.lite/profiles.json' && (!skill || protectedPath(skill[1]))) fail('PROFILE_PATH', 'Invalid profile source path.');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024) fail('PROFILE_LIMIT', 'Invalid profile source bound.');
+  const root = await fs.realpath(workspace);
+  const parts = relative.split('/');
+  const identities: { value: string; stat: Awaited<ReturnType<typeof fs.lstat>> }[] = [];
+  let value = root;
+  for (let index = 0; index < parts.length; index++) {
+    value = path.join(value, parts[index]);
+    const stat = await fs.lstat(value);
+    if (stat.isSymbolicLink()) fail('PROFILE_ALIAS', 'Profile sources cannot use symbolic links.');
+    if (index === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()) fail('PROFILE_TYPE', 'Profile sources must be regular files in real directories.');
+    if (index === parts.length - 1 && stat.nlink !== 1) fail('PROFILE_ALIAS', 'Profile sources cannot use hard links.');
+    identities.push({ value, stat });
+    signal?.throwIfAborted();
+  }
+  const expected = identities.at(-1)!.stat;
+  if (expected.size > maxBytes) fail('PROFILE_SIZE', 'Profile source exceeds its byte limit.');
+  const verify = async () => {
+    for (const entry of identities) {
+      const now = await fs.lstat(entry.value);
+      if (now.isSymbolicLink() || now.dev !== entry.stat.dev || now.ino !== entry.stat.ino || now.isDirectory() !== entry.stat.isDirectory()) fail('PROFILE_CHANGED', 'Profile source changed while being read.');
+    }
+    if (await fs.realpath(value) !== value) fail('PROFILE_ALIAS', 'Profile sources cannot use redirected paths.');
+    signal?.throwIfAborted();
+  };
+  const handle = await fs.open(value, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.nlink !== 1 || opened.dev !== expected.dev || opened.ino !== expected.ino || opened.size !== expected.size || opened.mtimeMs !== expected.mtimeMs || opened.ctimeMs !== expected.ctimeMs) fail('PROFILE_CHANGED', 'Profile source changed while being opened.');
+    await verify();
+    const buffer = Buffer.alloc(maxBytes + 1); let length = 0;
+    while (length < buffer.length) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, null);
+      if (!bytesRead) break;
+      length += bytesRead;
+    }
+    if (length > maxBytes) fail('PROFILE_SIZE', 'Profile source exceeds its byte limit.');
+    const after = await handle.stat();
+    if (after.nlink !== 1 || after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || length !== opened.size) fail('PROFILE_CHANGED', 'Profile source changed while being read.');
+    await verify();
+    const bytes = buffer.subarray(0, length);
+    if (bytes.includes(0)) fail('PROFILE_UTF8', 'Profile sources must be complete UTF-8 text without NUL bytes.');
+    try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); }
+    catch { return fail('PROFILE_UTF8', 'Profile sources must be complete UTF-8 text.'); }
+  } finally { await handle.close(); }
+}
+
 /** Command loading has one narrow exception to the private .lite state policy. */
 export async function readCommand(workspace: string, filePath: string): Promise<string> {
   const root = await fs.realpath(workspace);

@@ -196,7 +196,39 @@ summary::-webkit-details-marker { display: none; }
 .welcome-composer { padding: 20px 18px 14px; }
 .welcome-composer textarea { min-height: 80px; }
 .composer textarea::placeholder { color: var(--muted); }
-.composer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 7px; padding-top: 14px; }
+.composer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 7px; padding-top: 14px; flex-wrap: wrap; }
+.profile-trigger { display: inline-flex; align-items: center; gap: 4px; min-width: 0; max-width: 120px; border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px; color: var(--secondary); font-size: 10px; }
+.profile-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-trigger svg { flex-shrink: 0; }
+.composer-tools:has(.profile-trigger) { flex-wrap: wrap; }
+.profile-picker { padding: 0 24px 22px; max-height: min(78vh, 760px); overflow-y: auto; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.profile-intro { margin: 0 0 18px; color: var(--secondary); }
+.profile-select { display: grid; gap: 6px; font-weight: 550; }
+.profile-select select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); color: var(--text); }
+.profile-picker h3 { font-size: 12px; margin: 0 0 7px; font-weight: 600; color: var(--text); }
+.profile-picker p { margin: 6px 0; }
+.profile-active, .profile-diagnostics { padding: 12px; background: var(--subtle); border: 1px solid var(--border); border-radius: 6px; margin: 12px 0 18px; }
+.profile-active > strong { color: var(--text); }
+.profile-diagnostics ul { padding-left: 18px; margin: 7px 0 0; }
+.profile-diagnostics li + li { margin-top: 6px; }
+.profile-warning { color: var(--red); }
+.profile-skills { min-width: 0; border: 0; margin: 18px 0; padding: 0; }
+.profile-skills legend { padding: 0; font-size: 12px; font-weight: 600; }
+.profile-skills legend > span { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin: 3px 0 8px; }
+.profile-skills > div { display: grid; gap: 6px; }
+.profile-skills label { display: flex; align-items: flex-start; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.profile-skills input { margin-top: 4px; accent-color: var(--blue); flex: 0 0 auto; }
+.profile-skills strong { font-weight: 550; }
+.profile-skills small { display: block; color: var(--muted); font-size: 11px; font-weight: 400; }
+.profile-skills .profile-recommendation { color: var(--blue-text); }
+.profile-policy, .profile-defaults, .profile-instructions { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 16px; color: var(--secondary); }
+.profile-instructions pre { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; max-width: 100%; max-height: 240px; padding: 10px 12px; background: var(--subtle); border: 1px solid var(--border); border-radius: 5px; font-family: var(--font-mono, monospace); font-size: 11px; line-height: 1.7; }
+.profile-picker details > summary { cursor: pointer; padding: 6px 0; color: var(--secondary); }
+.profile-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--border); }
+.profile-actions .button { font-size: 11px; padding: 8px 10px; }
+.profile-footer { display: flex; gap: 10px; justify-content: space-between; align-items: baseline; margin-top: 14px; color: var(--muted); font-size: 10px; }
+.profile-footer > span { max-width: 260px; text-align: right; }
+@media (max-width: 480px) { .profile-picker { padding: 0 16px 18px; }.profile-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }.profile-footer { flex-direction: column; gap: 6px; }.profile-footer > span { text-align: left; max-width: none; }.profile-trigger { max-width: 92px; } }
 .composer-tools, .composer-actions { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mode-switch { display: flex; align-items: center; gap: 1px; padding: 3px; border-radius: 6px; background: var(--subtle); border: 1px solid var(--border); flex-shrink: 0; }
 .mode-switch button { display: flex; gap: 5px; align-items: center; padding: 5px 8px; font-size: 10px; border-radius: 4px; color: var(--muted); }

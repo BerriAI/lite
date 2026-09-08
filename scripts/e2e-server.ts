@@ -10,6 +10,7 @@ import { attachTerminals } from '../server/terminal.js';
 const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
 let providerRequests=0;
+const profileRequests:{model:string;messages:any[];tools:any[]}[]=[];
 const pendingSummaries=new Set<()=>void>();
 const mock=createServer(async(req,res)=>{
   if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'},{id:'budget-model',context_window:16384}]}));return;}
@@ -18,6 +19,7 @@ const mock=createServer(async(req,res)=>{
   providerRequests++;
   const lastUser=data.messages.filter((m:any)=>m.role==='user').at(-1)?.content||'';
   const prompt=typeof lastUser==='string'?lastUser:JSON.stringify(lastUser);
+  if(prompt.includes('PROFILE_BROWSER')){profileRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(profileRequests.length>30)profileRequests.shift();}
   if(prompt.includes('provider failure')){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
@@ -29,6 +31,8 @@ const mock=createServer(async(req,res)=>{
       if(res.destroyed)return;
     }
     if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('PROFILE_BROWSER forbidden write')&&data.messages.at(-1)?.role!=='tool'){
+    toolCall=true;emit({tool_calls:[{index:0,id:'profile-forbidden-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'profile-forbidden.txt',content:'This excluded tool must never execute.\n'})}}]});
   }else if(prompt.includes('ask fixture question')&&data.messages.at(-1)?.role!=='tool'){
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Which storage should this project use?',options:[{id:'sqlite',label:'SQLite',description:'A local database with no extra service.'},{id:'postgres',label:'PostgreSQL',description:'A separate database server.'}]})}}]});
   }else if(prompt.includes('ask fixture question')&&prompt.includes('then write')&&data.messages.at(-1)?.tool_call_id==='fixture-question'){
@@ -47,6 +51,7 @@ const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
 const{app,runner}=createApp({store});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
+app.get('/fixture/profiles',(_req,res)=>res.json({requests:profileRequests}));
 app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
 app.post('/fixture/summaries/release',(_req,res)=>{for(const release of [...pendingSummaries])release();res.json({ok:true});});
 const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);

@@ -1,4 +1,6 @@
 import type { HistoryState } from './history.js';
+import type { ActiveProfile } from './profiles.js';
+export type { ActiveProfile, ProfileChoice, ProfileCatalog, ProfileDetail } from './profiles.js';
 import type { ContextSnapshot } from './context.js';
 export type { ContextSnapshot } from './context.js';
 import type { QuestionRequest } from './questions.js';
@@ -12,7 +14,7 @@ export interface Provider { id: string; name: string; kind: ProviderKind; baseUr
 export interface Model { id: string; name: string; providerId: string; contextWindow?: number; }
 export interface Settings { providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; }
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
-export interface Session { id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string; }
+export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string; }
 export interface ToolCall { id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
 export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string; }

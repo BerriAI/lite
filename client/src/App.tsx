@@ -1,8 +1,10 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
-import { api, applyEvent, errorMessage, patch, post, query, useSessionDraft } from './api';
+import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft } from './api';
 import { Composer, type Selection } from './Composer';
+import { ProfilePicker } from './ProfilePicker';
+import type { ApplyProfileRequest, ProfileChoice } from '../../shared/profiles';
 import { Conversation } from './Conversation';
 import { QuestionCard, emptyQuestionDraft, type QuestionDraft } from './QuestionCard';
 import type { QuestionAnswer, QuestionRequest } from '../../shared/questions';
@@ -27,6 +29,11 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(readSessionHash);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [selection, setSelection] = useState<Selection>({ providerId: '', model: '', mode: 'build', permissionMode: 'ask' });
+  const configOperation = useRef(false);
+  const [configBusy, setConfigBusy] = useState(false);
+  const [newProfile, setNewProfile] = useState<{ workspace: string; choice: ProfileChoice } | null>(null);
+  const [profileDialog, setProfileDialog] = useState<{ id: string | null; workspace: string; revision: number; choice: ProfileChoice; selection: Selection; view: number } | null>(null);
+  const closeProfiles = useCallback(() => setProfileDialog(null), []);
   const { draft, notice: draftNotice, setText, setAttachments, clearSubmitted, prepareDelete } = useSessionDraft(activeId);
   const { text, attachments } = draft;
   const [queueBusy, setQueueBusy] = useState(false);
@@ -63,7 +70,7 @@ export default function App() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const importInput = useRef<HTMLInputElement>(null);
-  const pendingSession = useRef<string | null>(null);
+  const pendingSession = useRef<Session | null>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const currentId = useRef(activeId); currentId.current = activeId;
   const eventJournal = useRef<RunEvent[]>([]);
@@ -73,10 +80,17 @@ export default function App() {
   const detailRef = useRef(detail); detailRef.current = detail;
   const running = detail?.session.status === 'running' || detail?.session.status === 'waiting';
   const history = detail?.history;
-  const historyDisabled = running || busy || queueBusy || submissionBusy || historyBusy || sessionLoading;
+  const historyDisabled = running || busy || queueBusy || submissionBusy || historyBusy || configBusy || sessionLoading;
   const legacyUndo = history?.hasCheckpoints === false && !history.pendingRecovery;
-  const composerDisabled = busy || historyBusy || Boolean(history?.pendingRecovery);
-  const workspace = detail?.session.workspace ?? settings?.workspace ?? '';
+  const composerDisabled = busy || historyBusy || configBusy || Boolean(history?.pendingRecovery);
+  const selectionDisabled = historyDisabled || answering.size > 0 || Boolean(history?.pendingRecovery || (!activeId && pendingSession.current));
+  const workspace = detail?.session.workspace ?? (!activeId ? pendingSession.current?.workspace : undefined) ?? settings?.workspace ?? '';
+  const selectedProfile = activeId ? detail?.session.profile : newProfile?.workspace === workspace ? newProfile.choice : null;
+  const profileLabel = selectedProfile ? ('name' in selectedProfile && selectedProfile.name || selectedProfile.profileId || (selectedProfile.skillIds.length ? 'Skills only' : 'Default')) : 'Default';
+  useEffect(() => {
+    const session = detail?.session;
+    if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode });
+  }, [detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.configRevision, configBusy]);
   const provider = settings?.providers.find(p => p.id === selection.providerId);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -88,23 +102,26 @@ export default function App() {
     setSessions(r.sessions);
   }, []);
   const refreshDetail = useCallback(async (id: string) => {
+    const view = selectionRequest.current;
     const next = await api<SessionDetail>(`/sessions/${id}`);
-    if (currentId.current === id) {
+    if (currentId.current === id && selectionRequest.current === view) {
       const newer = eventJournal.current.filter(event => event.sessionId === id && (event.id ?? 0) > (next.lastEventId ?? 0));
       const reconciled = newer.reduce(applyEvent, next);
       if (reconciled.questions) reconciled.questions = reconciled.questions.filter(question => !resolvedQuestions.current.has(question.id));
-      setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) > (reconciled.lastEventId ?? 0) ? current : reconciled);
+      setDetail(current => current?.session.id === id
+        ? (current.lastEventId ?? 0) > (reconciled.lastEventId ?? 0) ? current : { ...reconciled, session: reconcileSession(current.session, reconciled.session) }
+        : reconciled);
       eventJournal.current = newer;
     }
     return next;
   }, []);
   const navigate = useCallback((id: string | null) => {
     window.history.pushState(null, '', id ? `#session/${id}` : window.location.pathname + window.location.search);
-    if (currentId.current !== id) { selectionRequest.current++; setDetail(null); }
+    if (currentId.current !== id) { selectionRequest.current++; setDetail(null); setProfileDialog(null); }
     currentId.current = id; setActiveId(id); setSidebarOpen(false); setSessionMenu(false); setError('');
   }, []);
   const newSession = useCallback(() => {
-    pendingSession.current = null;
+    pendingSession.current = null; setNewProfile(null); setProfileDialog(null); selectionRequest.current++;
     navigate(null); setDetail(null);
     const s = settingsRef.current;
     if (s) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode });
@@ -121,7 +138,7 @@ export default function App() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (settings) void refreshSessions().catch(e => setError(errorMessage(e))); }, [archived, refreshSessions, Boolean(settings)]);
   useEffect(() => {
-    function change() { const id = readSessionHash(); if (currentId.current !== id) { selectionRequest.current++; setDetail(null); } currentId.current = id; setActiveId(id); setError(''); }
+    function change() { const id = readSessionHash(); if (currentId.current !== id) { selectionRequest.current++; setDetail(null); setProfileDialog(null); } currentId.current = id; setActiveId(id); setError(''); }
     window.addEventListener('hashchange', change); window.addEventListener('popstate', change);
     return () => { window.removeEventListener('hashchange', change); window.removeEventListener('popstate', change); };
   }, []);
@@ -163,7 +180,7 @@ export default function App() {
     return () => { document.removeEventListener('keydown', trap); media.removeEventListener('change', update); previous?.focus(); };
   }, [sidebarOpen]);
   useEffect(() => {
-    if (!activeId) { setDetail(null); return; }
+    if (!activeId) { setDetail(null); setSessionLoading(false); return; }
     const id = activeId;
     let live = true, source: EventSource | undefined;
     let lastEventId = 0;
@@ -218,46 +235,96 @@ export default function App() {
     setBusy(true); setError('');
     try { await action(); } catch (e) { setError(errorMessage(e)); } finally { setBusy(false); }
   }
+  function configurationLocked() {
+    const current = detailRef.current;
+    return configOperation.current || busy || historyOperation.current || submissionOperation.current || queueOperation.current || answerOperations.current.size > 0 ||
+      current?.session.status === 'running' || current?.session.status === 'waiting' || Boolean(current?.history?.pendingRecovery) ||
+      (!currentId.current && Boolean(pendingSession.current));
+  }
+  function openProfiles() {
+    if (selectionDisabled || configurationLocked()) return;
+    const current = detailRef.current?.session;
+    setProfileDialog({ id: activeId, workspace, revision: current?.configRevision ?? 0,
+      choice: selectedProfile ? { profileId: selectedProfile.profileId, skillIds: [...selectedProfile.skillIds] } : { profileId: null, skillIds: [] },
+      selection: { ...selection }, view: selectionRequest.current });
+  }
+  async function applyProfile(choice: ProfileChoice, defaults?: ApplyProfileRequest['selection']) {
+    const dialog = profileDialog;
+    if (!dialog || configurationLocked() || currentId.current !== dialog.id || selectionRequest.current !== dialog.view) throw new Error('Session changed or another operation is pending.');
+    if (!dialog.id) {
+      setNewProfile(choice.profileId || choice.skillIds.length ? { workspace: dialog.workspace, choice } : null);
+      if (defaults) setSelection(value => ({ ...value, ...defaults }));
+      setProfileDialog(null); return;
+    }
+    const id = dialog.id, stillHere = () => currentId.current === id && selectionRequest.current === dialog.view;
+    configOperation.current = true; setConfigBusy(true); setError('');
+    let failure = '', accepted = false;
+    const cursor = detailRef.current?.lastEventId ?? 0;
+    try {
+      const result = await post<{ session: Session; queue: QueueState }>(`/sessions/${id}/profile`, { expectedConfigRevision: dialog.revision, choice, ...(defaults ? { selection: defaults } : {}) });
+      accepted = true;
+      if (stillHere()) setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) <= cursor
+        ? { ...current, session: reconcileSession(current.session, result.session), queue: result.queue } : current);
+    } catch (e) { failure = errorMessage(e); }
+    finally {
+      try { await refreshDetail(id); } catch (e) { failure += `${failure ? ' ' : ''}Could not refresh the session: ${errorMessage(e)}. Reload before continuing.`; }
+      if (stillHere() && accepted) {
+        setProfileDialog(null);
+        setToast('Project configuration updated. Queued messages remain paused.');
+        if (failure) setError(failure);
+      }
+      void refreshSessions().catch(() => {});
+      configOperation.current = false; setConfigBusy(false);
+    }
+    if (failure && !accepted && stillHere()) { setError(failure); throw new Error(failure); }
+  }
   async function changeSelection(next: Selection) {
-    if (running || historyOperation.current || submissionOperation.current || detailRef.current?.history?.pendingRecovery) return;
+    if (configurationLocked()) return;
     const previous = selection, id = activeId, request = ++selectionRequest.current;
     setSelection(next);
-    if (id) {
-      try {
-        const session = await patch<Session>(`/sessions/${id}`, next);
-        if (currentId.current === id && selectionRequest.current === request) setDetail(d => d?.session.id === id ? { ...d, session } : d);
-      } catch (e) {
-        if (currentId.current === id && selectionRequest.current === request) { setSelection(previous); setError(errorMessage(e)); }
-      }
+    if (!id) return;
+    configOperation.current = true; setConfigBusy(true); setError('');
+    const stillHere = () => currentId.current === id && selectionRequest.current === request;
+    const cursor = detailRef.current?.lastEventId ?? 0;
+    try {
+      const session = await patch<Session>(`/sessions/${id}`, { ...next, expectedConfigRevision: detailRef.current?.session.configRevision ?? 0 });
+      if (stillHere()) setDetail(d => d?.session.id === id && (d.lastEventId ?? 0) <= cursor ? { ...d, session: reconcileSession(d.session, session) } : d);
+    } catch (e) {
+      if (stillHere()) { setSelection(previous); setError(errorMessage(e)); }
+    } finally {
+      // A conflict may have changed configuration in another tab. Refresh, but never retry implicitly.
+      await refreshDetail(id).catch(e => { if (stillHere()) setError(`Could not refresh session configuration: ${errorMessage(e)}. Reload before continuing.`); });
+      configOperation.current = false; setConfigBusy(false);
     }
   }
   async function send(content: string, attachments: Attachment[]) {
-    if (submissionOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery) return false;
+    if (submissionOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery) return false;
     submissionOperation.current = true; setSubmissionBusy(true); setError('');
-    let id = activeId ?? pendingSession.current;
+    const view = selectionRequest.current, stillHere = () => currentId.current === activeId && selectionRequest.current === view;
+    let id = activeId ?? pendingSession.current?.id;
     try {
       if (!id) {
-        const session = await post<Session>('/sessions', { ...selection, workspace, title: content.slice(0, 70) });
-        id = session.id; pendingSession.current = id;
+        const profile = newProfile?.workspace === workspace ? newProfile.choice : undefined;
+        const session = await post<Session>('/sessions', { ...selection, workspace, title: content.slice(0, 70), ...(profile ? { profile } : {}) });
+        id = session.id;
+        if (stillHere()) pendingSession.current = session;
         setSessions(list => [session, ...list]);
-      } else if (!activeId) {
-        await patch(`/sessions/${id}`, selection);
       }
       await post(`/sessions/${id}/messages`, { content, attachments });
       clearSubmitted(draft);
-      pendingSession.current = null;
-      if (!activeId && currentId.current === null) navigate(id);
-      else if (currentId.current === id) void refreshDetail(id).catch(e => setError(`Message sent, but refreshing the session failed: ${errorMessage(e)}`));
+      if (pendingSession.current?.id === id) pendingSession.current = null;
+      if (!activeId && stillHere()) { setNewProfile(null); navigate(id); }
+      else if (currentId.current === id && stillHere()) void refreshDetail(id).catch(e => setError(`Message sent, but refreshing the session failed: ${errorMessage(e)}`));
       return true;
     } catch (e) {
       // Keep the same composer mounted after a failed request so attachments and draft survive.
-      if (currentId.current === activeId) setError(errorMessage(e));
+      if (stillHere()) setError(errorMessage(e));
       return false;
     } finally { submissionOperation.current = false; setSubmissionBusy(false); }
   }
   async function queueMessage(content: string, attachments: Attachment[]) {
     const id = activeId;
-    if (!id || queueOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery) return false;
+    if (!id || queueOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery) return false;
     queueOperation.current = true; setQueueBusy(true); setError('');
     const cursor = detail?.lastEventId ?? 0;
     try {
@@ -280,7 +347,7 @@ export default function App() {
   }
   async function queueAction(action: 'pause' | 'resume' | 'remove', queueId?: string) {
     const id = activeId;
-    if (!id || queueOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery || (action === 'remove' && !queueId)) return;
+    if (!id || queueOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery || (action === 'remove' && !queueId)) return;
     queueOperation.current = true; setQueueBusy(true); setError('');
     const cursor = detail?.lastEventId ?? 0;
     try {
@@ -339,7 +406,10 @@ export default function App() {
   }
   function saveSettings(next: SettingsType) {
     setSettings(next); setRefreshKey(v => v + 1);
-    if (!activeId) setSelection(s => ({ ...s, providerId: next.defaultProvider, model: next.defaultModel, permissionMode: next.permissionMode }));
+    if (!activeId && !pendingSession.current && !submissionOperation.current) {
+      setSelection(s => ({ ...s, providerId: next.defaultProvider, model: next.defaultModel, permissionMode: next.permissionMode }));
+      if (next.workspace !== settings?.workspace) { setNewProfile(null); setProfileDialog(null); selectionRequest.current++; }
+    }
   }
   function askDelete(session: Session) {
     const clearDeletedDraft = prepareDelete(session.id);
@@ -352,7 +422,7 @@ export default function App() {
     } });
   }
   async function moveHistory(id: string, action: 'undo' | 'redo' | 'recover' | 'legacy', checkpointId?: string) {
-    if (currentId.current !== id || historyOperation.current || submissionOperation.current || queueOperation.current || busy) return;
+    if (currentId.current !== id || configOperation.current || historyOperation.current || submissionOperation.current || queueOperation.current || busy) return;
     const current = detailRef.current, state = current?.history;
     if (current?.session.id !== id || current.session.status === 'running' || current.session.status === 'waiting') return;
     if (action === 'legacy' ? state?.hasCheckpoints !== false || state.pendingRecovery
@@ -442,10 +512,10 @@ export default function App() {
       <div className="main-panels"><div className={`main-stage ${!activeId ? 'welcome-stage' : ''}`}>
         {loading ? <div className="app-loading"><Logo /><SpeedRail active /><p>Opening your workspace…</p></div> : !settings ? <EmptyState icon={<Terminal size={30} />} title="Let’s get connected.">The local server is not available. Check that Lite is running, then retry the connection.<button className="button primary" onClick={() => void load()}>Try again</button></EmptyState> : activeId ? <>
           {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
+          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
-          <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} onSend={send} onCancel={() => {}} running={false} disabled={busy} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>
+          <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={send} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>
           <div className="suggestions">{suggestions.map(({ Icon, label, description, prompt }) => <button key={label} onClick={() => { setText(prompt); document.getElementById('message-input')?.focus(); }}><span className="suggestion-icon"><Icon size={17} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight className="suggestion-arrow" size={14} /></button>)}</div>
           {(!provider?.configured && provider?.baseUrl && !/localhost|127\.0\.0\.1/.test(provider.baseUrl)) && <button className="setup-hint" onClick={() => setSettingsOpen(true)}><Shield size={13} />Connect your provider to get started<ArrowRight size={13} /></button>}
           <div className="welcome-footnote"><span className="mini-speed"><i /><i /><i /></span>Powered by your models. Grounded in your workspace.</div>
@@ -453,6 +523,7 @@ export default function App() {
       </div>{workspaceOpen && settings && <Workspace workspace={workspace} sessionId={activeId ?? undefined} todos={detail?.todos ?? []} refreshKey={refreshKey} onClose={() => setWorkspaceOpen(false)} onUndo={legacyUndo ? () => askHistory('legacy') : undefined} running={historyDisabled} />}</div>
     </main>
     <input type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
+    {profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {settingsOpen && settings && <Settings settings={settings} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
     {rename && <Modal title="Rename session" onClose={closeRename}><form className="rename-form" onSubmit={e => { e.preventDefault(); void act(async () => { const session = await patch<Session>(`/sessions/${rename.id}`, { title: renameValue.trim() }); setSessions(list => list.map(s => s.id === session.id ? session : s)); if (activeId === session.id) setDetail(d => d ? { ...d, session } : d); setRename(null); }); }}><label>Session name<input autoFocus maxLength={160} value={renameValue} onChange={e => setRenameValue(e.target.value)} /></label><div className="form-actions"><button className="button secondary" type="button" onClick={closeRename}>Cancel</button><button className="button primary" disabled={!renameValue.trim() || busy}>Save name</button></div></form></Modal>}

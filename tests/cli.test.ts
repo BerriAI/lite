@@ -3,11 +3,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { spawn as spawnPty, type IPty } from 'node-pty';
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
+import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Message, RunEvent, Session, SessionDetail } from '../shared/types';
 import type { QuestionAnswer, QuestionRequest } from '../shared/questions';
+import type { ProfileCatalog, ProfileDetail } from '../shared/profiles';
 
 const cli = fileURLToPath(new URL('../bin/lite.mjs', import.meta.url));
 const fixtureEntry = fileURLToPath(new URL('./fixtures/cli-server.ts', import.meta.url));
@@ -58,6 +60,7 @@ function events(result: Result): RunEvent[] {
 describe('spawned lite executable against a real local provider', () => {
   let workspace: string, base: string, fixture: Process;
   const children = new Set<Process>();
+  const gateways = new Set<HttpServer>();
   const terminals = new Set<{ pty: IPty; exited: () => boolean; result: Promise<Result> }>();
   beforeEach(async () => {
     workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-cli-')));
@@ -82,6 +85,8 @@ describe('spawned lite executable against a real local provider', () => {
       await terminal.result.catch(() => {});
     }
     terminals.clear();
+    for (const gateway of gateways) { gateway.closeAllConnections(); await new Promise<void>(resolve => gateway.close(() => resolve())); }
+    gateways.clear();
     if (fixture) {
       fixture.child.kill('SIGTERM');
       const timer = setTimeout(() => fixture.child.kill('SIGKILL'), 4000);
@@ -138,10 +143,38 @@ describe('spawned lite executable against a real local provider', () => {
     return (await (await fetch(`${base}/fixture/requests`)).json()).requests;
   }
 
+  async function gateway(options: { catalog?: (value: any) => any | Promise<any>; beforeCreate?: () => Promise<void> } = {}) {
+    const captured: { path: string; method: string; body?: any }[] = [];
+    const server = createHttpServer(async (req, res) => {
+      const controller = new AbortController(); res.on('close', () => controller.abort());
+      try {
+        const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const body = chunks.length ? Buffer.concat(chunks).toString() : undefined;
+        captured.push({ path: req.url!, method: req.method!, ...(body ? { body: JSON.parse(body) } : {}) });
+        if (req.url === '/api/sessions' && req.method === 'POST') await options.beforeCreate?.();
+        const upstream = await fetch(base + req.url, { method: req.method, headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal });
+        if (req.url?.startsWith('/api/profiles?') && options.catalog) {
+          const catalog = await options.catalog(await upstream.json());
+          res.writeHead(upstream.status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(catalog)); return;
+        }
+        res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') || 'application/json' });
+        if (upstream.body) {
+          const reader = upstream.body.getReader();
+          try { for (;;) { const { done, value } = await reader.read(); if (done) break; res.write(value); } }
+          finally { reader.releaseLock(); }
+        }
+        res.end();
+      } catch { if (!res.destroyed && !res.writableEnded) { if (!res.headersSent) res.writeHead(502); res.end(); } }
+    });
+    gateways.add(server);
+    const url = await new Promise<string>(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
+    return { url, captured };
+  }
+
   it.each(['help', '--help', '-h'])('prints %s without connecting or creating a session', async command => {
     const result = await run([command], { LITE_URL: 'http://127.0.0.1:1' }, false);
     expect(result.code).toBe(0); expect(result.stderr).toBe('');
-    for (const usage of ['lite run', 'lite sessions', 'lite models', 'lite export', '--auto', 'not a sandbox']) expect(result.stdout).toContain(usage);
+    for (const usage of ['lite run', 'lite sessions', 'lite models', 'lite profiles', 'lite export', '--profile', '--skills', '--build', 'NONE', '--auto', 'not a sandbox']) expect(result.stdout).toContain(usage);
     expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]);
     expect(await requests()).toEqual([]);
   });
@@ -155,6 +188,201 @@ describe('spawned lite executable against a real local provider', () => {
     expect(alternate.stdout.trim().split('\n').sort()).toEqual(['cli-alternate  (alternate)', 'cli-default  (alternate)']);
     const override = await run(['models'], { LITE_URL: 'http://127.0.0.1:1' });
     expect(override.code).toBe(0); expect(override.stdout).toContain('(fixture)');
+  });
+
+  async function projectProfiles(root = workspace) {
+    const manifest = {
+      version: 1,
+      profiles: [
+        { id: 'review', name: 'Careful Review', description: 'Review the selected project.', instructions: 'PROFILE_REVIEW_PRIVATE_BODY', tools: ['read_file', 'grep'], defaultModel: { providerId: 'alternate', model: 'cli-alternate' }, defaultMode: 'plan', skills: ['testing'] },
+        { id: 'writer', name: 'Explicit Writer', instructions: 'PROFILE_WRITER_PRIVATE_BODY', tools: ['read_file', 'write_file'], defaultMode: 'build' },
+      ],
+      skills: [
+        { id: 'testing', name: 'Testing', description: 'Check useful cases.' },
+        { id: 'style', name: 'Style', description: 'Keep edits focused.' },
+      ],
+    };
+    for (const id of ['testing', 'style']) {
+      await mkdir(join(root, '.lite', 'skills', id), { recursive: true });
+      await writeFile(join(root, '.lite', 'skills', id, 'SKILL.md'), `SKILL_${id.toUpperCase()}_PRIVATE_BODY\n`);
+    }
+    await writeFile(join(root, '.lite', 'profiles.json'), JSON.stringify(manifest));
+    return manifest;
+  }
+
+  it('lists project profile metadata and skills without activation or provider requests', async () => {
+    await projectProfiles();
+    const proxy = await gateway();
+    const result = await run(['profiles', '--url', proxy.url], {}, false);
+    expect(result.code).toBe(0); expect(result.stderr).toBe('');
+    for (const text of [workspace, 'Careful Review', 'plan', 'alternate/cli-alternate', 'Recommended only (not selected): testing', 'Testing', 'Style', 'never grant tool approval']) expect(result.stdout).toContain(text);
+    expect(result.stdout).not.toContain('PRIVATE_BODY');
+    expect(proxy.captured).toEqual([{ method: 'GET', path: `/api/profiles?workspace=${encodeURIComponent(workspace)}` }]);
+    const json = await run(['profiles', '--json'], { LITE_URL: base }, false);
+    expect(json.code).toBe(0); expect(json.stderr).toBe('');
+    const catalog: ProfileCatalog = JSON.parse(json.stdout);
+    expect(catalog).toMatchObject({ workspace, profiles: [{ id: 'review', skills: ['testing'] }, { id: 'writer' }], skills: [{ id: 'testing' }, { id: 'style' }], diagnostics: [] });
+    expect(catalog.revision).toMatch(/^[a-f0-9]{64}$/);
+    expect(json.stdout.trim().split('\n')).toHaveLength(1);
+    expect(json.stdout).not.toContain('PRIVATE_BODY');
+    expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]);
+    expect(await requests()).toEqual([]);
+  });
+
+  it('uses a canonical explicit workspace and reports missing-source diagnostics without activation', async () => {
+    const other = join(workspace, 'other project');
+    await projectProfiles(other);
+    await rm(join(other, '.lite', 'skills', 'style', 'SKILL.md'));
+    const result = await run(['profiles', '--workspace', './other project/../other project', '--json']);
+    expect(result.code).toBe(0); expect(result.stderr).toBe('');
+    const catalog = JSON.parse(result.stdout);
+    expect(catalog.workspace).toBe(await realpath(other));
+    expect(catalog.skills.map((skill: { id: string }) => skill.id)).toEqual(['testing']);
+    expect(catalog.diagnostics).toEqual([{ path: '.lite/skills/style/SKILL.md', code: 'missing', message: 'Profile source is missing.' }]);
+    const text = await run(['profiles', '--workspace', other]);
+    expect(text.code).toBe(0); expect(text.stderr).toContain('Profile catalog: .lite/skills/style/SKILL.md (missing)');
+    expect(text.stdout).not.toContain('Profile source is missing');
+    expect(await requests()).toEqual([]);
+  });
+
+  it('uses profile pair and Plan defaults, sends canonical revision, and never activates recommended skills', async () => {
+    await projectProfiles();
+    const catalog = await api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(workspace)}`), proxy = await gateway();
+    const result = await run(['run', 'Profile defaults', '--profile', 'review', '--json', '--url', proxy.url], {}, false);
+    expect(result.code, result.stderr).toBe(0);
+    const input = proxy.captured.find(request => request.path === '/api/sessions' && request.method === 'POST')!.body;
+    expect(input).toEqual({ workspace, permissionMode: 'ask', profile: { profileId: 'review', skillIds: [], catalogRevision: catalog.revision } });
+    const detail = await api<SessionDetail>(`/sessions/${sessionId(result)}`);
+    expect(detail.session).toMatchObject({ model: 'cli-alternate', providerId: 'alternate', mode: 'plan', permissionMode: 'ask', profile: { profileId: 'review', skillIds: [] } });
+    const pinned = await api<ProfileDetail>(`/sessions/${detail.session.id}/profile`);
+    expect(pinned.pinned?.instructions).toBe('PROFILE_REVIEW_PRIVATE_BODY'); expect(pinned.pinned?.skills).toEqual([]);
+    const calls = await requests(); expect(calls).toHaveLength(1); expect(calls[0].model).toBe('cli-alternate');
+    const payload = JSON.stringify(calls[0]);
+    expect(payload).toContain('PROFILE_REVIEW_PRIVATE_BODY'); expect(payload).not.toContain('SKILL_TESTING_PRIVATE_BODY');
+    expect(calls[0].tools?.map(tool => tool.function.name)).toContain('read_file');
+    expect(calls[0].tools?.map(tool => tool.function.name)).not.toContain('write_file');
+    expect(events(result).at(-1)).toMatchObject({ type: 'done', data: { status: 'idle' } });
+  });
+
+  it('activates only explicitly selected skills in the requested order with profile defaults', async () => {
+    await projectProfiles();
+    const result = await run(['run', 'Selected project skills', '--profile', 'review', '--skills', 'style,testing', '--build', '--provider', 'fixture', '--model', 'cli-default', '--json']);
+    expect(result.code, result.stderr).toBe(0);
+    const detail = await api<SessionDetail>(`/sessions/${sessionId(result)}`);
+    expect(detail.session).toMatchObject({ providerId: 'fixture', model: 'cli-default', mode: 'build', permissionMode: 'ask', profile: { profileId: 'review', skillIds: ['style', 'testing'] } });
+    const pinned = await api<ProfileDetail>(`/sessions/${detail.session.id}/profile`);
+    expect(pinned.pinned?.skills.map(skill => skill.id)).toEqual(['style', 'testing']);
+    const payload = JSON.stringify((await requests())[0]);
+    expect(payload.indexOf('SKILL_STYLE_PRIVATE_BODY')).toBeLessThan(payload.indexOf('SKILL_TESTING_PRIVATE_BODY'));
+    expect(events(result).some(event => event.type === 'permission')).toBe(false);
+  });
+
+  it('supports skills without a profile and keeps unselected bodies out of the provider request', async () => {
+    await projectProfiles(); const proxy = await gateway();
+    const result = await run(['run', 'Skills only', '--skills', 'style', '--url', proxy.url], {}, false);
+    expect(result.code, result.stderr).toBe(0);
+    const input = proxy.captured.find(request => request.path === '/api/sessions')!.body;
+    expect(input.profile).toMatchObject({ profileId: null, skillIds: ['style'] });
+    for (const field of ['model', 'providerId', 'mode']) expect(input).not.toHaveProperty(field);
+    const detail = await api<SessionDetail>(`/sessions/${sessionId(result)}`);
+    expect(detail.session).toMatchObject({ providerId: 'fixture', model: 'cli-default', mode: 'build', permissionMode: 'ask', profile: { profileId: null, skillIds: ['style'], tools: null } });
+    const payload = JSON.stringify((await requests())[0]);
+    expect(payload).toContain('SKILL_STYLE_PRIVATE_BODY'); expect(payload).not.toContain('SKILL_TESTING_PRIVATE_BODY'); expect(payload).not.toContain('PROFILE_REVIEW_PRIVATE_BODY');
+  });
+
+  it.each([{ flags: [] }, { flags: ['--profile', 'review'] }])('supports explicit --skills none without recommendations ($flags)', async ({ flags }) => {
+    await projectProfiles();
+    const result = await run(['run', 'No skills selected', '--skills', 'none', ...flags]);
+    expect(result.code, result.stderr).toBe(0);
+    const pinned = await api<ProfileDetail>(`/sessions/${sessionId(result)}/profile`);
+    expect(pinned.active?.skillIds ?? []).toEqual([]);
+    expect(pinned.pinned?.skills ?? []).toEqual([]);
+    const payload = JSON.stringify((await requests())[0]); expect(payload).not.toContain('SKILL_TESTING_PRIVATE_BODY'); expect(payload).not.toContain('SKILL_STYLE_PRIVATE_BODY');
+  });
+
+  it('keeps unprofiled execution compatible without fetching or activating project configuration', async () => {
+    await projectProfiles(); const proxy = await gateway();
+    const result = await run(['run', 'No profile flags', '--url', proxy.url], {}, false);
+    expect(result.code, result.stderr).toBe(0);
+    expect(proxy.captured.some(request => request.path.startsWith('/api/profiles'))).toBe(false);
+    const input = proxy.captured.find(request => request.path === '/api/sessions')!.body;
+    expect(input).toEqual({ workspace, mode: 'build', permissionMode: 'ask' });
+    const pinned = await api<ProfileDetail>(`/sessions/${sessionId(result)}/profile`); expect(pinned.active).toBeNull();
+    expect(JSON.stringify((await requests())[0])).not.toContain('PRIVATE_BODY');
+  });
+
+  it.each([['--profile', 'unknown'], ['--skills', 'unknown']])('rejects an unknown explicit project choice before session creation (%j)', async (...flags) => {
+    await projectProfiles(); const proxy = await gateway();
+    const result = await run(['run', 'Reject unknown', ...flags, '--json', '--url', proxy.url], {}, false);
+    expect(result.code).toBe(1); expect(result.stdout).toBe(''); expect(result.stderr).toContain('Unknown project');
+    expect(proxy.captured).toHaveLength(1);
+    expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]); expect(await requests()).toEqual([]);
+  });
+
+  it('refuses a stale catalog revision without retrying, accepting a message, or calling a provider', async () => {
+    const manifest = await projectProfiles();
+    const proxy = await gateway({ beforeCreate: async () => {
+      manifest.profiles[0].instructions = 'CHANGED_AFTER_CATALOG';
+      await writeFile(join(workspace, '.lite', 'profiles.json'), JSON.stringify(manifest));
+    } });
+    const result = await run(['run', 'Stale selection', '--profile', 'review', '--json', '--url', proxy.url], {}, false);
+    expect(result.code).toBe(1); expect(result.stdout).toBe(''); expect(result.stderr).toContain('Project profiles changed');
+    expect(proxy.captured.map(request => request.method)).toEqual(['GET', 'POST']);
+    expect(proxy.captured[1].body.profile.catalogRevision).toMatch(/^[a-f0-9]{64}$/);
+    expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]); expect(await requests()).toEqual([]);
+  });
+
+  it.each([
+    { name: 'null', mutate: () => null },
+    { name: 'duplicate profile IDs', mutate: (value: any) => ({ ...value, profiles: [value.profiles[0], value.profiles[0]] }) },
+    { name: 'duplicate skill IDs', mutate: (value: any) => ({ ...value, skills: [value.skills[0], value.skills[0]] }) },
+    { name: 'too many profiles', mutate: (value: any) => ({ ...value, profiles: Array.from({ length: 33 }, (_, index) => ({ ...value.profiles[0], id: `profile-${index}` })) }) },
+    { name: 'too many skills', mutate: (value: any) => ({ ...value, skills: Array.from({ length: 65 }, (_, index) => ({ ...value.skills[0], id: `skill-${index}` })) }) },
+    { name: 'bad revision', mutate: (value: any) => ({ ...value, revision: 'old' }) },
+    { name: 'bad recommendations', mutate: (value: any) => ({ ...value, profiles: [{ ...value.profiles[0], skills: 'testing' }] }) },
+    { name: 'bad diagnostics', mutate: (value: any) => ({ ...value, diagnostics: [null] }) },
+  ])('rejects malformed server catalogs ($name) before using any selection', async ({ mutate }) => {
+    await projectProfiles(); const proxy = await gateway({ catalog: mutate });
+    const result = await run(['run', 'Bad catalog', '--profile', 'review', '--json', '--url', proxy.url], {}, false);
+    expect(result.code).toBe(1); expect(result.stdout).toBe(''); expect(result.stderr).toMatch(/invalid.*(catalog|IDs)/);
+    expect(proxy.captured).toHaveLength(1); expect(await requests()).toEqual([]);
+  });
+
+  it('escapes configuration-controlled terminal text while preserving catalog JSON and JSONL purity', async () => {
+    await projectProfiles();
+    const unsafe = `text${String.fromCharCode(27)}[2J${String.fromCharCode(13)}spoof${String.fromCharCode(0x202e)}${String.fromCharCode(0x200b)}`;
+    const proxy = await gateway({ catalog: value => ({ ...value,
+      profiles: [{ ...value.profiles[0], name: unsafe, description: unsafe }],
+      skills: [{ ...value.skills[0], name: unsafe, description: unsafe }],
+      diagnostics: [{ path: unsafe, code: unsafe, message: unsafe }],
+    }) });
+    const text = await run(['profiles', '--url', proxy.url], {}, false);
+    expect(text.code).toBe(0);
+    for (const output of [text.stdout, text.stderr]) {
+      for (const code of [27, 13, 0x202e, 0x200b]) expect(output).not.toContain(String.fromCharCode(code));
+      for (const escaped of ['\\u001b', '\\u000d', '\\u202e', '\\u200b']) expect(output).toContain(escaped);
+    }
+    const json = await run(['profiles', '--json', '--url', proxy.url], {}, false);
+    expect(json.code).toBe(0); expect(json.stderr).toBe(''); expect(JSON.parse(json.stdout).profiles[0].name).toBe(unsafe);
+    const result = await run(['run', 'Catalog diagnostic JSON', '--profile', 'review', '--json', '--url', proxy.url], {}, false);
+    expect(result.code, result.stderr).toBe(0); expect(events(result).at(-1)?.type).toBe('done');
+    expect(result.stderr).toContain('Profile catalog: text\\u001b'); expect(result.stdout).not.toContain('Profile catalog:');
+  });
+
+  it.each([
+    { flags: [], allowed: false, mode: 'build', permission: 'ask' },
+    { flags: ['--auto'], allowed: true, mode: 'build', permission: 'auto' },
+    { flags: ['--auto', '--plan'], allowed: false, mode: 'plan', permission: 'auto' },
+  ])('never treats a profile as tool approval ($permission/$mode)', async ({ flags, allowed, mode, permission }) => {
+    await projectProfiles();
+    const result = await run(['run', 'write-fixture project', '--profile', 'writer', '--skills', 'testing', '--json', ...flags]);
+    expect(result.code, result.stderr).toBe(0);
+    const detail = await api<SessionDetail>(`/sessions/${sessionId(result)}`);
+    expect(detail.session).toMatchObject({ mode, permissionMode: permission });
+    const calls = detail.messages.flatMap(message => message.toolCalls ?? []); expect(calls).toHaveLength(1);
+    if (allowed) { expect(calls[0].status).toBe('completed'); expect(await readFile(join(workspace, 'cli-output.txt'), 'utf8')).toBe('Written by the CLI fixture.\n'); }
+    else { expect(['denied', 'error']).toContain(calls[0].status); await expect(readFile(join(workspace, 'cli-output.txt'))).rejects.toMatchObject({ code: 'ENOENT' }); }
+    expect(events(result).filter(event => event.type === 'permission')).toHaveLength(permission === 'ask' ? 1 : 0);
   });
 
   it('lists only recent sessions and uses the API-saved title and status', async () => {
@@ -317,6 +545,32 @@ describe('spawned lite executable against a real local provider', () => {
     { args: ['run', 'Hello', '--model'], message: 'requires a value' },
     { args: ['run', 'Hello', '--provider', '--auto'], message: 'requires a value' },
     { args: ['run', 'Hello', '--session'], message: 'requires a value' },
+    { args: ['run', 'Hello', '--profile'], message: 'requires a value' },
+    { args: ['run', 'Hello', '--skills'], message: 'requires a value' },
+    { args: ['run', 'Hello', '--profile', 'review', '--profile', 'other'], message: 'Duplicate option' },
+    { args: ['run', 'Hello', '--skills', 'example', '--skills', 'other'], message: 'Duplicate option' },
+    { args: ['run', 'Hello', '--plan', '--build'], message: '--plan and --build cannot be combined' },
+    { args: ['profiles', 'unexpected'], message: 'Unexpected argument' },
+    { args: ['profiles', '--profile', 'review'], message: 'not supported' },
+    { args: ['run', 'Hello', '--profile', ' '], message: '--profile requires' },
+    { args: ['run', 'Hello', '--profile', '../review'], message: '--profile requires' },
+    { args: ['run', 'Hello', '--profile', 'Uppercase'], message: '--profile requires' },
+    { args: ['run', 'Hello', '--profile', 'x'.repeat(65)], message: '--profile requires' },
+    { args: ['run', 'Hello', '--skills', ' '], message: '--skills requires' },
+    { args: ['run', 'Hello', '--skills', ',example'], message: '--skills requires' },
+    { args: ['run', 'Hello', '--skills', 'example,'], message: '--skills requires' },
+    { args: ['run', 'Hello', '--skills', 'example,,other'], message: '--skills requires' },
+    { args: ['run', 'Hello', '--skills', 'example, other'], message: '--skills requires' },
+    { args: ['run', 'Hello', '--skills', 'example,example'], message: 'duplicate IDs' },
+    { args: ['run', 'Hello', '--skills', 'none,example'], message: 'cannot be combined' },
+    { args: ['run', 'Hello', '--skills', Array.from({ length: 9 }, (_, index) => `skill-${index}`).join(',')], message: 'up to 8' },
+    { args: ['run', 'Hello', '--skills', 'x'.repeat(65)], message: '--skills requires' },
+    { args: ['run', 'Hello', '--profile', 'review', '--provider', 'alternate'], message: 'both --provider and --model' },
+    { args: ['run', 'Hello', '--profile', 'review', '--model', 'cli-alternate'], message: 'both --provider and --model' },
+    { args: ['run', 'Hello', '--skills', 'example', '--model', 'cli-alternate'], message: 'both --provider and --model' },
+    { args: ['run', 'Hello', '--profile', 'review', '--provider', ' ', '--model', 'cli-default'], message: 'must both be nonblank' },
+    { args: ['run', 'Hello', '--profile', 'review', '--provider', 'fixture', '--model', ' '], message: 'must both be nonblank' },
+    { args: ['profiles', '--workspace', ' '], message: 'nonblank path' },
     { args: ['run', 'Hello', '--unknown'], message: 'Unknown option' },
     { args: ['run', 'Hello', 'extra argument'], message: 'Usage: lite run' },
     { args: ['models', '--auto'], message: 'not supported' },
@@ -331,7 +585,7 @@ describe('spawned lite executable against a real local provider', () => {
     expect(await requests()).toEqual([]);
   });
 
-  it.each([['--plan'], ['--auto'], ['--model', 'cli-alternate'], ['--provider', 'alternate']])('rejects silently ignored session overrides: %s', async (...flags) => {
+  it.each([['--plan'], ['--build'], ['--auto'], ['--model', 'cli-alternate'], ['--provider', 'alternate'], ['--profile', 'review'], ['--skills', 'example']])('rejects silently ignored session overrides: %s', async (...flags) => {
     const session = await api<Session>('/sessions', { title: 'Existing settings', mode: 'build', permissionMode: 'ask' });
     const result = await run(['run', 'Do not silently ignore my options', '--session', session.id, ...flags]);
     expect(result.code).toBe(1); expect(result.stderr).toContain('cannot be combined with --session');

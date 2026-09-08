@@ -35,6 +35,7 @@ npm start
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
 - Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
+- Explicit project profiles and instruction skills, previewed before selection and pinned per session, with tool restrictions and deliberate reloads.
 - MCP tools over local stdio or remote Streamable HTTP, with SSE fallback.
 - LiteLLM/OpenAI-compatible APIs, native Anthropic API keys, and explicit ChatGPT connection where account/provider policies permit it.
 - A persistent FIFO follow-up queue with explicit Pause/Resume/remove, plus separate per-session text and attachment drafts.
@@ -101,7 +102,9 @@ Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can 
 
 Lite reads `AGENTS.md`, `LITE.md`, and `.lite/instructions.md` in the selected workspace when building the agent's instructions. Keep guidance focused on project conventions and verification commands. Markdown files in `.lite/commands/` and `.claude/commands/` become local slash commands.
 
-Connected MCP server commands are executable configuration. Configure only servers you trust. Tools from connected servers use the same approval workflow as other mutable actions.
+Project profiles in `.lite/profiles.json` and instruction skills in `.lite/skills/<id>/SKILL.md` are **explicit opt-in**. Open **Project profiles** near the composer to preview instructions, select skills, and review tool restrictions. Recommendations never activate skills automatically. Active instructions stay pinned through source edits, deletion, and restart until deliberately replaced or cleared. Changing a profile preserves your model, mode, and permissions unless you explicitly apply its defaults; queued work stays paused. See the [profile format, CLI examples, and safety boundaries](docs/profiles.md).
+
+Connected MCP server commands are executable configuration. Configure only servers you trust. Tools from connected servers use the same approval workflow as other mutable actions. Named profiles exclude MCP tools in this version; skills-only selection retains ordinary tool policy.
 
 ## Safety and local data
 

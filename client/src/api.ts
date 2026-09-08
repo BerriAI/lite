@@ -1,4 +1,4 @@
-import type { Attachment, RunEvent, SessionDetail } from '../../shared/types';
+import type { Attachment, RunEvent, Session, SessionDetail } from '../../shared/types';
 import { useEffect, useRef, useState } from 'react';
 
 export interface ComposerDraft { text: string; attachments: Attachment[] }
@@ -136,6 +136,13 @@ export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: 
 export const query = (values: Record<string, string>) => new URLSearchParams(values).toString();
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 
+/** Session configuration is monotonic even when an older snapshot overlaps a newer mutation. */
+export function reconcileSession(current: Session, incoming: Session): Session {
+  if ((incoming.configRevision ?? 0) >= (current.configRevision ?? 0)) return incoming;
+  return { ...incoming, providerId: current.providerId, model: current.model, mode: current.mode,
+    permissionMode: current.permissionMode, profile: current.profile, configRevision: current.configRevision };
+}
+
 /** Idempotent for snapshot messages and tool updates; SSE replay is deduplicated by event ID by the caller. */
 export function applyEvent(detail: SessionDetail, event: RunEvent): SessionDetail {
   if (event.id && event.id <= (detail.lastEventId ?? 0)) return detail;
@@ -144,7 +151,12 @@ export function applyEvent(detail: SessionDetail, event: RunEvent): SessionDetai
 function reduceEvent(detail: SessionDetail, event: RunEvent): SessionDetail {
   const data = event.data;
   switch (event.type) {
-    case 'session': return { ...detail, session: { ...detail.session, ...(data.session ?? data) } };
+    case 'session': {
+      const session = data.session ?? data;
+      // Revision-bearing events are full persisted sessions; an omitted profile means explicitly cleared.
+      const incoming = { ...detail.session, ...session, ...(session.configRevision !== undefined ? { profile: session.profile } : {}) };
+      return { ...detail, session: reconcileSession(detail.session, incoming) };
+    }
     case 'message': {
       const message = data.message ?? data;
       if (!message.id) return detail;

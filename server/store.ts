@@ -3,6 +3,9 @@ import { mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { completeToolBoundary } from './context.js';
+import type { ApplyProfileRequest } from '../shared/profiles.js';
+import type { ProfileSnapshot, ResolvedProfile } from './profiles.js';
+import { validateProfileSnapshot } from './profiles.js';
 import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider, QueueState, QueuedMessage, Attachment } from '../shared/types.js';
 
 export class Store {
@@ -21,7 +24,8 @@ export class Store {
       CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
-      CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);`);
+      CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);
+      CREATE TABLE IF NOT EXISTS session_profiles (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);`);
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
@@ -55,23 +59,85 @@ export class Store {
   }
   sessions(query = '', archived = false): Session[] {
     const rows = this.db.prepare('SELECT data FROM sessions').all() as { data: string }[];
-    return rows.map(r => JSON.parse(r.data) as Session).filter(s => s.archived === archived && (!query || s.title.toLowerCase().includes(query.toLowerCase()))).sort((a,b) => b.updatedAt-a.updatedAt);
+    return rows.map(r => this.normalizedSession(JSON.parse(r.data) as Session)).filter(s => s.archived === archived && (!query || s.title.toLowerCase().includes(query.toLowerCase()))).sort((a,b) => b.updatedAt-a.updatedAt);
   }
   session(id: string): Session {
     const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as { data: string } | undefined;
     if (!row) throw Object.assign(new Error('Session not found'), { status: 404 });
-    return JSON.parse(row.data);
+    return this.normalizedSession(JSON.parse(row.data));
   }
-  createSession(input: Partial<Session> = {}): Session {
-    const settings = this.settings(), now = Date.now();
-    const session: Session = { id: randomUUID(), title: 'New session', workspace: settings.workspace, model: settings.defaultModel, providerId: settings.defaultProvider, mode: 'build', permissionMode: settings.permissionMode, createdAt: now, updatedAt: now, archived: false, ...input, status: 'idle' };
-    this.db.prepare('INSERT INTO sessions(id,data) VALUES(?,?)').run(session.id, JSON.stringify(session));
-    return session;
+  private normalizedSession(session: Session): Session {
+    return { ...session, configRevision: Number.isSafeInteger(session.configRevision) && session.configRevision! >= 0 ? session.configRevision : 0 };
   }
-  updateSession(id: string, patch: Partial<Session>): Session {
-    const session = { ...this.session(id), ...patch, id, updatedAt: Date.now() };
-    this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(session), id);
-    return session;
+  private atomic<T>(operation: () => T): T {
+    const name = `lite_store_${randomUUID().replaceAll('-', '')}`;
+    this.db.exec(`SAVEPOINT ${name}`);
+    try { const result = operation(); this.db.exec(`RELEASE SAVEPOINT ${name}`); return result; }
+    catch (error) { this.db.exec(`ROLLBACK TO SAVEPOINT ${name}; RELEASE SAVEPOINT ${name}`); throw error; }
+  }
+  private assertConfigRevision(session: Session, expected?: number): void {
+    if (expected !== undefined && (!Number.isSafeInteger(expected) || expected < 0 || expected !== session.configRevision)) throw Object.assign(new Error('Session configuration changed. Reload and try again.'), { status: 409 });
+  }
+  private pauseConfigurationQueue(id: string): void {
+    const queue = this.queue(id);
+    if (queue.items.length) this.saveQueue(id, { ...queue, paused: true, reason: 'Session configuration changed. Review and explicitly resume queued messages.' });
+  }
+  private writeProfile(id: string, snapshot: ProfileSnapshot | null): void {
+    if (snapshot) this.db.prepare('INSERT INTO session_profiles(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id, JSON.stringify(snapshot));
+    else this.db.prepare('DELETE FROM session_profiles WHERE session_id=?').run(id);
+  }
+  private resolvedSnapshot(workspace: string, resolved: ResolvedProfile): ProfileSnapshot | null {
+    if (workspace !== resolved.workspace) throw Object.assign(new Error('Resolved profile belongs to a different workspace.'), { status: 409 });
+    const snapshot = resolved.snapshot === null ? null : validateProfileSnapshot(resolved.snapshot);
+    if (snapshot && snapshot.active.revision !== resolved.catalogRevision) throw Object.assign(new Error('Resolved profile revision is inconsistent.'), { status: 409 });
+    return snapshot;
+  }
+  profileSnapshot(id: string): ProfileSnapshot | null {
+    const session = this.session(id), row = this.db.prepare('SELECT data FROM session_profiles WHERE session_id=?').get(id) as { data: string } | undefined;
+    if (!row) {
+      if (session.profile) throw Object.assign(new Error('The pinned profile snapshot is missing. Explicitly replace or clear it before continuing.'), { status: 409 });
+      return null;
+    }
+    let snapshot: ProfileSnapshot;
+    try { snapshot = validateProfileSnapshot(JSON.parse(row.data)); } catch { throw Object.assign(new Error('The pinned profile snapshot is invalid. Explicitly replace or clear it before continuing.'), { status: 409 }); }
+    if (!session.profile || JSON.stringify(snapshot.active) !== JSON.stringify(session.profile)) throw Object.assign(new Error('The pinned profile summary is inconsistent. Explicitly replace or clear it before continuing.'), { status: 409 });
+    return snapshot;
+  }
+  createSession(input: Partial<Session> = {}, resolved?: ResolvedProfile): Session {
+    return this.atomic(() => {
+      const settings = this.settings(), now = Date.now();
+      const session: Session = { id: randomUUID(), title: 'New session', workspace: settings.workspace, model: settings.defaultModel, providerId: settings.defaultProvider, mode: 'build', permissionMode: settings.permissionMode, createdAt: now, updatedAt: now, archived: false, ...input, status: 'idle', configRevision: 0 };
+      // Imported/public summaries can never manufacture a private activation.
+      delete session.profile;
+      const snapshot = resolved ? this.resolvedSnapshot(session.workspace, resolved) : null;
+      if (snapshot) session.profile = snapshot.active;
+      this.db.prepare('INSERT INTO sessions(id,data) VALUES(?,?)').run(session.id, JSON.stringify(session));
+      if (snapshot) this.writeProfile(session.id, snapshot);
+      return session;
+    });
+  }
+  updateSession(id: string, patch: Partial<Session>, expectedConfigRevision?: number): Session {
+    return this.atomic(() => {
+      const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
+      const { profile: _profile, configRevision: _revision, ...safe } = patch;
+      const changed = (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
+      if (safe.workspace !== undefined && safe.workspace !== previous.workspace && (previous.profile || this.db.prepare('SELECT 1 FROM session_profiles WHERE session_id=?').get(id))) throw Object.assign(new Error('Clear the profile before changing the workspace.'), { status: 409 });
+      const session = { ...previous, ...safe, id, updatedAt: Date.now(), configRevision: previous.configRevision! + (changed ? 1 : 0) };
+      this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(session), id);
+      if (changed) this.pauseConfigurationQueue(id);
+      return session;
+    });
+  }
+  applyProfile(id: string, expectedConfigRevision: number, resolved: ResolvedProfile, selection: ApplyProfileRequest['selection'] = {}): Session {
+    return this.atomic(() => {
+      const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
+      const snapshot = this.resolvedSnapshot(previous.workspace, resolved);
+      const session: Session = { ...previous, ...(selection.providerId !== undefined ? { providerId: selection.providerId } : {}), ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.mode !== undefined ? { mode: selection.mode } : {}), updatedAt: Date.now(), configRevision: previous.configRevision! + 1 };
+      delete session.profile; if (snapshot) session.profile = snapshot.active;
+      this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(session), id);
+      this.writeProfile(id, snapshot); this.pauseConfigurationQueue(id);
+      return session;
+    });
   }
   deleteSession(id: string) { this.session(id); this.db.prepare('DELETE FROM sessions WHERE id=?').run(id); }
   messages(id: string): Message[] {
@@ -92,7 +158,8 @@ export class Store {
     this.db.exec('SAVEPOINT lite_compaction');
     try {
       const source=this.session(id);
-      const archive=this.createSession({...source,id:randomUUID(),title:`${source.title} · before compaction`,parentId:id,createdAt:Date.now(),updatedAt:Date.now(),archived:true});
+      const snapshot=this.profileSnapshot(id);
+      const archive=this.createSession({...source,id:randomUUID(),title:`${source.title} · before compaction`,parentId:id,createdAt:Date.now(),updatedAt:Date.now(),archived:true},snapshot?{workspace:source.workspace,catalogRevision:snapshot.active.revision,snapshot}:undefined);
       for(const message of this.messages(id))this.saveMessage({...message,id:randomUUID(),sessionId:archive.id});
       this.saveTodos(archive.id,this.todos(id));
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
@@ -165,10 +232,11 @@ export class Store {
     return (this.db.prepare('SELECT id,data FROM events WHERE session_id=? AND id>? ORDER BY id LIMIT 10000').all(id, after) as {id:number,data:string}[]).map(r => ({ ...JSON.parse(r.data), id:r.id }));
   }
   fork(id: string, messageId?: string): Session {
-    const source = this.session(id), messages = this.messages(id);
+    return this.atomic(() => {
+    const source = this.session(id), messages = this.messages(id), snapshot = this.profileSnapshot(id);
     const end = messageId ? messages.findIndex(m => m.id === messageId) : messages.length - 1;
     if (messageId && end < 0) throw Object.assign(new Error('Message not found'), {status:404});
-    const session = this.createSession({ ...source, id:randomUUID(), title:`${source.title} (fork)`, parentId:id, createdAt:Date.now(), updatedAt:Date.now(), archived:false });
+    const session = this.createSession({ ...source, id:randomUUID(), title:`${source.title} (fork)`, parentId:id, createdAt:Date.now(), updatedAt:Date.now(), archived:false }, snapshot ? { workspace: source.workspace, catalogRevision: snapshot.active.revision, snapshot } : undefined);
     // Trim before the earliest crossing group, including partially resolved parallel
     // calls and interrupted runs whose last message is already a tool result.
     const copied = messages.slice(0, completeToolBoundary(messages, end + 1));
@@ -177,5 +245,6 @@ export class Store {
     for (const m of copied) this.saveMessage({ ...m, id:randomUUID(), sessionId:session.id });
     this.saveTodos(session.id, this.todos(id));
     return session;
+    });
   }
 }
