@@ -7,10 +7,11 @@ import { Store } from './store.js';
 import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
 import { listModels } from './providers.js';
+import { modelCatalog } from './budget.js';
 import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
 import type { Message, Settings } from '../shared/types.js';
 
-const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional()});
+const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).optional()});
 const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional()});
@@ -57,13 +58,16 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/models',async(req,res)=>{
     const provider=store.settings().providers.find(p=>p.id===(queryString(req.query.providerId)||store.settings().defaultProvider));
     if(!provider)throw httpError(404,'Provider not found.');
-    try{res.json({models:await listModels(provider,AbortSignal.timeout(30000))});}
+    // OAuth account identity is not part of the provider configuration cache key.
+    if(provider.kind==='codex')modelCatalog.clear(provider.id);
+    try{const models=await listModels(provider,AbortSignal.timeout(30000));if(provider.kind!=='codex')modelCatalog.remember(provider,models);res.json({models});}
     catch(error){res.status(502).json({models:[],error:safeError(error,store)});}
   });
   app.post('/api/providers/test',async(req,res)=>{
     const{providerId}=z.object({providerId:z.string()}).parse(req.body);
     const provider=store.settings().providers.find(p=>p.id===providerId);if(!provider)throw httpError(404,'Provider not found.');
-    try{res.json({ok:true,models:(await listModels(provider,AbortSignal.timeout(30000))).length});}catch(error){res.status(502).json({ok:false,error:safeError(error,store)});}
+    if(provider.kind==='codex')modelCatalog.clear(provider.id);
+    try{const models=await listModels(provider,AbortSignal.timeout(30000));if(provider.kind!=='codex')modelCatalog.remember(provider,models);res.json({ok:true,models:models.length});}catch(error){res.status(502).json({ok:false,error:safeError(error,store)});}
   });
   app.get('/api/sessions',(req,res)=>res.json({sessions:store.sessions(queryString(req.query.q),req.query.archived==='true')}));
   app.post('/api/sessions',async(req,res)=>{const input=sessionSchema.parse(req.body||{});checkProvider(input.providerId);res.status(201).json(store.createSession({...input,workspace:await workspace(input.workspace)}));});
@@ -75,7 +79,7 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:store.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
   app.patch('/api/sessions/:id',(req,res)=>{
     const patch=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional()}).parse(req.body);
     if(patch.model||patch.providerId||patch.mode||patch.permissionMode)runner.assertIdle(req.params.id);

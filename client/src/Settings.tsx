@@ -6,8 +6,24 @@ import { CopyButton, Modal, SpeedRail } from './ui';
 
 type McpStatus = { name: string; status: string; tools: string[]; error?: string };
 type Login = { loginId: string; method: 'device' | 'browser'; url: string; userCode?: string; expiresAt: number; providerId: string };
+type ContextLimitRow = { id: string; model: string; tokens: string };
+const contextRowsFor = (providers: Provider[]): Record<string, ContextLimitRow[]> => Object.fromEntries(providers.map(provider => [provider.id, Object.entries(provider.contextWindows ?? {}).map(([model, tokens]) => ({ id: crypto.randomUUID(), model, tokens: String(tokens) }))]));
+function parseContextRows(rows: ContextLimitRow[]): Record<string, number> {
+  if (rows.length > 100) throw new Error('Use at most 100 context window overrides per provider.');
+  const entries: [string, number][] = [], seen = new Set<string>();
+  for (const [index, row] of rows.entries()) {
+    const model = row.model.trim(), tokens = Number(row.tokens);
+    if (!model || model.length > 250) throw new Error(`Context limit row ${index + 1}: enter an exact model ID between 1 and 250 characters, or remove the row.`);
+    if (seen.has(model)) throw new Error(`Context limit row ${index + 1}: this model ID already has an override.`);
+    if (!/^\d+$/.test(row.tokens) || !Number.isSafeInteger(tokens) || tokens < 1024 || tokens > 10_000_000) throw new Error(`Context limit row ${index + 1}: enter a whole token count from 1,024 to 10,000,000.`);
+    seen.add(model); entries.push([model, tokens]);
+  }
+  return Object.fromEntries(entries);
+}
 export function Settings({ settings, onClose, onSave }: { settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
   const [draft, setDraft] = useState<SettingsType>(() => ({ ...settings, providers: settings.providers.map(({ apiKey: _key, ...p }) => p) }));
+  const [contextRows, setContextRows] = useState(() => contextRowsFor(settings.providers));
+  const saving = useRef(false);
   const [tab, setTab] = useState<'providers' | 'general' | 'integrations'>('providers');
   const [selected, setSelected] = useState(settings.defaultProvider || settings.providers[0]?.id || '');
   const [busy, setBusy] = useState(false);
@@ -40,22 +56,35 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
   }, [login]);
   useEffect(() => { if (tab === 'integrations') api<{ servers: McpStatus[] }>('/mcp').then(r => setServers(r.servers)).catch(e => setError(errorMessage(e))); }, [tab]);
   const provider = draft.providers.find(p => p.id === selected);
+  const rows = contextRows[selected] ?? [];
+  function updateContextRows(next: ContextLimitRow[]) {
+    if (saving.current) return;
+    setNotice(''); setError(''); setContextRows(current => ({ ...current, [selected]: next }));
+  }
   function updateProvider(update: Partial<Provider>) { setNotice(''); setDraft(s => ({ ...s, providers: s.providers.map(p => p.id === selected ? { ...p, ...update } : p) })); }
   async function save(close: boolean) {
-    setBusy(true); setError(''); setNotice('');
+    if (saving.current) return null;
+    saving.current = true; setBusy(true); setError(''); setNotice('');
     try {
       let mcpServers: Record<string, McpServerConfig>;
       try { mcpServers = JSON.parse(mcp); if (!mcpServers || Array.isArray(mcpServers) || typeof mcpServers !== 'object') throw new Error(); } catch { throw new Error('MCP servers must be a JSON object.'); }
       if (!draft.workspace.trim()) throw new Error('Enter an absolute workspace path.');
       if (!draft.providers.some(p => p.id === draft.defaultProvider)) throw new Error('Choose a default provider.');
       const { mcpServers: _mcp, ...values } = draft;
-      const saved = await patch<SettingsType>('/settings', { ...values, providers: values.providers.map(p => ({ ...p, models: p.models?.filter(Boolean) })), ...(mcp !== initialMcp.current ? { mcpServers } : {}) });
+      const providers = values.providers.map(p => {
+        let contextWindows: Record<string, number>;
+        try { contextWindows = parseContextRows(contextRows[p.id] ?? []); }
+        catch (error) { setSelected(p.id); setTab('providers'); throw error; }
+        return { ...p, models: p.models?.filter(Boolean), ...(contextRows[p.id] !== undefined || p.contextWindows !== undefined ? { contextWindows } : {}) };
+      });
+      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(mcp !== initialMcp.current ? { mcpServers } : {}) });
       onSave(saved); setDraft({ ...saved, providers: saved.providers.map(({ apiKey: _key, ...p }) => p) });
+      setContextRows(contextRowsFor(saved.providers));
       initialMcp.current = JSON.stringify(saved.mcpServers, null, 2); setMcp(initialMcp.current);
       if (close) onClose(); else setNotice('Settings saved.');
       return saved;
     } catch (e) { setError(errorMessage(e)); return null; }
-    finally { setBusy(false); }
+    finally { saving.current = false; setBusy(false); }
   }
   async function test() {
     setTesting(true);
@@ -100,6 +129,17 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
           {provider.kind === 'codex' && <div className="auth-card"><strong>Connect your ChatGPT account</strong><p>Uses Codex sign-in. Availability depends on your plan, account eligibility, and provider rules. This is separate from an API key; it does not grant access to every model.</p>{login?.providerId === selected ? <><div className="auth-code">{login.userCode && <><code>{login.userCode}</code><CopyButton text={login.userCode} /></>}<a href={login.url} target="_blank" rel="noopener noreferrer">Continue sign-in ↗</a></div><div className="success-note"><SpeedRail active compact />Waiting for sign-in…</div><button className="text-button" onClick={() => setLogin(null)}>Stop waiting</button></> : <div className="auth-actions"><button className="button primary" disabled={busy || authBusy} onClick={() => void connect('device')}>{authBusy ? 'Connecting…' : provider.configured ? 'Reconnect ChatGPT' : 'Connect ChatGPT'}<ArrowUpRight size={14} /></button><button className="text-button" disabled={busy || authBusy} onClick={() => void connect('browser')}>Use browser sign-in</button>{provider.configured && <button className="text-button danger" disabled={authBusy} onClick={() => void disconnect()}>Disconnect</button>}</div>}</div>}
           {provider.kind !== 'codex' && <label>API key<div className="secret-input"><KeyRound size={15} /><input type={showKey ? 'text' : 'password'} autoComplete="off" value={provider.apiKey ?? ''} placeholder={provider.configured ? 'Saved key · leave blank to keep' : 'Enter API key (optional for local servers)'} onChange={e => updateProvider({ apiKey: e.target.value || undefined })} /><button type="button" aria-label={showKey ? 'Hide API key' : 'Show API key'} onClick={() => setShowKey(v => !v)}>{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>{provider.configured && <button className="text-button danger" onClick={() => updateProvider({ apiKey: '', configured: false })}>Remove saved key on save</button>}</label>}
           <label>Model IDs<input placeholder="e.g. my-coding-model, local-model" value={(provider.models ?? []).join(', ')} onChange={e => updateProvider({ models: e.target.value.split(',').map(s => s.trim()) })} /><span className="field-hint">Comma-separated. Useful if your endpoint does not support model discovery.</span></label>
+          <details className="context-overrides" aria-label="Context window overrides" key={`context-${selected}`}><summary>Context window overrides<span>{rows.length || 'Optional'}</span><ChevronRight size={13} /></summary><div className="context-overrides-body">
+            <p className="field-hint">Set a verified context window in tokens for an exact model ID on this provider. Overrides take priority over model discovery; they do not add models to the list above. Removing an override restores discovery, or an unknown limit when none is available.</p>
+            {rows.length === 0 && <p className="context-overrides-empty">No overrides. Limits come from model discovery when available.</p>}
+            {rows.map((row, index) => <div className="context-override-row" key={row.id}>
+              <label>Model ID<input aria-label={`Model ID ${index + 1}`} value={row.model} maxLength={250} disabled={busy} placeholder="Exact model ID" spellCheck={false} autoComplete="off" onChange={e => updateContextRows(rows.map(item => item.id === row.id ? { ...item, model: e.target.value } : item))} /></label>
+              <label>Context window tokens<input aria-label={`Context window tokens ${index + 1}`} type="number" inputMode="numeric" min={1024} max={10_000_000} step={1} value={row.tokens} disabled={busy} placeholder="e.g. 128000" onChange={e => updateContextRows(rows.map(item => item.id === row.id ? { ...item, tokens: e.target.value } : item))} /></label>
+              <button className="icon-button danger" type="button" disabled={busy} aria-label={`Remove context limit ${row.model || index + 1}`} title="Remove context limit" onClick={() => updateContextRows(rows.filter(item => item.id !== row.id))}><Trash2 size={15} /></button>
+            </div>)}
+            <div className="context-overrides-footer"><button className="text-button" type="button" disabled={busy || rows.length >= 100} onClick={() => updateContextRows([...rows, { id: crypto.randomUUID(), model: '', tokens: '' }])}><Plus size={14} />Add context limit</button><span className="field-hint">{rows.length} / 100 · 1,024–10,000,000 tokens</span></div>
+            <p className="field-hint">These values guide approximate budgeting; they cannot increase the provider’s actual limit.</p>
+          </div></details>
           <div className="provider-actions"><button className="button secondary" disabled={busy || testing || !provider.baseUrl} onClick={test}>{testing ? 'Connecting…' : 'Save & test connection'}<ArrowUpRight size={14} /></button><button className="icon-button danger" aria-label={`Remove ${provider.name}`} disabled={draft.providers.length < 2 || busy} onClick={() => { const next = draft.providers.filter(p => p.id !== selected); setDraft(s => ({ ...s, providers: next, defaultProvider: s.defaultProvider === selected ? next[0].id : s.defaultProvider })); setSelected(next[0].id); }}><Trash2 size={15} /></button></div>
         </div> : <div className="empty-state"><Server size={25} /><strong>No providers yet</strong><button className="button secondary" onClick={addProvider}><Plus size={15} />Add a provider</button></div>}
       </>}

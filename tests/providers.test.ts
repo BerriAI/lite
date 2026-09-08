@@ -208,6 +208,25 @@ describe('provider protocol', () => {
       { id: 'vision', name: 'Vision', providerId: 'test', contextWindow: 128000 },
     ]);
   });
+  it('sanitizes catalog context windows, identifiers, duplicate metadata and labels', async () => {
+    const base = await mock((_req, res) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [
+      { id: 'valid', context_window: 32768 }, { id: 'tiny', context_window: 1023 }, { id: 'fraction', context_window: 8192.5 },
+      { id: 'string', context_window: '32768' }, { id: 'too-large', context_window: 10000001 }, { id: 'negative', context_window: -1 },
+      { id: 'duplicate', context_window: 32768 }, { id: 'duplicate', context_window: 65536 },
+      { id: 12, name: {} }, { id: ' leading' }, { id: 'bad' + String.fromCharCode(27) + '[2J' },
+      { slug: 'slug-model', display_name: 'bad' + String.fromCharCode(0x202e) + 'label', context_window: 1024 },
+    ] })); });
+    const models = await listModels({ ...provider(base), models: ['explicit', ' invalid'] });
+    expect(models.map(model => model.id)).toEqual(['duplicate', 'explicit', 'fraction', 'negative', 'slug-model', 'string', 'tiny', 'too-large', 'valid']);
+    expect(models.filter(model => model.contextWindow !== undefined)).toEqual([
+      { id: 'slug-model', name: 'slug-model', providerId: 'test', contextWindow: 1024 },
+      { id: 'valid', name: 'valid', providerId: 'test', contextWindow: 32768 },
+    ]);
+  });
+  it('rejects a null model catalog with a useful format error', async () => {
+    const base = await mock((_req, res) => { res.setHeader('Content-Type', 'application/json'); res.end('null'); });
+    await expect(listModels(provider(base))).rejects.toThrow('unsupported model catalog');
+  });
   it('translates native Anthropic tool results and accumulates usage', async () => {
     let received: any;
     const base = await mock((req, res, body) => {

@@ -10,8 +10,9 @@ import { attachTerminals } from '../server/terminal.js';
 const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
 let providerRequests=0;
+const pendingSummaries=new Set<()=>void>();
 const mock=createServer(async(req,res)=>{
-  if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'}]}));return;}
+  if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'},{id:'budget-model',context_window:16384}]}));return;}
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);let data:any;
   try{data=JSON.parse(Buffer.concat(chunks).toString());}catch{res.writeHead(400);res.end();return;}
   providerRequests++;
@@ -21,7 +22,14 @@ const mock=createServer(async(req,res)=>{
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
   let toolCall=false;
-  if(prompt.includes('ask fixture question')&&data.messages.at(-1)?.role!=='tool'){
+  const summarizing=data.messages.some((message:any)=>message.role==='system'&&typeof message.content==='string'&&message.content.includes('Summarize the supplied conversation data'));
+  if(summarizing){
+    if(prompt.includes('WAIT_BUDGET_SUMMARY')) {
+      await new Promise<void>(resolve=>{const release=()=>{pendingSummaries.delete(release);res.off('close',release);resolve();};pendingSummaries.add(release);res.once('close',release);});
+      if(res.destroyed)return;
+    }
+    if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('ask fixture question')&&data.messages.at(-1)?.role!=='tool'){
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Which storage should this project use?',options:[{id:'sqlite',label:'SQLite',description:'A local database with no extra service.'},{id:'postgres',label:'PostgreSQL',description:'A separate database server.'}]})}}]});
   }else if(prompt.includes('ask fixture question')&&prompt.includes('then write')&&data.messages.at(-1)?.tool_call_id==='fixture-question'){
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-after-answer',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'answered.txt',content:'The answer did not grant tool permission.\n'})}}]});
@@ -39,6 +47,8 @@ const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
 const{app,runner}=createApp({store});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
+app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
+app.post('/fixture/summaries/release',(_req,res)=>{for(const release of [...pendingSummaries])release();res.json({ok:true});});
 const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);
 const server=app.listen(3211,'127.0.0.1',()=>console.log('Lite E2E ready at http://127.0.0.1:3211'));
 const terminals=attachTerminals(server,store);

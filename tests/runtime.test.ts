@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -51,22 +51,33 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     const version = await processResult(runtime!, ['--version'], temporary, env).finished;
     expect(version.code).toBe(0);
     expect(version.output.trim()).toMatch(/^v22\.13\.0$/);
-    const providerCalls: unknown[] = [];
+    const providerCalls: { messages: { role: string; content: any }[]; tools?: unknown[] }[] = [];
+    let catalogCalls = 0;
     const fixtureContent = String.fromCharCode(0xfeff) + 'persisted runtime output — exact UTF-8\r\nno final newline';
+    const changedAttachment = 'External edit made after the accepted attachment snapshot.';
     const provider = createServer(async (req, res) => {
-      if (req.url === '/v1/models') { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'runtime-model' }] })); return; }
+      if (req.url === '/v1/models') { catalogCalls++; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'runtime-model', context_window: 128000 }] })); return; }
       const chunks: Buffer[] = [];
       for await (const chunk of req) chunks.push(chunk);
       const request = JSON.parse(Buffer.concat(chunks).toString());
       providerCalls.push(request);
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       const emit = (delta: unknown) => res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta }] })}\n\n`);
-      const prompt = request.messages.filter((message: { role: string }) => message.role === 'user').at(-1)?.content ?? '';
-      if (request.messages.at(-1)?.role !== 'tool') {
+      const content = request.messages.filter((message: { role: string }) => message.role === 'user').at(-1)?.content ?? '';
+      const prompt = typeof content === 'string' ? content : content.filter((part: { type: string }) => part.type === 'text').map((part: { text: string }) => part.text).join('\n');
+      const summary = request.messages[0]?.content?.startsWith('Summarize the supplied conversation data');
+      let finishReason = 'stop';
+      if (summary) {
+        await writeFile(join(workspace, 'do-not-reread.txt'), changedAttachment);
+        emit({ content: 'Earlier runtime context: preserve the existing file bytes and inspect the latest attachment; no tools were rerun.' });
+      }
+      else if (prompt.includes('runtime context')) emit({ content: 'Runtime context complete.' });
+      else if (request.messages.at(-1)?.role !== 'tool') {
+        finishReason = 'tool_calls';
         if (prompt.includes('runtime question')) emit({ tool_calls: [{ index: 0, id: 'runtime-question', type: 'function', function: { name: 'ask_user', arguments: JSON.stringify({ question: 'Which runtime approach?', options: [{ id: 'small', label: 'Small change' }, { id: 'broad', label: 'Broader change' }] }) } }] });
         else emit({ tool_calls: [{ index: 0, id: 'runtime-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'runtime.txt', content: fixtureContent }) } }] });
       } else { emit({ content: 'Runtime ' }); emit({ content: 'complete.' }); }
-      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: request.messages.at(-1)?.role === 'tool' ? 'stop' : 'tool_calls' }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: finishReason }] })}\n\n`);
       res.end('data: [DONE]\n\n');
     });
     servers.push(provider);
@@ -277,6 +288,119 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect((await api(interruptedPath)).queue.paused).toBe(true);
     expect(providerCalls).toHaveLength(5);
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    // Exercise budgeting through the bundled API, including its persistent
+    // override and a smaller total window than the explicitly discovered catalog.
+    expect(catalogCalls).toBe(0);
+    const settings = await api('/settings');
+    const overridden = await api('/settings', { providers: settings.providers.map((value: { id: string }) => value.id === 'runtime' ? { ...value, contextWindows: { 'runtime-model': 16384 } } : value) }, 'PATCH');
+    expect(overridden.providers[0].contextWindows).toEqual({ 'runtime-model': 16384 });
+    expect(overridden.providers[0].apiKey).toBeUndefined();
+    expect(await api('/models?providerId=runtime')).toMatchObject({ models: [{ id: 'runtime-model', providerId: 'runtime', contextWindow: 128000 }] });
+    expect(catalogCalls).toBe(1);
+    const contextSession = await api('/sessions/import', {
+      session: { title: 'Production context budget', providerId: 'runtime', model: 'runtime-model' },
+      messages: [
+        { id: 'old-user', role: 'user', content: 'Prior runtime goal: preserve the existing file bytes. ' + 'x'.repeat(30000), createdAt: 1 },
+        { id: 'old-assistant', role: 'assistant', content: 'Prior runtime outcome: verification completed. ' + 'y'.repeat(30000), createdAt: 2 },
+      ],
+    });
+    const contextPath = `/sessions/${contextSession.id}`;
+    const contextBefore = await api(contextPath), contextChanges = await api(`${contextPath}/changes`);
+    expect(contextBefore.history).toMatchObject({ hasCheckpoints: false, canUndo: false, canRedo: false });
+    const latestAttachment = { name: 'latest.txt', content: 'Keep these exact latest bytes — UTF-8\r\nno final newline', path: 'do-not-reread.txt' };
+    await writeFile(join(workspace, latestAttachment.path), latestAttachment.content);
+    const latestPrompt = 'Continue the runtime context using this attachment.';
+    const contextAbort = new AbortController();
+    const contextResponse = await fetch(`${app.base}/api${contextPath}/events`, { signal: contextAbort.signal });
+    const contextEvents: { type: string; data: any }[] = [];
+    const contextStream = (async () => {
+      const reader = contextResponse.body!.getReader(), decoder = new TextDecoder(); let buffer = '';
+      try {
+        while (true) {
+          const part = await reader.read(); if (part.done) throw new Error('Context stream ended without done.');
+          buffer += decoder.decode(part.value, { stream: true });
+          let boundary;
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, boundary); buffer = buffer.slice(boundary + 2);
+            const line = frame.split('\n').find(value => value.startsWith('data: ')); if (!line) continue;
+            const event = JSON.parse(line.slice(6)); contextEvents.push(event);
+            if (event.type === 'done') return;
+          }
+        }
+      } finally { await reader.cancel(); }
+    })();
+    void contextStream.catch(() => {}); // Keep a failed submission from leaving an unhandled stream rejection.
+    let contextAcceptance;
+    try {
+      contextAcceptance = await api(`${contextPath}/messages`, { content: latestPrompt, attachments: [latestAttachment] });
+      await contextStream;
+    } finally { contextAbort.abort(); await contextStream.catch(() => {}); }
+    expect(contextEvents.at(-1)).toMatchObject({ type: 'done', data: { status: 'idle' } });
+    expect(contextEvents.some(event => event.type === 'message' && event.data.id === contextAcceptance.messageId)).toBe(true);
+    expect(contextEvents.filter(event => event.type === 'reset')).toHaveLength(1);
+    const proactiveSnapshot = contextEvents.find(event => event.type === 'message' && event.data.context?.action === 'compact')?.data.context;
+    expect(proactiveSnapshot).toMatchObject({ providerId: 'runtime', model: 'runtime-model', contextWindow: 16384, outputReserve: 4096, limitSource: 'override', uncertain: false, action: 'compact' });
+    expect(proactiveSnapshot.estimatedInputTokens).toBeGreaterThan(15000);
+    expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
+    const [summaryRequest, completionRequest] = providerCalls.slice(5);
+    expect(summaryRequest.messages[0].content).toContain('Summarize the supplied conversation data');
+    expect(summaryRequest.tools).toBeUndefined();
+    expect(summaryRequest.messages[1].content).toContain('Prior runtime goal');
+    expect(summaryRequest.messages[1].content.length).toBeLessThanOrEqual(48000);
+    expect(summaryRequest.messages[1].content).not.toContain(latestPrompt);
+    expect(completionRequest.messages.map(message => message.role)).toEqual(['system', 'system', 'user']);
+    expect(completionRequest.messages[1].content).toContain('Earlier runtime context: preserve the existing file bytes');
+    expect(completionRequest.messages[2].content).toEqual([
+      { type: 'text', text: latestPrompt },
+      { type: 'text', text: `\n<attached_file name="latest.txt">\n${latestAttachment.content}\n</attached_file>` },
+    ]);
+    const compacted = await api(contextPath), contextCheckpoint = compacted.history.undoId;
+    expect(compacted.messages.map((message: { role: string }) => message.role)).toEqual(['system', 'user', 'assistant']);
+    expect(compacted.messages[1]).toMatchObject({ id: contextAcceptance.messageId, content: latestPrompt, attachments: [latestAttachment] });
+    const finalSnapshot = compacted.messages[2].context;
+    expect(compacted.messages[2].content).toBe('Runtime context complete.');
+    expect(finalSnapshot).toMatchObject({ providerId: 'runtime', model: 'runtime-model', contextWindow: 16384, outputReserve: 4096, limitSource: 'override', uncertain: false, action: 'continue' });
+    expect(Number.isInteger(finalSnapshot.estimatedInputTokens)).toBe(true);
+    expect(finalSnapshot.estimatedInputTokens).toBeGreaterThan(0);
+    expect(finalSnapshot.estimatedInputTokens + finalSnapshot.outputReserve).toBeLessThan(16384);
+    expect(compacted.questions).toEqual([]); expect(compacted.permissions).toEqual([]);
+    expect(compacted.history).toMatchObject({ hasCheckpoints: true, canUndo: true, canRedo: false });
+    expect(compacted.history.pendingRecovery).toBeUndefined();
+    expect(compacted.todos).toEqual(contextBefore.todos);
+    expect(await api(`${contextPath}/changes`)).toEqual(contextChanges);
+    const contextArchives = (await api('/sessions?archived=true')).sessions.filter((value: { parentId?: string }) => value.parentId === contextSession.id);
+    expect(contextArchives).toHaveLength(1);
+    const contextArchivePath = `/sessions/${contextArchives[0].id}`;
+    const archiveDetail = await api(contextArchivePath);
+    expect(archiveDetail.messages.map((message: { content: string }) => message.content)).toEqual([...contextBefore.messages.map((message: { content: string }) => message.content), latestPrompt]);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    const contextUndone = await api(`${contextPath}/history/undo`, { checkpointId: contextCheckpoint });
+    expect(contextUndone).toMatchObject({ canUndo: false, canRedo: true, redoId: contextCheckpoint });
+    expect((await api(contextPath)).messages).toEqual(contextBefore.messages);
+    expect((await api(contextPath)).todos).toEqual(contextBefore.todos);
+    expect((await api(contextPath)).queue.paused).toBe(true);
+    expect(await api(`${contextPath}/changes`)).toEqual(contextChanges);
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
+    app = await start(true);
+    const contextRestarted = await api(contextPath);
+    expect(contextRestarted.messages).toEqual(contextBefore.messages);
+    expect(contextRestarted.history).toEqual(contextUndone);
+    expect(contextRestarted.queue.paused).toBe(true);
+    expect((await api('/settings')).providers[0].contextWindows).toEqual({ 'runtime-model': 16384 });
+    expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
+    expect(await api(`${contextPath}/history/redo`, { checkpointId: contextCheckpoint })).toEqual(compacted.history);
+    const contextRestored = await api(contextPath);
+    expect(contextRestored.messages).toEqual(compacted.messages);
+    expect(contextRestored.todos).toEqual(compacted.todos);
+    expect(contextRestored.questions).toEqual([]); expect(contextRestored.permissions).toEqual([]);
+    expect(contextRestored.queue.paused).toBe(true);
+    expect(await api(`${contextPath}/changes`)).toEqual(contextChanges);
+    expect((await api(contextArchivePath)).messages).toEqual(archiveDetail.messages);
+    expect((await api('/sessions?archived=true')).sessions.filter((value: { parentId?: string }) => value.parentId === contextSession.id)).toHaveLength(1);
+    expect((await api(interruptedPath)).queue).toMatchObject({ paused: true, items: [{ content: 'Do not execute this queued continuation after restart.' }] });
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
+    expect(await readFile(join(workspace, latestAttachment.path), 'utf8')).toBe(changedAttachment);
     // Validate the installed native PTY on this exact ABI without starting a
     // login shell (which would read the real user's startup files).
     const pty = await processResult(runtime!, ['--input-type=module', '-e', `import {createRequire} from 'node:module'; const require=createRequire(${JSON.stringify(join(installation, 'package.json'))}); const {spawn}=require('node-pty'); const p=spawn('/bin/sh',['-c','printf "PTY_RUNTIME_OK\\n"'],{cwd:process.cwd(),env:{PATH:'/usr/bin:/bin',HOME:process.cwd(),TERM:'xterm'}}); p.onData(s=>process.stdout.write(s)); p.onExit(e=>process.exit(e.exitCode)); setTimeout(()=>process.exit(2),3000).unref();`], workspace, env).finished;

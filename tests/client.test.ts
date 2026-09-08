@@ -4,7 +4,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../client/src/App';
 import { useSessionDraft, type ComposerDraft } from '../client/src/api';
-import type { QueueState, RunEvent, Session, SessionDetail, Settings } from '../shared/types';
+import type { ContextSnapshot, QueueState, RunEvent, Session, SessionDetail, Settings } from '../shared/types';
+import { ContextIndicator } from '../client/src/ContextIndicator';
+import { Settings as SettingsPanel } from '../client/src/Settings';
 import type { QuestionRequest } from '../shared/questions';
 
 const draftKey = (id: string) => `lite:draft:v1:${id}`;
@@ -550,5 +552,254 @@ describe('structured agent questions', () => {
     await act(async () => source.emit({ id: 13, type: 'question_resolved', sessionId: 'a', data: { id: 'q-a', status: 'answered' } }));
     expect(document.querySelectorAll('.question-card')).toHaveLength(0);
     expect(element('.run-status').textContent).toContain('Waiting for your approval');
+  });
+});
+
+const contextSnapshot = (overrides: Partial<ContextSnapshot> = {}): ContextSnapshot => ({ providerId: 'fixture', model: 'model', estimatedInputTokens: 8192, contextWindow: 16384, outputReserve: 4096, limitSource: 'override', uncertain: false, action: 'continue', ...overrides });
+async function inputValue(selector: string, value: string) {
+  const input = element<HTMLInputElement>(selector);
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+describe('saved context estimate', () => {
+  it('shows approximate input and accessible source/window/reserve details without remaining percentages', async () => {
+    await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot() })));
+    const indicator = element('details[aria-label="Context estimate"]');
+    expect(indicator.querySelector('summary')?.textContent).toContain('Context estimate · ≈8,192 input tokens');
+    expect(indicator.textContent).toContain('pre-request snapshot for this response');
+    expect(indicator.textContent).toContain('not live remaining context or draft usage');
+    expect([...indicator.querySelectorAll('dt')].map(item => item.textContent)).toEqual(['Estimated input', 'Context window', 'Output reserve', 'Limit source', 'Model', 'Provider']);
+    expect(indicator.textContent).toContain('16,384 tokens');
+    expect(indicator.textContent).toContain('4,096 tokens');
+    expect(indicator.textContent).toContain('exact-model override');
+    expect(indicator.textContent).not.toContain('%');
+    expect(indicator.querySelector('meter,progress,[role="progressbar"]')).toBeNull();
+  });
+
+  it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])('reports unknown limit honestly for %s', async contextWindow => {
+    await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot({ contextWindow, limitSource: 'catalog' }) })));
+    expect(element('.context-estimate > summary').textContent).toContain('limit unknown');
+    expect(element('.context-estimate').textContent).toContain('Unknown · no verified limit');
+    expect(element('.context-estimate').textContent).not.toContain('%');
+  });
+
+  it('never treats an unknown source as a known window, or malformed estimates as zero usage', async () => {
+    await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot({ limitSource: 'unknown', estimatedInputTokens: Number.NaN, outputReserve: -4 }) })));
+    expect(element('.context-estimate > summary').textContent).toContain('input unavailable · limit unknown');
+    expect(element('.context-estimate').textContent).not.toMatch(/NaN|Infinity|-4 tokens/);
+  });
+
+  it('warns about uncertainty and compaction without claiming success, and renders opaque text inertly', async () => {
+    const malicious = '<img src=x onerror="alert(1)"><script>alert(1)</script>';
+    await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot({ uncertain: true, action: 'compact', reason: malicious, model: malicious, providerId: malicious }) })));
+    const indicator = element('.context-estimate');
+    expect(indicator.querySelector('summary')?.textContent).toContain('uncertain · compaction needed');
+    expect(indicator.textContent).toContain('images, opaque provider data');
+    expect(indicator.textContent).toContain('does not confirm that compaction succeeded');
+    expect(indicator.textContent).toContain(malicious);
+    expect(indicator.querySelector('img,script,a')).toBeNull();
+  });
+
+  it('renders persisted snapshots for streaming and historical responses but not legacy messages or composer drafts', async () => {
+    const initial = detail('a', { session: session('a', { status: 'running' }), messages: [
+      { id: 'legacy', sessionId: 'a', role: 'assistant', content: 'Earlier reply', createdAt: 1 },
+      { id: 'streaming', sessionId: 'a', role: 'assistant', content: '', context: contextSnapshot({ limitSource: 'catalog' }), createdAt: 2 },
+    ] });
+    appServer([initial]); localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'Unsent draft', attachments: [] }));
+    await mountApp();
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    const before = element('.context-estimate').textContent;
+    await fill('#message-input', 'A much longer unsent draft '.repeat(100));
+    expect(element('.context-estimate').textContent).toBe(before);
+    expect(element('.context-estimate').textContent).toContain('Model catalog');
+    await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, sessionId: 'a', type: 'session', data: session('a') }));
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(element('.context-estimate').textContent).toBe(before);
+  });
+});
+
+describe('live context progress snapshot reconciliation', () => {
+  const progress = () => ({ id: 'preparing-response', sessionId: 'a', role: 'assistant' as const, content: '', createdAt: 3, activity: 'Making room in context.', context: contextSnapshot({ action: 'compact' }) });
+
+  it('preserves projected progress across post-submit and reconnect snapshots, then replaces it by the same response ID', async () => {
+    const initial = detail('a'), server = appServer([initial]);
+    const accepted = { id: 'accepted-user', sessionId: 'a', role: 'user' as const, content: 'Continue safely', createdAt: 2 };
+    const pending = deferred<object>(); server.mutation = () => pending.promise;
+    await mountApp(); await fill('#message-input', accepted.content); await click('[aria-label="Send message"]');
+    const source = TestEventSource.instances.at(-1)!, liveMessage = progress();
+    // The detail projection covers the same cursor as the transient event, without
+    // requiring the progress placeholder in the durable conversation/archive.
+    server.details.set('a', detail('a', { session: session('a', { status: 'running' }), messages: [...initial.messages, accepted, liveMessage], lastEventId: 13 }));
+    await act(async () => {
+      source.emit({ id: 11, sessionId: 'a', type: 'session', data: session('a', { status: 'running' }) });
+      source.emit({ id: 12, sessionId: 'a', type: 'message', data: accepted });
+      source.emit({ id: 13, sessionId: 'a', type: 'message', data: liveMessage });
+    });
+    expect(element('.context-estimate > summary').textContent).toContain('compaction needed');
+    const reads = server.requests.filter(request => request === 'GET /api/sessions/a').length;
+    await act(async () => pending.resolve({ messageId: accepted.id }));
+    expect(server.requests.filter(request => request === 'GET /api/sessions/a').length).toBeGreaterThan(reads);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    await act(async () => source.onopen?.());
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    const completed = { ...liveMessage, activity: '', content: 'Final answer', context: contextSnapshot({ reason: 'Older context was compacted before this request.' }) };
+    await act(async () => source.emit({ id: 14, sessionId: 'a', type: 'message', data: completed }));
+    expect(document.querySelectorAll('.assistant-message')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(element('.assistant-message').textContent).toContain('Final answer');
+    expect(element('.context-estimate > summary').textContent).not.toContain('compaction needed');
+  });
+
+  it('does not revive another session’s pending progress when its old submission and stream settle', async () => {
+    const liveMessage = progress(), initial = detail('a'), server = appServer([initial, detail('b')]);
+    const pending = deferred<object>(); server.mutation = () => pending.promise;
+    await mountApp(); await fill('#message-input', 'Prepare context'); await click('[aria-label="Send message"]');
+    const source = TestEventSource.instances.at(-1)!;
+    server.details.set('a', detail('a', { session: session('a', { status: 'running' }), messages: [...initial.messages, liveMessage], lastEventId: 12 }));
+    await act(async () => {
+      source.emit({ id: 11, sessionId: 'a', type: 'session', data: session('a', { status: 'running' }) });
+      source.emit({ id: 12, sessionId: 'a', type: 'message', data: liveMessage });
+    });
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    await click('.session-link[title="Session b"]'); await fill('#message-input', 'Session b draft');
+    await act(async () => {
+      source.emit({ id: 13, sessionId: 'a', type: 'message', data: { ...liveMessage, content: 'Late session a reply' } });
+      pending.resolve({ messageId: 'accepted-a' });
+    });
+    expect(element('.topbar-title').textContent).toBe('Session b');
+    expect(document.querySelector('.context-estimate')).toBeNull();
+    expect(element('.conversation-content').textContent).not.toContain('Late session a reply');
+    expect(element<HTMLTextAreaElement>('#message-input').value).toBe('Session b draft');
+  });
+
+  it('restores pending progress on a cold mount, but reset and newer snapshots discard it without resurrection', async () => {
+    const liveMessage = progress(), pendingSnapshot = detail('a', { session: session('a', { status: 'running' }), messages: [liveMessage], lastEventId: 13 });
+    const server = appServer([pendingSnapshot]);
+    localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'Keep pending draft', attachments: [] }));
+    await mountApp(); const source = TestEventSource.instances.at(-1)!;
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(element('[aria-label="Stop generation"]')).toBeDefined();
+    await act(async () => source.onopen?.());
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    const replacement = [{ id: 'summary', sessionId: 'a', role: 'system' as const, content: 'Saved context summary', createdAt: 4 }];
+    server.details.set('a', detail('a', { session: session('a', { status: 'running' }), messages: replacement, lastEventId: 14 }));
+    await act(async () => source.emit({ id: 14, sessionId: 'a', type: 'reset', data: { messages: replacement } }));
+    await act(async () => source.onopen?.()); // Consume journal against authoritative reset.
+    expect(document.querySelector('.context-estimate')).toBeNull();
+    // Old message and snapshot must not restore an obsolete progress card.
+    server.details.set('a', pendingSnapshot);
+    await act(async () => {
+      source.emit({ id: 13, sessionId: 'a', type: 'message', data: liveMessage });
+      source.onopen?.();
+    });
+    expect(document.querySelector('.context-estimate')).toBeNull();
+    expect(element('.system-message').textContent).toContain('Saved context summary');
+    expect(element<HTMLTextAreaElement>('#message-input').value).toBe('Keep pending draft');
+  });
+});
+
+describe('provider context window settings', () => {
+  async function mountSettings(value: Settings = settings) {
+    const onSave = vi.fn(), onClose = vi.fn();
+    const writes: Settings[] = [];
+    let pending: ReturnType<typeof deferred<Settings>> | undefined;
+    let failure: string | undefined;
+    vi.stubGlobal('fetch', vi.fn(async (path: string, options?: RequestInit) => {
+      expect(path).toBe('/api/settings'); expect(options?.method).toBe('PATCH');
+      const body = JSON.parse(String(options?.body)) as Settings; writes.push(body);
+      if (failure) throw new Error(failure);
+      const saved = pending ? await pending.promise : body;
+      return { ok: true, status: 200, json: async () => saved };
+    }));
+    await act(async () => root().render(createElement(SettingsPanel, { settings: value, onSave, onClose })));
+    return { writes, onSave, onClose, set pending(value: typeof pending) { pending = value; }, set failure(value: string | undefined) { failure = value; } };
+  }
+  const modelInput = '[aria-label="Model ID 1"]', tokensInput = '[aria-label="Context window tokens 1"]';
+
+  it('saves exact-model limits independently of model lists, without echoing saved credentials', async () => {
+    const value = { ...settings, providers: [{ ...settings.providers[0], apiKey: 'SAVED_SECRET_SENTINEL' }] };
+    const panel = await mountSettings(value);
+    expect(document.body.textContent).not.toContain('SAVED_SECRET_SENTINEL');
+    expect([...document.querySelectorAll('input')].some(input => input.value.includes('SAVED_SECRET_SENTINEL'))).toBe(false);
+    await clickText('Add context limit'); await inputValue(modelInput, ' exact-deployment '); await inputValue(tokensInput, '128000');
+    await clickText('Save settings');
+    expect(panel.writes).toHaveLength(1);
+    expect(panel.writes[0].providers[0].contextWindows).toEqual({ 'exact-deployment': 128000 });
+    expect(panel.writes[0].providers[0].models).toEqual(['model']);
+    expect(panel.writes[0].providers[0].apiKey).toBeUndefined();
+    expect(panel.onClose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps row drafts separate across providers and supports deletion with an explicit empty map', async () => {
+    const value: Settings = { ...settings, providers: [
+      { ...settings.providers[0], contextWindows: { model: 4096 } },
+      { id: 'other', name: 'Other provider', kind: 'openai', baseUrl: 'http://localhost', contextWindows: { model: 8192 } },
+    ] };
+    const panel = await mountSettings(value);
+    await inputValue(tokensInput, '16384'); await clickText('Other provider');
+    expect(element<HTMLInputElement>(tokensInput).value).toBe('8192');
+    await inputValue(tokensInput, '32768'); await clickText('Fixture');
+    expect(element<HTMLInputElement>(tokensInput).value).toBe('16384');
+    await click('[aria-label="Remove context limit model"]');
+    expect(document.querySelector(modelInput)).toBeNull();
+    await clickText('Save settings');
+    expect(panel.writes[0].providers[0].contextWindows).toEqual({});
+    expect(panel.writes[0].providers[1].contextWindows).toEqual({ model: 32768 });
+  });
+
+  it.each(['', '1023', '10000001', '2.5', '-1', '1e4'])('rejects invalid token count %s before saving', async tokens => {
+    const panel = await mountSettings();
+    await clickText('Add context limit'); await inputValue(modelInput, 'model'); await inputValue(tokensInput, tokens);
+    await clickText('Save settings');
+    expect(panel.writes).toHaveLength(0);
+    expect(element('[role="alert"]').textContent).toContain('whole token count from 1,024 to 10,000,000');
+    expect(element<HTMLInputElement>(modelInput).value).toBe('model');
+    expect(panel.onClose).not.toHaveBeenCalled();
+  });
+
+  it('rejects empty IDs and duplicates after trimming rather than overwriting an earlier row', async () => {
+    const panel = await mountSettings(); await clickText('Add context limit'); await inputValue(tokensInput, '1024');
+    await clickText('Save settings'); expect(panel.writes).toHaveLength(0);
+    expect(element('[role="alert"]').textContent).toContain('enter an exact model ID');
+    await inputValue(modelInput, 'model'); await clickText('Add context limit');
+    await inputValue('[aria-label="Model ID 2"]', ' model '); await inputValue('[aria-label="Context window tokens 2"]', '2048');
+    await clickText('Save settings'); expect(panel.writes).toHaveLength(0);
+    expect(element('[role="alert"]').textContent).toContain('already has an override');
+  });
+
+  it('allows both limit boundaries and prototype-like exact model IDs safely', async () => {
+    const panel = await mountSettings(); await clickText('Add context limit');
+    await inputValue(modelInput, '__proto__'); await inputValue(tokensInput, '1024');
+    await clickText('Add context limit'); await inputValue('[aria-label="Model ID 2"]', 'constructor'); await inputValue('[aria-label="Context window tokens 2"]', '10000000');
+    await clickText('Save settings');
+    expect(Object.entries(panel.writes[0].providers[0].contextWindows!)).toEqual([['__proto__', 1024], ['constructor', 10000000]]);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it('caps rows at 100 and lets removing a row free a slot', async () => {
+    const value = { ...settings, providers: [{ ...settings.providers[0], contextWindows: Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`model-${index}`, 4096])) }] };
+    await mountSettings(value);
+    expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Add context limit')?.disabled).toBe(true);
+    await click('[aria-label="Remove context limit model-0"]');
+    expect([...document.querySelectorAll('button')].find(button => button.textContent === 'Add context limit')?.disabled).toBe(false);
+  });
+
+  it('retains override drafts after failure and prevents duplicate saves or edits during a pending save', async () => {
+    const panel = await mountSettings(); await clickText('Add context limit');
+    await inputValue(modelInput, 'model'); await inputValue(tokensInput, '32768');
+    panel.failure = 'offline'; await clickText('Save settings');
+    expect(element<HTMLInputElement>(tokensInput).value).toBe('32768');
+    expect(element('[role="alert"]').textContent).toContain('offline');
+    panel.failure = undefined; const pending = deferred<Settings>(); panel.pending = pending;
+    const save = [...document.querySelectorAll('button')].find(button => button.textContent === 'Save settings')!;
+    await act(async () => { save.click(); save.click(); });
+    expect(panel.writes).toHaveLength(2);
+    expect(element<HTMLInputElement>(tokensInput).disabled).toBe(true);
+    expect(element<HTMLButtonElement>('[aria-label="Remove context limit model"]').disabled).toBe(true);
+    await act(async () => pending.resolve(panel.writes[1]));
+    expect(panel.onSave).toHaveBeenCalledOnce();
   });
 });

@@ -29,7 +29,7 @@ npm start
 - Streaming conversations, visible reasoning, Markdown/code copying, tool activity, and cancellation.
 - Build and read-only Plan modes, explicit tool approvals, remembered per-session tool grants with reset, and opt-in automatic approval.
 - Structured agent questions with deliberate option/custom replies, browser reload recovery, and interactive CLI input—separate from tool approval.
-- Bounded transient HTTP retries, repeated-tool-loop detection, and one-shot automatic context-overflow recovery that preserves the latest task and archives older history.
+- Bounded transient HTTP retries, repeated-tool-loop detection, advisory request-context estimates, and one-shot proactive/overflow compaction that preserves the latest task and archives older history.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
@@ -70,6 +70,14 @@ When the model needs a decision, **Question from agent** offers choices and a **
 Reloading the browser restores a live pending question; an answer from another tab removes the old controls. An accepted answer and its tool result are saved together, and retrying that same answer cannot continue the model twice. **Stop response** cancels an unanswered question and holds queued follow-ups. A server restart interrupts unanswered questions rather than replaying the model; inspect and recover the interrupted history before continuing. Forks, imports, undo, and redo never revive question controls. Questions currently support one selection or one custom reply, not multi-select forms. Answers are sent to the provider—never include credentials.
 
 The CLI prints numbered choices to stderr while continuing to consume live events. Enter a number or custom text; prefix a numeric custom reply with `text:`. With `--json`, stdout remains NDJSON. Noninteractive input cannot answer questions, even with `--auto`: the CLI cancels the run and exits nonzero with instructions to use the app or an interactive terminal. EOF and interrupts also cancel instead of choosing for you.
+
+## Context estimates and compaction
+
+**Context estimate** on a response is an approximate snapshot taken before its provider request—not a live remaining-token counter or a measurement of your unsent draft. It accounts for outbound text, instructions, and selected tool schemas. Images and opaque provider state are marked uncertain rather than counted by their encoded length.
+
+Set exact model limits under **Settings → provider → Context window overrides** when you know your gateway's capacity. Otherwise Lite uses validated total-context metadata from successful explicit model discovery for up to ten minutes, scoped to that provider configuration. Missing limits remain unknown; model names are never used to guess capacity. Subscription catalogs are not cached because account identity can change independently of provider settings. Input-only metadata is not substituted for a total context window.
+
+Near a known limit, Lite may summarize a safe older prefix once if it would meaningfully reduce the request. The latest user turn and its tool groups remain intact; original history is archived, and recorded undo/redo stays exact. A failed proactive summary leaves the original request intact and falls back to ordinary generation. Proactive compaction and recovery from an explicit provider context rejection share one automatic attempt per turn. Estimates never hard-block a large latest task, but the provider can still reject it. Use a larger-context model or smaller attachments when there is no safe older prefix to compact. Summaries are model-generated, can omit details, and incur a provider request.
 
 ## Undo, redo, and recovery
 

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { validContextWindow } from './budget.js';
 import type { Model, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
 
 export interface ProviderMessage {
@@ -482,12 +483,26 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
   const response = await request(url, { headers, signal: requestSignal });
   let result: any;
   try { result = await response.json(); } catch { throw new ProviderError('Provider returned an invalid model catalog.'); }
-  const data = Array.isArray(result) ? result : result.data || result.models;
+  const data = Array.isArray(result) ? result : result?.data || result?.models;
   if (!Array.isArray(data)) throw new ProviderError('Provider returned an unsupported model catalog. Configure explicit model IDs instead.');
-  const models: Model[] = data.filter((m: any) => m && (m.id || m.slug)).map((m: any) => ({
-    id: m.id || m.slug, name: m.display_name || m.name || m.id || m.slug, providerId: provider.id,
-    ...(Number.isFinite(m.context_window) ? { contextWindow: m.context_window } : {}),
-  }));
-  for (const id of provider.models || []) if (!models.some(m => m.id === id)) models.push({ id, name: id, providerId: provider.id });
+  const models: Model[] = [];
+  const validName = (value: unknown): value is string => typeof value === 'string' && !!value && value === value.trim() && value.length <= 250 && !/[\p{Cc}\p{Cf}]/u.test(value);
+  const seen = new Set<string>();
+  for (const value of data.slice(0, 2000)) {
+    if (!value || typeof value !== 'object') continue;
+    const id = validName(value.id) ? value.id : validName(value.slug) ? value.slug : undefined;
+    if (!id) continue;
+    if (seen.has(id)) {
+      // Ambiguous duplicate metadata is not authoritative for budgeting.
+      const previous = models.find(model => model.id === id);
+      if (previous) delete previous.contextWindow;
+      continue;
+    }
+    seen.add(id);
+    models.push({ id, name: validName(value.display_name) ? value.display_name : validName(value.name) ? value.name : id, providerId: provider.id,
+      ...(validContextWindow(value.context_window) ? { contextWindow: value.context_window } : {}),
+    });
+  }
+  for (const id of provider.models || []) if (validName(id) && !models.some(m => m.id === id)) models.push({ id, name: id, providerId: provider.id });
   return models.sort((a, b) => a.name.localeCompare(b.name));
 }

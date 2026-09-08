@@ -333,6 +333,21 @@ summary::-webkit-details-marker { display: none; }
 .message-actions > .copy-button span { display: none; }
 .message-actions .icon-button { width: 25px; height: 25px; }
 .usage { color: var(--faint); font-size: 9px; margin-left: 7px; }
+.context-estimate { margin-top: 13px; color: var(--secondary); max-width: 100%; }
+.context-estimate > summary { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; min-height: 28px; list-style: none; cursor: pointer; font-size: 10px; line-height: 1.6; }
+.context-estimate > summary span { min-width: 0; overflow-wrap: anywhere; }
+.context-estimate > summary:hover { color: var(--text); }
+.context-estimate[open] > summary .disclosure-chevron { transform: rotate(90deg); }
+.context-estimate-body { padding: 12px 14px; margin-top: 5px; border: 1px solid var(--border); border-radius: 7px; background: var(--subtle); max-width: 100%; font-size: 11px; line-height: 1.65; overflow-wrap: anywhere; }
+.context-estimate-body p { margin: 0 0 10px; }
+.context-estimate-body > :last-child { margin-bottom: 0; }
+.context-estimate-body dl { display: flex; flex-direction: column; gap: 6px; margin: 0 0 12px; }
+.context-estimate-body dl > div { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 12px; }
+.context-estimate-body dt { color: var(--muted); }
+.context-estimate-body dd { margin: 0; color: var(--text); min-width: 0; }
+.context-estimate-warning { color: var(--amber); }
+.context-estimate-reason { white-space: pre-wrap; }
+@media (max-width: 480px) { .context-estimate > summary { min-height: 36px; }.context-estimate-body { padding: 11px; }.context-estimate-body dl > div { grid-template-columns: 100px minmax(0, 1fr); gap: 8px; } }
 .system-message { display: flex; align-items: flex-start; gap: 7px; font-size: 11px; color: var(--muted); background: var(--subtle); border: 1px solid var(--border); padding: 11px 13px; border-radius: 7px; line-height: 1.6; margin: 16px 0; }
 .system-message svg { margin-top: 3px; }
 .thinking { color: var(--muted); border-left: 1px solid var(--border); padding-left: 12px; margin: 2px 0 18px; }
@@ -507,6 +522,20 @@ summary::-webkit-details-marker { display: none; }
 .secret-input:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 .secret-input input:focus { outline: 0; }
 .provider-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 1px; }
+.context-overrides { border: 1px solid var(--border); border-radius: 7px; min-width: 0; }
+.context-overrides > summary { display: flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; padding: 12px; color: var(--secondary); font-size: 11px; }
+.context-overrides > summary > span { color: var(--muted); margin-left: auto; font-size: 10px; }
+.context-overrides[open] > summary > svg { transform: rotate(90deg); }
+.context-overrides-body { border-top: 1px solid var(--border); padding: 12px; min-width: 0; }
+.context-overrides-body > .field-hint { margin: 0 0 13px; }
+.context-overrides-body > .field-hint:last-child { margin-bottom: 0; }
+.context-overrides-empty { font-size: 11px; color: var(--muted); margin-bottom: 15px; }
+.context-override-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, .8fr) 29px; gap: 9px; align-items: end; margin-bottom: 13px; }
+.context-override-row > label { min-width: 0; }
+.context-override-row > .icon-button { margin-bottom: 4px; }
+.context-overrides-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin: 3px 0 13px; }
+.context-overrides-footer .text-button { min-height: 29px; }
+@media (max-width: 600px) { .context-override-row { grid-template-columns: minmax(0, 1fr) 36px; gap: 10px; }.context-override-row > label:first-child { grid-column: 1 / -1; }.context-override-row > .icon-button { width: 36px; height: 36px; margin: 0 0 2px; }.context-overrides-footer .text-button { min-height: 36px; } }
 .quiet-callout { background: var(--subtle); border: 1px solid var(--border); border-radius: 7px; color: var(--muted); padding: 12px; display: flex; align-items: flex-start; gap: 9px; font-size: 11px; line-height: 1.7; }
 .quiet-callout p { margin: 0; font-size: 10px; }
 .quiet-callout svg { margin-top: 2px; }

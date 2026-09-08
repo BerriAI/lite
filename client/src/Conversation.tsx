@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import { ArrowDown, Check, ChevronRight, Clock3, File, GitFork, Shield, Terminal, X } from 'lucide-react';
 import type { Message, PermissionRequest, SessionDetail, ToolCall } from '../../shared/types';
 import { CopyButton, Logo, SpeedRail } from './ui';
+import { ContextIndicator } from './ContextIndicator';
 
 export function Markdown({ content }: { content: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -58,6 +59,7 @@ function MessageView({ message, running, onFork, disabled }: { message: Message;
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
       {message.toolCalls && message.toolCalls.length > 0 && <div className="tool-cards">{message.toolCalls.map(t => <ToolCard tool={t} key={t.id} />)}</div>}
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
+      {assistant && message.context && <ContextIndicator context={message.context} />}
     </div>
     {assistant && !running && <div className="message-actions"><CopyButton text={message.content} /><button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>{message.usage && <span className="usage" title="Reported by your model provider">{message.usage.outputTokens.toLocaleString()} tokens{message.usage.durationMs ? ` · ${(message.usage.durationMs / 1000).toFixed(1)}s` : ''}{message.usage.cost !== undefined ? ` · $${message.usage.cost.toFixed(4)}` : ''}</span>}</div>}
   </article>;
