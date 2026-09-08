@@ -47,9 +47,16 @@ export class TerminalManager {
   private closed = false;
   constructor(private readonly store: Store, private readonly spawnPty: PtyFactory = spawn) {}
 
+  private terminalSession(sessionId: string) {
+    // Private durable identity, not public parentId or caller-supplied metadata.
+    // Reject before reading the workspace/login shell or starting a native PTY.
+    if (this.store.isChild(sessionId)) throw fail(409, 'Researcher child sessions are read-only and cannot open a terminal.');
+    return this.store.session(sessionId);
+  }
+
   validate(sessionId: string) {
     if (this.closed) throw fail(503, 'Terminal service is stopping.');
-    const session = this.store.session(sessionId);
+    const session = this.terminalSession(sessionId);
     const entry = this.terminals.get(sessionId);
     if (!entry && this.terminals.size + this.stopping.size >= TERMINAL_LIMITS.terminals) throw fail(429, 'Terminal limit reached. End another shell first.');
     if (entry && entry.clients.size >= TERMINAL_LIMITS.clients) throw fail(429, 'Too many terminal viewers. Close another terminal tab.');
@@ -166,8 +173,8 @@ export class TerminalManager {
       return;
     }
     if (++client.messages > 300) { bad(); return; }
-    try { this.store.session(entry.sessionId); }
-    catch { this.dispose(entry, 'Session no longer exists.'); return; }
+    try { this.terminalSession(entry.sessionId); }
+    catch { this.dispose(entry, 'Session no longer permits a terminal.'); return; }
     try {
       if (value.type === 'input' && Object.keys(value).length === 2 && typeof value.data === 'string' && value.data.length > 0 && Buffer.byteLength(value.data) <= TERMINAL_LIMITS.inputBytes) {
         client.inputBytes += Buffer.byteLength(value.data);
@@ -184,8 +191,8 @@ export class TerminalManager {
   /** Called by the transport heartbeat; also checks deletion while a shell is detached. */
   sweep(now = Date.now()) {
     for (const entry of this.terminals.values()) {
-      try { this.store.session(entry.sessionId); }
-      catch { this.dispose(entry, 'Session no longer exists.'); continue; }
+      try { this.terminalSession(entry.sessionId); }
+      catch { this.dispose(entry, 'Session no longer permits a terminal.'); continue; }
       if (!entry.clients.size && now - entry.lastDetach >= TERMINAL_LIMITS.idleMs) { this.dispose(entry, 'Detached shell expired after 30 minutes.'); continue; }
       for (const client of entry.clients) {
         if (!client.alive) client.socket.terminate();
@@ -260,7 +267,7 @@ export function attachTerminals(server: Server, store: Store): { close(): Promis
   const wss = new WebSocketServer({ noServer: true, maxPayload: TERMINAL_LIMITS.messageBytes, perMessageDeflate: false, clientTracking: true });
   let closing: Promise<void> | undefined;
   const reject = (socket: Duplex, status: number) => {
-    const reason = ({ 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found', 429: 'Too Many Requests', 503: 'Service Unavailable' } as Record<number, string>)[status] || 'Bad Request';
+    const reason = ({ 400: 'Bad Request', 403: 'Forbidden', 404: 'Not Found', 409: 'Conflict', 429: 'Too Many Requests', 503: 'Service Unavailable' } as Record<number, string>)[status] || 'Bad Request';
     socket.on('error', () => socket.destroy());
     socket.end(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () => socket.destroy());
   };

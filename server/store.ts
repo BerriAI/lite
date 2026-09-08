@@ -25,7 +25,18 @@ export class Store {
       CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);
-      CREATE TABLE IF NOT EXISTS session_profiles (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS session_profiles (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS delegations (
+        id TEXT PRIMARY KEY,
+        parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        parent_turn_id TEXT NOT NULL,
+        parent_message_id TEXT NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        child_session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+        status TEXT NOT NULL,
+        data TEXT NOT NULL,
+        UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
+      CREATE INDEX IF NOT EXISTS delegations_parent ON delegations(parent_session_id);`);
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
@@ -58,13 +69,21 @@ export class Store {
     return this.publicSettings();
   }
   sessions(query = '', archived = false): Session[] {
-    const rows = this.db.prepare('SELECT data FROM sessions').all() as { data: string }[];
+    const rows = this.db.prepare('SELECT s.data FROM sessions s WHERE NOT EXISTS (SELECT 1 FROM delegations d WHERE d.child_session_id=s.id)').all() as { data: string }[];
     return rows.map(r => this.normalizedSession(JSON.parse(r.data) as Session)).filter(s => s.archived === archived && (!query || s.title.toLowerCase().includes(query.toLowerCase()))).sort((a,b) => b.updatedAt-a.updatedAt);
+  }
+  isChild(id: string): boolean { return Boolean(this.db.prepare('SELECT 1 FROM delegations WHERE child_session_id=?').get(id)); }
+  private assertChildMutable(id: string): void {
+    const row = this.db.prepare('SELECT status FROM delegations WHERE child_session_id=?').get(id) as { status: string } | undefined;
+    if (row && row.status !== 'running') throw Object.assign(new Error('Researcher transcripts are immutable after completion.'), { status: 409 });
   }
   session(id: string): Session {
     const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as { data: string } | undefined;
     if (!row) throw Object.assign(new Error('Session not found'), { status: 404 });
     return this.normalizedSession(JSON.parse(row.data));
+  }
+  private detachedMessage(message: Message): Message {
+    return { ...message, ...(message.toolCalls ? { toolCalls: message.toolCalls.map(({ delegationId: _delegation, ...call }) => call) } : {}) };
   }
   private normalizedSession(session: Session): Session {
     return { ...session, configRevision: Number.isSafeInteger(session.configRevision) && session.configRevision! >= 0 ? session.configRevision : 0 };
@@ -118,6 +137,7 @@ export class Store {
   }
   updateSession(id: string, patch: Partial<Session>, expectedConfigRevision?: number): Session {
     return this.atomic(() => {
+      this.assertChildMutable(id);
       const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
       const { profile: _profile, configRevision: _revision, ...safe } = patch;
       const changed = (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
@@ -130,6 +150,7 @@ export class Store {
   }
   applyProfile(id: string, expectedConfigRevision: number, resolved: ResolvedProfile, selection: ApplyProfileRequest['selection'] = {}): Session {
     return this.atomic(() => {
+      this.assertChildMutable(id);
       const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
       const snapshot = this.resolvedSnapshot(previous.workspace, resolved);
       const session: Session = { ...previous, ...(selection.providerId !== undefined ? { providerId: selection.providerId } : {}), ...(selection.model !== undefined ? { model: selection.model } : {}), ...(selection.mode !== undefined ? { mode: selection.mode } : {}), updatedAt: Date.now(), configRevision: previous.configRevision! + 1 };
@@ -139,20 +160,31 @@ export class Store {
       return session;
     });
   }
-  deleteSession(id: string) { this.session(id); this.db.prepare('DELETE FROM sessions WHERE id=?').run(id); }
+  deleteSession(id: string) {
+    this.session(id);
+    if (this.isChild(id)) throw Object.assign(new Error('Delete a researcher through its originating parent session.'), { status: 409 });
+    this.atomic(() => {
+      const children = this.db.prepare('SELECT child_session_id FROM delegations WHERE parent_session_id=?').all(id) as { child_session_id: string }[];
+      for (const child of children) this.db.prepare('DELETE FROM sessions WHERE id=?').run(child.child_session_id);
+      this.db.prepare('DELETE FROM sessions WHERE id=?').run(id);
+    });
+  }
   messages(id: string): Message[] {
     this.session(id);
     return (this.db.prepare('SELECT data FROM messages WHERE session_id=? ORDER BY rowid').all(id) as {data:string}[]).map(r => JSON.parse(r.data));
   }
   saveMessage(message: Message) {
+    this.assertChildMutable(message.sessionId);
     this.db.prepare('INSERT INTO messages(id,session_id,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(message.id, message.sessionId, JSON.stringify(message));
   }
   replaceMessages(id: string, messages: Message[]) {
+    this.assertChildMutable(id);
     this.db.exec('BEGIN');
     try { this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id); for (const message of messages) this.saveMessage(message); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   compactHistory(id: string, messages: Message[]): Session {
+    if (this.isChild(id)) throw Object.assign(new Error('Researcher history cannot be compacted.'), { status: 409 });
     // A savepoint is atomic standalone and also participates in History.compact's
     // outer transaction, so an archive cannot commit before its checkpoint does.
     this.db.exec('SAVEPOINT lite_compaction');
@@ -160,7 +192,7 @@ export class Store {
       const source=this.session(id);
       const snapshot=this.profileSnapshot(id);
       const archive=this.createSession({...source,id:randomUUID(),title:`${source.title} · before compaction`,parentId:id,createdAt:Date.now(),updatedAt:Date.now(),archived:true},snapshot?{workspace:source.workspace,catalogRevision:snapshot.active.revision,snapshot}:undefined);
-      for(const message of this.messages(id))this.saveMessage({...message,id:randomUUID(),sessionId:archive.id});
+      for(const message of this.messages(id))this.saveMessage({...this.detachedMessage(message),id:randomUUID(),sessionId:archive.id});
       this.saveTodos(archive.id,this.todos(id));
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
       for(const message of messages)this.saveMessage(message);
@@ -232,6 +264,7 @@ export class Store {
     return (this.db.prepare('SELECT id,data FROM events WHERE session_id=? AND id>? ORDER BY id LIMIT 10000').all(id, after) as {id:number,data:string}[]).map(r => ({ ...JSON.parse(r.data), id:r.id }));
   }
   fork(id: string, messageId?: string): Session {
+    if (this.isChild(id)) throw Object.assign(new Error('Researcher sessions cannot be forked.'), { status: 409 });
     return this.atomic(() => {
     const source = this.session(id), messages = this.messages(id), snapshot = this.profileSnapshot(id);
     const end = messageId ? messages.findIndex(m => m.id === messageId) : messages.length - 1;
@@ -242,7 +275,7 @@ export class Store {
     const copied = messages.slice(0, completeToolBoundary(messages, end + 1));
     // Tool IDs belong to provider history, not database keys. Preserve them and
     // signed provider metadata together; only persisted message IDs are new.
-    for (const m of copied) this.saveMessage({ ...m, id:randomUUID(), sessionId:session.id });
+    for (const m of copied) this.saveMessage({ ...this.detachedMessage(m), id:randomUUID(), sessionId:session.id });
     this.saveTodos(session.id, this.todos(id));
     return session;
     });

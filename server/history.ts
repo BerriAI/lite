@@ -114,12 +114,18 @@ export class History {
     this.save(row, checkpoint); this.prune(id);
   }
   accept(id: string, message: Message, queuedId?: string): void {
-    this.assertReady(id);
-    if (message.sessionId !== id || message.role !== 'user' || !message.id) throw invalid('A checkpoint requires a matching user message.');
-    const messages = this.store.messages(id);
-    if (completeToolBoundary(messages) !== messages.length) throw conflict('Existing history contains an incomplete tool group. Explicitly recover it before accepting another turn.');
-    if (this.rows(id).some(row => row.status === 'open')) throw conflict('The previous turn has not finished.');
-    this.transaction(() => {
+    this.acceptPrepared(id, message, () => {}, queuedId);
+  }
+  /** The preparation and accepted checkpoint share one outer transaction. Used
+   * only for child creation; no live-turn registration survives a failed commit. */
+  acceptPrepared<T>(id: string, message: Message, prepare: () => T, queuedId?: string): T {
+    const prepared = this.transaction(() => {
+      const result = prepare();
+      this.assertReady(id);
+      if (message.sessionId !== id || message.role !== 'user' || !message.id) throw invalid('A checkpoint requires a matching user message.');
+      const messages = this.store.messages(id);
+      if (completeToolBoundary(messages) !== messages.length) throw conflict('Existing history contains an incomplete tool group. Explicitly recover it before accepting another turn.');
+      if (this.rows(id).some(row => row.status === 'open')) throw conflict('The previous turn has not finished.');
       if (this.store.db.prepare('SELECT id FROM messages WHERE id=?').get(message.id)) throw conflict('This user message was already accepted.');
       const queue = this.store.queue(id);
       if (queuedId) {
@@ -134,8 +140,22 @@ export class History {
       this.store.db.prepare('INSERT INTO history_checkpoints(id,session_id,status,data) VALUES(?,?,?,?)').run(checkpoint.id, id, 'open', JSON.stringify(checkpoint));
       this.store.saveMessage(message);
       this.prune(id);
+      return result;
     });
     liveTurns.get(this.store)!.add(id);
+    return prepared;
+  }
+  /** Verify the task origin belongs to the currently live accepted user turn. */
+  assertAcceptedTurn(id: string, userId: string): void {
+    const row = this.rows(id).findLast(row => row.status === 'open');
+    if (!row || !liveTurns.get(this.store)?.has(id) || this.read(row).userId !== userId) throw conflict('Delegation requires its matching live accepted parent turn.');
+  }
+  /** Child research cannot mutate the workspace; interrupted checkpoints need
+   * no family file recovery and remain inert rather than being replayed. */
+  interruptChild(id: string): void {
+    if (!this.store.isChild(id)) throw conflict('Only a private researcher child can be interrupted this way.');
+    liveTurns.get(this.store)?.delete(id);
+    this.store.db.prepare("UPDATE history_checkpoints SET status='interrupted' WHERE session_id=? AND status='open'").run(id);
   }
   private prune(id: string): void {
     const rows = this.rows(id);

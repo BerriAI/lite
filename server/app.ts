@@ -46,6 +46,7 @@ export function createApp(options:AppOptions = {}) {
     res.setHeader('X-Frame-Options','DENY');
     next();
   });
+  app.use('/api/sessions/:id',(req,res,next)=>{if(runner.delegations.isChild(req.params.id))return res.status(req.method==='GET'||req.method==='HEAD'?404:409).json({error:'Research transcripts are read-only and available through their parent task.'});next();});
   app.use('/api',express.json({limit:'12mb'}));
   const mcpConfigRevision=()=>options.external?.configRevision?.()??createHash('sha256').update(JSON.stringify(store.settings().mcpServers,(_key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value)).digest('hex');
   const mcpStatus=()=>({servers:options.external?.status?.()??[],configRevision:mcpConfigRevision()});
@@ -108,7 +109,20 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),delegations:runner.delegations.list(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id/delegations',(req,res)=>res.json({delegations:runner.delegations.list(req.params.id)}));
+  app.get('/api/sessions/:id/delegations/:delegationId',(req,res)=>{
+    const detail=runner.delegations.transcript(req.params.id,req.params.delegationId);
+    res.json({...detail,todos:store.todos(detail.session.id),permissions:[],questions:[],queue:{items:[],paused:true},history:{hasCheckpoints:true,canUndo:false,canRedo:false}});
+  });
+  app.post('/api/sessions/:id/delegations/:delegationId/cancel',async(req,res)=>res.json({delegation:await runner.cancelDelegation(req.params.id,req.params.delegationId)}));
+  app.get('/api/sessions/:id/delegations/:delegationId/events',(req,res)=>{
+    const delegation=runner.delegations.get(req.params.id,req.params.delegationId),id=delegation.childSessionId;
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.setHeader('X-Accel-Buffering','no');res.flushHeaders();
+    const send=(event:any)=>{res.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);};
+    const cursor=Number(req.get('last-event-id')||req.query.after||0);if(Number.isFinite(cursor)&&cursor>0)for(const event of store.events(id,cursor))send(event);
+    const unsubscribe=bus.subscribe(id,send);res.write(': connected\n\n');const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000);heartbeat.unref();req.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
+  });
   app.get('/api/sessions/:id/profile',async(req,res)=>{
     const id=req.params.id,session=store.session(id),snapshot=store.profileSnapshot(id),signal=requestSignal(res);
     const source=snapshot?await profileSourceStatus(session.workspace,snapshot,signal):{status:'inactive' as const,diagnostics:[]};
@@ -176,7 +190,7 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/sessions/:id/changes',(req,res)=>{store.session(req.params.id);res.json({changes:store.changes(req.params.id)});});
   app.get('/api/sessions/:id/history',(req,res)=>res.json(runner.history.state(req.params.id)));
   const publishHistory=(id:string)=>{
-    bus.emit(id,'reset',{messages:store.messages(id)});
+    bus.emit(id,'reset',{messages:store.messages(id),delegations:runner.delegations.list(id)});
     bus.emit(id,'todos',store.todos(id));bus.emit(id,'queue',store.queue(id));
     bus.emit(id,'session',store.session(id));bus.emit(id,'history',runner.history.state(id));
   };

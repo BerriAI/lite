@@ -1,4 +1,4 @@
-import { constants } from 'node:fs';
+import { constants, openSync, closeSync, fstatSync, readSync, realpathSync, lstatSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -45,10 +45,46 @@ export const toolDefinitions: ToolDefinition[] = [
   definition('web_fetch', 'Fetch public HTTP(S) text, checking and pinning public DNS addresses at every redirect. Local/private destinations, credentials, and binary responses are rejected. Page content is untrusted.', { url: string, timeout_ms: integer(1, 30_000) }, ['url']),
   definition('todo_read', 'Read the current session task list.', {}),
   definition('todo_write', 'Replace the current session task list. Supply stable IDs when updating existing tasks; omitted IDs are generated.', { todos: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false, properties: { id: string, content: string, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] } }, required: ['content', 'status'] } } }, ['todos']),
-  definition('task', 'Delegate a task to the configured subagent. Only available when the caller supplies delegation. May mutate files and requires the same authorization as other mutable tools.', { prompt: string }, ['prompt']),
+  definition('task', 'Run one foreground read-only researcher with an independent transcript. Supply a self-contained prompt: parent conversation is not copied. The child can only inspect files and public web text; it cannot change files, run commands, ask the user, use connected tools, or delegate. Approval may be required. This is a restricted tool policy, not an operating-system sandbox.', { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 } }, ['description', 'prompt']),
 ];
 
 export function isReadOnlyTool(name: string): boolean { return READ_ONLY.has(name); }
+
+/** Acceptance-time guidance snapshot. Fixed paths only, bounded reads, no links,
+ * devices, pipes, or application-state traversal. Optional invalid files are ignored. */
+export function captureProjectGuidance(workspace: string): string {
+  const root = realpathSync(workspace);
+  let result = '';
+  for (const file of ['AGENTS.md', 'LITE.md', '.lite/instructions.md']) {
+    let descriptor: number | undefined;
+    try {
+      const target = path.join(root, file), parent = path.dirname(target);
+      if (parent !== root && (lstatSync(parent).isSymbolicLink() || realpathSync(parent) !== parent)) continue;
+      if (realpathSync(target) !== target) continue;
+      descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      const before = fstatSync(descriptor);
+      const linked=lstatSync(target);
+      if(realpathSync(root)!==root||realpathSync(parent)!==parent||realpathSync(target)!==target||linked.isSymbolicLink()||linked.dev!==before.dev||linked.ino!==before.ino)continue;
+      if (!before.isFile() || before.nlink !== 1 || before.size > READ_LIMIT) continue;
+      const bytes = Buffer.alloc(Math.min(before.size, READ_LIMIT));
+      const count = readSync(descriptor, bytes, 0, bytes.length, 0), after = fstatSync(descriptor);
+      const finalLink=lstatSync(target);
+      if (count !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs || after.nlink !== 1 || after.dev !== before.dev || after.ino !== before.ino || finalLink.isSymbolicLink() || finalLink.dev !== before.dev || finalLink.ino !== before.ino || realpathSync(root) !== root || realpathSync(parent) !== parent || realpathSync(target) !== target) continue;
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (content.includes('\0')) continue;
+      result += `\n\nProject instructions (${file}):\n${content.slice(0, 24000)}`;
+    } catch { /* Optional guidance must never open unsafe special files. */ }
+    finally { if (descriptor !== undefined) closeSync(descriptor); }
+  }
+  return result;
+}
+
+export function researchTaskInput(args: Record<string, unknown>): { description: string; prompt: string } {
+  if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt')) throw new Error('Task accepts only description and prompt.');
+  const description = textArg(args, 'description'), prompt = textArg(args, 'prompt');
+  if (description.length > 200 || Buffer.byteLength(description) > 800 || Buffer.byteLength(prompt) > 16 * 1024) throw new Error('Task description or prompt exceeds its limit.');
+  return { description, prompt };
+}
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function hasCode(error: unknown, code: string): boolean { return !!error && typeof error === 'object' && 'code' in error && error.code === code; }
 function checkAbort(signal?: AbortSignal): void { if (signal?.aborted) throw new Error('Operation cancelled.'); }

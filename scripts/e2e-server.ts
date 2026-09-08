@@ -13,6 +13,8 @@ await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'expor
 let providerRequests=0;
 const profileRequests:{model:string;messages:any[];tools:any[]}[]=[];
 const pendingSummaries=new Set<()=>void>();
+const delegationRequests:{model:string;messages:any[];tools:any[]}[]=[];
+const pendingDelegations=new Set<()=>void>();
 const mock=createServer(async(req,res)=>{
   if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'},{id:'budget-model',context_window:16384}]}));return;}
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);let data:any;
@@ -21,7 +23,8 @@ const mock=createServer(async(req,res)=>{
   const lastUser=data.messages.filter((m:any)=>m.role==='user').at(-1)?.content||'';
   const prompt=typeof lastUser==='string'?lastUser:JSON.stringify(lastUser);
   if(prompt.includes('PROFILE_BROWSER')){profileRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(profileRequests.length>30)profileRequests.shift();}
-  if(prompt.includes('provider failure')){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
+  if(prompt.includes('DELEGATE_BROWSER')||prompt.includes('DELEGATE_CHILD')){delegationRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(delegationRequests.length>100)delegationRequests.shift();}
+  if(prompt.includes('provider failure')||(prompt.includes('DELEGATE_CHILD')&&prompt.includes('CHILD_FAILURE'))){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
   let toolCall=false;
@@ -32,6 +35,23 @@ const mock=createServer(async(req,res)=>{
       if(res.destroyed)return;
     }
     if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('DELEGATE_CHILD')){
+    if(data.messages.at(-1)?.role!=='tool'){
+      const name=prompt.includes('FORCE_WRITE')?'write_file':prompt.includes('FORCE_NESTED')?'task':prompt.includes('FORCE_QUESTION')?'ask_user':'read_file';
+      const args=name==='write_file'?{path:'child-forbidden.txt',content:'Child writes must never execute.'}:name==='task'?{description:'Forbidden nested research',prompt:'This nested task must never run.'}:name==='ask_user'?{question:'This child must not ask.',options:[{id:'no',label:'No'}]}:{path:'research.txt'};
+      toolCall=true;emit({tool_calls:[{index:0,id:'delegated-read',type:'function',function:{name,arguments:JSON.stringify(args)}}]});
+    }else{
+      emit({content:'Researcher is reviewing the observed tool result.\n\n'});
+      if(prompt.includes('HOLD_CHILD')){
+        await new Promise<void>(resolve=>{const release=()=>{pendingDelegations.delete(release);res.off('close',release);resolve();};pendingDelegations.add(release);res.once('close',release);});
+        if(res.destroyed)return;
+      }
+      emit({content:`Research result: ${data.messages.at(-1).content}\n\nThis researcher made no file changes.`});
+    }
+  }else if(prompt.includes('DELEGATE_BROWSER')){
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
+    else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
   }else if(prompt.includes('MCP_BROWSER')&&data.messages.at(-1)?.role!=='tool'){
     const external=data.tools?.find((tool:any)=>tool.function?.name.startsWith('mcp_'));
     if(external){toolCall=true;emit({tool_calls:[{index:0,id:'browser-mcp-call',type:'function',function:{name:external.function.name,arguments:JSON.stringify({text:prompt})}}]});}
@@ -60,6 +80,8 @@ const mcp=new McpManager(()=>store.settings().mcpServers);
 const{app,runner}=createApp({store,external:mcp});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
 app.get('/fixture/profiles',(_req,res)=>res.json({requests:profileRequests}));
+app.get('/fixture/delegations',(_req,res)=>res.json({requests:delegationRequests,pending:pendingDelegations.size}));
+app.post('/fixture/delegations/release',(_req,res)=>{for(const release of [...pendingDelegations])release();res.json({ok:true});});
 app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
 app.post('/fixture/summaries/release',(_req,res)=>{for(const release of [...pendingSummaries])release();res.json({ok:true});});
 const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);

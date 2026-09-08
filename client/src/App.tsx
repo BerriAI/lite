@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
-import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft } from './api';
+import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft, visibleDelegations } from './api';
+import { TaskCard, TaskTranscript, delegationPath } from './TaskCard';
+import type { DelegationSummary } from '../../shared/delegation';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
 import type { ApplyProfileRequest, ProfileChoice } from '../../shared/profiles';
@@ -42,6 +44,11 @@ export default function App() {
   const [submissionBusy, setSubmissionBusy] = useState(false);
   const historyOperation = useRef(false);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [openTask, setOpenTask] = useState<{ parentSessionId: string; id: string } | null>(null);
+  const [taskErrors, setTaskErrors] = useState(new Map<string, string>());
+  const [cancellingTasks, setCancellingTasks] = useState(new Set<string>());
+  const taskOperations = useRef(new Set<string>());
+  const closeTask = useCallback(() => setOpenTask(null), []);
   const [questionDrafts, setQuestionDrafts] = useState(new Map<string, QuestionDraft>());
   const [questionErrors, setQuestionErrors] = useState(new Map<string, string>());
   const [answering, setAnswering] = useState(new Set<string>());
@@ -79,6 +86,9 @@ export default function App() {
   const archiveRef = useRef(archived); archiveRef.current = archived;
   const detailRef = useRef(detail); detailRef.current = detail;
   const running = detail?.session.status === 'running' || detail?.session.status === 'waiting';
+  const delegations = detail ? visibleDelegations(detail) : [];
+  const transcriptTask = openTask?.parentSessionId === activeId ? delegations.find(task => task.id === openTask?.id) : undefined;
+  useEffect(() => { if (openTask && !transcriptTask) setOpenTask(null); }, [openTask, transcriptTask]);
   const history = detail?.history;
   const historyDisabled = running || busy || queueBusy || submissionBusy || historyBusy || configBusy || sessionLoading;
   const legacyUndo = history?.hasCheckpoints === false && !history.pendingRecovery;
@@ -360,6 +370,23 @@ export default function App() {
     } catch (e) { if (currentId.current === id) setError(errorMessage(e)); }
     finally { queueOperation.current = false; setQueueBusy(false); }
   }
+  async function cancelTask(task: DelegationSummary) {
+    const id = task.parentSessionId, view = selectionRequest.current;
+    const stillHere = () => currentId.current === id && selectionRequest.current === view;
+    const current = detailRef.current && visibleDelegations(detailRef.current).find(item => item.id === task.id);
+    if (!stillHere() || !current || current.status !== 'running' || taskOperations.current.has(task.id)) return;
+    taskOperations.current.add(task.id); setCancellingTasks(new Set(taskOperations.current));
+    setTaskErrors(errors => { const next = new Map(errors); next.delete(task.id); return next; });
+    let failure = '';
+    try { await post(delegationPath(task) + '/cancel'); }
+    catch (e) { failure = errorMessage(e); }
+    finally {
+      try { if (stillHere()) await refreshDetail(id); }
+      catch (e) { failure += `${failure ? ' ' : ''}Could not refresh task status: ${errorMessage(e)}.`; }
+      if (stillHere() && failure) setTaskErrors(errors => new Map(errors).set(task.id, failure));
+      taskOperations.current.delete(task.id); setCancellingTasks(new Set(taskOperations.current));
+    }
+  }
   function changeQuestionDraft(id: string, value: QuestionDraft) {
     setQuestionDrafts(current => new Map(current).set(id, value));
     setQuestionErrors(current => { const next = new Map(current); next.delete(id); return next; });
@@ -511,7 +538,10 @@ export default function App() {
       {error && <div className="global-alert" role="alert"><span>{error}</span>{!settings ? <button onClick={() => void load()}>Retry connection</button> : activeId && !detail ? <button onClick={() => { setError(''); setSessionReload(v => v + 1); }}>Retry</button> : null}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={15} /></button></div>}
       <div className="main-panels"><div className={`main-stage ${!activeId ? 'welcome-stage' : ''}`}>
         {loading ? <div className="app-loading"><Logo /><SpeedRail active /><p>Opening your workspace…</p></div> : !settings ? <EmptyState icon={<Terminal size={30} />} title="Let’s get connected.">The local server is not available. Check that Lite is running, then retry the connection.<button className="button primary" onClick={() => void load()}>Try again</button></EmptyState> : activeId ? <>
-          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
+          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} renderTask={(tool, message) => {
+            const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
+            return task ? <TaskCard task={task} tool={tool} onOpen={() => setOpenTask({ parentSessionId: task.parentSessionId, id: task.id })} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
+          }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
           {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
@@ -524,6 +554,7 @@ export default function App() {
     </main>
     <input type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
     {profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
+    {transcriptTask && <TaskTranscript key={`${transcriptTask.parentSessionId}-${transcriptTask.id}`} task={transcriptTask} onClose={closeTask} />}
     {settingsOpen && settings && <Settings settings={settings} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
     {rename && <Modal title="Rename session" onClose={closeRename}><form className="rename-form" onSubmit={e => { e.preventDefault(); void act(async () => { const session = await patch<Session>(`/sessions/${rename.id}`, { title: renameValue.trim() }); setSessions(list => list.map(s => s.id === session.id ? session : s)); if (activeId === session.id) setDetail(d => d ? { ...d, session } : d); setRename(null); }); }}><label>Session name<input autoFocus maxLength={160} value={renameValue} onChange={e => setRenameValue(e.target.value)} /></label><div className="form-actions"><button className="button secondary" type="button" onClick={closeRename}>Cancel</button><button className="button primary" disabled={!renameValue.trim() || busy}>Save name</button></div></form></Modal>}

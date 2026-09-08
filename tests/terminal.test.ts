@@ -74,6 +74,42 @@ describe('persistent terminal manager', () => {
     expect(JSON.stringify(socket.sent)).not.toContain('hidden-provider-key');
   });
 
+  it('rejects internal read-only children before session or workspace access and native spawn', () => {
+    const child = store.createSession({ workspace: join(dir, 'must-not-read') });
+    const identity = vi.spyOn(store, 'isChild').mockImplementation(id => id === child.id);
+    const lookup = vi.spyOn(store, 'session');
+    try {
+      expect(() => manager.validate(child.id)).toThrow('Researcher child sessions are read-only');
+      expect(() => manager.attach(child.id, new FakeSocket().ws)).toThrow('Researcher child sessions are read-only');
+      expect(lookup).not.toHaveBeenCalled(); expect(factory).not.toHaveBeenCalled();
+    } finally { identity.mockRestore(); lookup.mockRestore(); }
+  });
+
+  it('does not confuse ordinary fork ancestry with private child identity', () => {
+    const parent = store.createSession();
+    const fork = store.fork(parent.id);
+    expect(fork.parentId).toBe(parent.id); expect(store.isChild(fork.id)).toBe(false);
+    manager.attach(fork.id, new FakeSocket().ws);
+    expect(factory).toHaveBeenCalledOnce();
+  });
+
+  it('stops existing terminal control and detached replay when child identity is found', async () => {
+    const session = store.createSession(), socket = new FakeSocket();
+    manager.attach(session.id, socket.ws);
+    const identity = vi.spyOn(store, 'isChild').mockImplementation(id => id === session.id);
+    try {
+      expect(() => manager.attach(session.id, new FakeSocket().ws)).toThrow('Researcher child sessions are read-only');
+      socket.message({ type: 'input', data: 'must not execute\\r' });
+      expect(ptys[0].writes).toEqual([]); expect(ptys[0].signals).toEqual(['SIGHUP']);
+      await Promise.resolve();
+    } finally { identity.mockRestore(); }
+    const detached = store.createSession(), viewer = new FakeSocket();
+    manager.attach(detached.id, viewer.ws); viewer.close();
+    const changed = vi.spyOn(store, 'isChild').mockImplementation(id => id === detached.id);
+    try { manager.sweep(); expect(ptys[1].signals).toEqual(['SIGHUP']); await Promise.resolve(); }
+    finally { changed.mockRestore(); }
+  });
+
   it('reattaches the same shell, replays output, and shares resize and input across viewers', () => {
     const session = store.createSession(), first = new FakeSocket(); manager.attach(session.id, first.ws);
     ptys[0].output('hello\r\n'); first.close();
@@ -224,6 +260,16 @@ describe('terminal WebSocket transport', () => {
       { Origin: base, Host: 'evil.example' }, { Origin: base, 'Sec-Fetch-Site': 'cross-site' },
       { Origin: 'http://localhost:1', Host: 'localhost:1' },
     ]) expect(await rejectStatus(path, headers as Record<string, string>)).toBe(403);
+  });
+
+  it('rejects internal read-only child WebSocket upgrades before session lookup', async () => {
+    const child = store.createSession({ workspace: join(dir, 'must-not-read') });
+    const identity = vi.spyOn(store, 'isChild').mockImplementation(id => id === child.id);
+    const lookup = vi.spyOn(store, 'session');
+    try {
+      expect(await rejectStatus(`/api/sessions/${child.id}/terminal`, { Origin: base })).toBe(409);
+      expect(lookup).not.toHaveBeenCalled();
+    } finally { identity.mockRestore(); lookup.mockRestore(); }
   });
 
   it('rejects duplicate authentication headers and malformed WebSocket handshakes', async () => {

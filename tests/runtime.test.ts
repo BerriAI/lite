@@ -54,6 +54,8 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     const providerCalls: { messages: { role: string; content: any }[]; tools?: { function: { name: string } }[] }[] = [];
     let catalogCalls = 0;
     let advertisedMcpName = '';
+    const heldResearchers = new Set<import('node:http').ServerResponse>();
+    let cancelledResearchers = 0;
     const fixtureContent = String.fromCharCode(0xfeff) + 'persisted runtime output — exact UTF-8\r\nno final newline';
     const changedAttachment = 'External edit made after the accepted attachment snapshot.';
     const provider = createServer(async (req, res) => {
@@ -71,6 +73,20 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       if (summary) {
         await writeFile(join(workspace, 'do-not-reread.txt'), changedAttachment);
         emit({ content: 'Earlier runtime context: preserve the existing file bytes and inspect the latest attachment; no tools were rerun.' });
+      }
+      else if (prompt.includes('runtime delegation')) {
+        const child = request.messages[0]?.content?.includes('foreground read-only researcher');
+        if (child && prompt.includes('hold')) {
+          heldResearchers.add(res); res.on('close', () => { heldResearchers.delete(res); cancelledResearchers++; });
+          return;
+        }
+        if (request.messages.at(-1)?.role === 'tool') emit({ content: child ? 'Runtime delegation verified original file bytes without mutation.' : 'Runtime delegation parent complete.' });
+        else {
+          finishReason = 'tool_calls';
+          const name = child ? 'read_file' : 'task';
+          const args = child ? { path: 'runtime.txt' } : { description: 'Runtime read-only audit', prompt: `runtime delegation child ${prompt.includes('hold') ? 'hold' : 'read'} independently` };
+          emit({ tool_calls: [{ index: 0, id: `runtime-delegation-${providerCalls.length}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
+        }
       }
       else if (prompt.includes('runtime MCP')) {
         if (request.messages.at(-1)?.role === 'tool') emit({ content: 'Runtime MCP complete.' });
@@ -665,6 +681,82 @@ process.stdin.on('end',()=>process.exit(0));
     await awaitMcpIdle(freshPath);
     expect((await mcpRecords()).filter(record => record.event === 'tools/call')).toEqual([{ event: 'tools/call', endpoint: 'original' }, { event: 'tools/call', endpoint: 'replacement' }]);
     expect(providerCalls).toHaveLength(22); expect(catalogCalls).toBe(1);
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
+    expect((await api(`${profilePath}/profile`)).pinned).toEqual(profilePinned.pinned);
+    // Installed CLI uses ordinary approval semantics for the foreground task:
+    // noninteractive Ask denies without creating a child; explicit Plan+Auto
+    // launches one bounded researcher whose only action is reading exact bytes.
+    const mcpBeforeResearch = await mcpRecords();
+    const deniedResearch = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', '--url', app.base, '--plan', '--json', 'runtime delegation denied noninteractive'], workspace, env).finished;
+    expect(deniedResearch.code, deniedResearch.output).toBe(0);
+    expect(deniedResearch.output).toContain('Denied task: interactive approval required');
+    expect(providerCalls).toHaveLength(24);
+    const afterDenied = (await api('/sessions')).sessions;
+    const deniedSession = afterDenied.find((value: { title: string }) => value.title === 'runtime delegation denied noninteractive');
+    expect(deniedSession).toBeTruthy(); expect((await api(`/sessions/${deniedSession.id}`)).delegations).toEqual([]);
+    const research = await processResult(runtime!, [join(installation, 'bin/lite.mjs'), 'run', '--url', app.base, '--plan', '--auto', '--json', 'runtime delegation CLI read'], workspace, env).finished;
+    expect(research.code, research.output).toBe(0); expect(research.output).toContain('Runtime delegation parent complete.');
+    expect(providerCalls).toHaveLength(28);
+    const researchSession = (await api('/sessions')).sessions.find((value: { title: string }) => value.title === 'runtime delegation CLI read');
+    const researchPath = `/sessions/${researchSession.id}`;
+    const researchCompleted = await api(researchPath);
+    expect(researchCompleted.delegations).toHaveLength(1);
+    const delegation = researchCompleted.delegations[0];
+    expect(delegation.status).toBe('completed');
+    const researcherPath = `${researchPath}/delegations/${delegation.id}`;
+    const researcher = await api(researcherPath);
+    expect(researcher).toMatchObject({ readOnly: true, delegation: { id: delegation.id, status: 'completed' } });
+    expect(researcher.messages.flatMap((message: { toolCalls?: unknown[] }) => message.toolCalls ?? [])).toMatchObject([{ name: 'read_file', status: 'completed' }]);
+    expect(researcher.messages.find((message: { role: string }) => message.role === 'user').content).toBe('runtime delegation child read independently');
+    expect(providerCalls[25].tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'read_file', 'todo_read', 'web_fetch']);
+    expect(JSON.stringify(providerCalls[26].messages)).toContain('persisted runtime output');
+    expect((await api('/sessions')).sessions.some((value: { id: string }) => value.id === delegation.childSessionId)).toBe(false);
+    const forbiddenChild = await fetch(`${app.base}/api/sessions/${delegation.childSessionId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'Bypass readonly child' }) });
+    expect(forbiddenChild.status).toBe(409); await forbiddenChild.json();
+    expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes); expect(await mcpRecords()).toEqual(mcpBeforeResearch);
+    const researchCheckpoint = researchCompleted.history.undoId;
+    await api(`${researchPath}/history/undo`, { checkpointId: researchCheckpoint });
+    expect((await api(researchPath)).delegations).toEqual([]);
+    const hiddenResearch = await fetch(`${app.base}/api${researcherPath}`); expect(hiddenResearch.status).toBe(404); await hiddenResearch.json();
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0); app = await start(false);
+    expect((await api(researchPath)).delegations).toEqual([]);
+    await api(`${researchPath}/history/redo`, { checkpointId: researchCheckpoint });
+    expect((await api(researchPath)).messages).toEqual(researchCompleted.messages);
+    expect((await api(researcherPath)).messages).toEqual(researcher.messages);
+    expect(providerCalls).toHaveLength(28); expect(await mcpRecords()).toEqual(mcpBeforeResearch);
+    // Stop only a running child, then terminate another server process while a
+    // child is in flight. Restart resolves its durable link without a new call.
+    const cancelledParent = await api('/sessions', { mode: 'plan', permissionMode: 'auto', title: 'Runtime cancelled researcher' });
+    const cancelledPath = `/sessions/${cancelledParent.id}`;
+    await api(`${cancelledPath}/messages`, { content: 'runtime delegation hold cancel' });
+    await expect.poll(() => heldResearchers.size, { timeout: 5000, interval: 10 }).toBe(1);
+    const cancelling = (await api(cancelledPath)).delegations[0];
+    await api(`${cancelledPath}/queue`, { content: 'Must remain queued after child cancellation.' });
+    await api(`${cancelledPath}/delegations/${cancelling.id}/cancel`, {});
+    await awaitMcpIdle(cancelledPath);
+    expect((await api(cancelledPath)).delegations[0].status).toBe('cancelled');
+    expect((await api(cancelledPath)).messages.filter((message: { role: string }) => message.role === 'tool')).toHaveLength(1);
+    expect((await api(cancelledPath)).queue).toMatchObject({ paused: true, items: [{ content: 'Must remain queued after child cancellation.' }] });
+    await expect.poll(() => cancelledResearchers, { timeout: 5000, interval: 10 }).toBe(1);
+    expect(providerCalls).toHaveLength(31);
+    const interruptedParent = await api('/sessions', { mode: 'plan', permissionMode: 'auto', title: 'Runtime interrupted researcher' });
+    const interruptedResearchPath = `/sessions/${interruptedParent.id}`;
+    await api(`${interruptedResearchPath}/messages`, { content: 'runtime delegation hold crash' });
+    await expect.poll(() => heldResearchers.size, { timeout: 5000, interval: 10 }).toBe(1);
+    const interrupted = (await api(interruptedResearchPath)).delegations[0];
+    expect(providerCalls).toHaveLength(33);
+    app.child.kill('SIGKILL'); expect((await app.finished).signal).toBe('SIGKILL');
+    app = await start(false);
+    await expect.poll(() => cancelledResearchers, { timeout: 5000, interval: 10 }).toBe(2);
+    const interruptedDetail = await api(interruptedResearchPath);
+    expect(interruptedDetail.delegations[0].status).toBe('interrupted');
+    expect(interruptedDetail.messages.filter((message: { role: string }) => message.role === 'tool')).toHaveLength(1);
+    expect((await api(`${interruptedResearchPath}/delegations/${interrupted.id}`)).delegation.status).toBe('interrupted');
+    expect(providerCalls).toHaveLength(33); expect(await mcpRecords()).toEqual(mcpBeforeResearch);
+    app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0); app = await start(false);
+    expect((await api(interruptedResearchPath)).messages).toEqual(interruptedDetail.messages);
+    expect((await api(interruptedResearchPath)).delegations).toEqual(interruptedDetail.delegations);
+    expect(providerCalls).toHaveLength(33); expect(catalogCalls).toBe(1);
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     expect((await api(`${profilePath}/profile`)).pinned).toEqual(profilePinned.pinned);
     // Validate the installed native PTY on this exact ABI without starting a

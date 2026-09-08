@@ -1,5 +1,6 @@
 import type { Attachment, RunEvent, Session, SessionDetail } from '../../shared/types';
 import { useEffect, useRef, useState } from 'react';
+import type { DelegationSummary } from '../../shared/delegation';
 
 export interface ComposerDraft { text: string; attachments: Attachment[] }
 const DRAFT_PREFIX = 'lite:draft:v1:';
@@ -136,6 +137,13 @@ export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: 
 export const query = (values: Record<string, string>) => new URLSearchParams(values).toString();
 export const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Something went wrong. Please try again.';
 
+/** Only private summaries bound to an exact current task call expose child transcripts. */
+export function visibleDelegations(detail: SessionDetail): DelegationSummary[] {
+  return (detail.delegations ?? []).filter(task => task.parentSessionId === detail.session.id && detail.messages.some(message =>
+    message.role === 'assistant' && message.id === task.parentMessageId && message.sessionId === detail.session.id && message.toolCalls?.some(tool =>
+      tool.name === 'task' && tool.id === task.toolCallId && tool.delegationId === task.id)));
+}
+
 /** Session configuration is monotonic even when an older snapshot overlaps a newer mutation. */
 export function reconcileSession(current: Session, incoming: Session): Session {
   if ((incoming.configRevision ?? 0) >= (current.configRevision ?? 0)) return incoming;
@@ -187,7 +195,18 @@ function reduceEvent(detail: SessionDetail, event: RunEvent): SessionDetail {
     case 'question_resolved': return { ...detail, questions: (detail.questions ?? []).filter(question => question.id !== data.id) };
     case 'queue': return { ...detail, queue: data };
     case 'history': return { ...detail, history: data };
-    case 'reset': return { ...detail, messages: data.messages };
+    case 'delegation': {
+      const task = data as DelegationSummary;
+      if (task.parentSessionId !== detail.session.id) return detail;
+      const previous = detail.delegations?.find(item => item.id === task.id);
+      // Terminal task settlement is immutable; a delayed running summary cannot revive it.
+      if (previous && previous.status !== 'running') return detail;
+      return { ...detail, delegations: previous ? detail.delegations!.map(item => item.id === task.id ? task : item) : [...(detail.delegations ?? []), task] };
+    }
+    case 'reset': {
+      const next = { ...detail, messages: data.messages, ...(Array.isArray(data.delegations) ? { delegations: data.delegations } : {}) };
+      return { ...next, delegations: visibleDelegations(next) };
+    }
     case 'todos': return { ...detail, todos: data.todos ?? data };
     case 'done': return { ...detail, session: { ...detail.session, status: data.status === 'error' ? 'error' : 'idle' } };
     case 'error': return { ...detail, session: { ...detail.session, status: 'error' } };

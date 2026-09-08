@@ -37,6 +37,7 @@ npm start
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - Explicit project profiles and instruction skills, previewed before selection and pinned per session, with tool restrictions and deliberate reloads.
 - Explicit MCP connections over local stdio, Streamable HTTP, or legacy SSE; cache-only status, deliberate catalog refresh/reconnect, and per-turn snapshots that refuse changed tool connections.
+- Bounded read-only research tasks: the agent can delegate one foreground researcher with its own live transcript, strict read-only tools, explicit approval, and independent cancellation. See [read-only research tasks](docs/delegation.md).
 - LiteLLM/OpenAI-compatible APIs, native Anthropic API keys, and explicit ChatGPT connection where account/provider policies permit it.
 - A persistent FIFO follow-up queue with explicit Pause/Resume/remove, plus separate per-session text and attachment drafts.
 - CLI task execution against the same running backend, strict option validation, NDJSON events, and remote cancellation on interrupts.
