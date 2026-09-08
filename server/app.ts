@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
 import { Runner, type ExternalTools } from './runner.js';
+import { Memory } from './memory.js';
 import { listModels } from './providers.js';
 import { modelCatalog } from './budget.js';
 import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
@@ -16,7 +17,7 @@ import type { Message, Settings } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
-const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
+const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
@@ -147,7 +148,11 @@ export function createApp(options:AppOptions = {}) {
     checkProvider(patch.providerId);const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
     if(configChange)publishConfiguration(req.params.id);res.json(session);
   });
-  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);store.deleteSession(req.params.id);res.json({ok:true});});
+  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
+  const memory=new Memory(store);
+  const memoryWorkspace=(value:unknown)=>{const workspace=queryString(value);if(!workspace.trim())throw httpError(400,'workspace is required.');return workspace;};
+  app.get('/api/memory',(req,res)=>res.json({facts:memory.list(memoryWorkspace(req.query.workspace))}));
+  app.delete('/api/memory/:name',(req,res)=>res.json({removed:memory.forget(memoryWorkspace(req.query.workspace),req.params.name)}));
   app.get('/api/sessions/:id/events',(req,res)=>{
     const id=req.params.id;store.session(id);
     res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.setHeader('X-Accel-Buffering','no');res.flushHeaders();

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
 import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft, visibleDelegations } from './api';
@@ -19,6 +19,14 @@ const SessionTerminal = lazy(() => import('./Terminal').then(module => ({default
 
 type Confirm = { title: string; description: string; label: string; danger?: boolean; sessionId?: string; historyAction?: boolean; action: () => Promise<void> };
 type SlashCommand = { name: string; description: string; content: string };
+const positionalArgs = (raw: string) => (raw.match(/"[^"]*"|\S+/g) ?? []).map(value => value.length > 1 && value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value);
+function expandSlashCommand(content: string, commands: SlashCommand[]): string {
+  const match = content.match(/^\/(\S+)([\s\S]*)$/);
+  const command = match && commands.find(c => c.name === match[1]);
+  if (!match || !command) return content;
+  const args = match[2].trim(), positional = positionalArgs(args);
+  return command.content.replace(/\$(ARGUMENTS|[1-9])/g, (_, key: string) => key === 'ARGUMENTS' ? args : positional[Number(key) - 1] ?? '');
+}
 const readSessionHash = () => { const value = window.location.hash.match(/^#session\/([\w-]+)$/); return value?.[1] ?? null; };
 const suggestions = [
   { Icon: FileCode2, label: 'Understand a codebase', description: 'Find the big picture', prompt: 'Explore this workspace and explain how the project is structured, how to run it, and where the main functionality lives.' },
@@ -542,10 +550,10 @@ export default function App() {
             const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
             return task ? <TaskCard task={task} tool={tool} onOpen={() => setOpenTask({ parentSessionId: task.parentSessionId, id: task.id })} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
           }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={send} onQueue={queueMessage} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>}
+          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
-          <div className="welcome-input"><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={send} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></div>
+          <div className="welcome-input"><CommandArea commands={commands} text={text} setText={setText}><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>
           <div className="suggestions">{suggestions.map(({ Icon, label, description, prompt }) => <button key={label} onClick={() => { setText(prompt); document.getElementById('message-input')?.focus(); }}><span className="suggestion-icon"><Icon size={17} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight className="suggestion-arrow" size={14} /></button>)}</div>
           {(!provider?.configured && provider?.baseUrl && !/localhost|127\.0\.0\.1/.test(provider.baseUrl)) && <button className="setup-hint" onClick={() => setSettingsOpen(true)}><Shield size={13} />Connect your provider to get started<ArrowRight size={13} /></button>}
           <div className="welcome-footnote"><span className="mini-speed"><i /><i /><i /></span>Powered by your models. Grounded in your workspace.</div>
@@ -564,6 +572,45 @@ export default function App() {
       else void act(async () => { await current.action(); setConfirm(value => value === current ? null : value); });
     }}>{busy || historyBusy ? 'Working…' : confirm.label}</button></div></div></Modal>}
     {toast && <div className="toast" role="status"><Check size={15} />{toast}<button className="icon-button" aria-label="Dismiss notification" onClick={() => setToast('')}><X size={13} /></button></div>}
+  </div>;
+}
+
+function CommandArea({ commands, text, setText, children }: { commands: SlashCommand[]; text: string; setText: (value: string) => void; children: ReactNode }) {
+  const [caret, setCaret] = useState(0);
+  const [selected, setSelected] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+  const token = text.match(/^\/([\w-]*)/);
+  const matches = token && caret >= 1 && caret <= token[0].length && !dismissed ? commands.filter(c => c.name.toLowerCase().startsWith(token[1].toLowerCase())).slice(0, 8) : [];
+  const open = matches.length > 0;
+  const highlighted = open ? Math.min(selected, matches.length - 1) : -1;
+  const exact = text.match(/^\/(\S+)(?:\s|$)/);
+  const active = exact ? commands.find(c => c.name === exact[1]) : undefined;
+  useEffect(() => {
+    const input = document.getElementById('message-input');
+    if (!input) return;
+    if (open) { input.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-controls', 'command-popover'); input.setAttribute('aria-activedescendant', `command-option-${highlighted}`); }
+    else { input.removeAttribute('aria-expanded'); input.removeAttribute('aria-controls'); input.removeAttribute('aria-activedescendant'); }
+  }, [open, highlighted]);
+  function sync(e: SyntheticEvent) { const target = e.target as HTMLElement; if (target instanceof HTMLTextAreaElement && target.id === 'message-input') setCaret(target.selectionStart ?? 0); }
+  function accept(command: SlashCommand) {
+    const rest = text.slice(token?.[0].length ?? 0).replace(/^ /, '');
+    setText(`/${command.name} ${rest}`);
+    setSelected(0); setCaret(command.name.length + 2);
+    const input = document.getElementById('message-input') as HTMLTextAreaElement | null;
+    if (input) { input.focus(); setTimeout(() => input.setSelectionRange(command.name.length + 2, command.name.length + 2), 0); }
+  }
+  function keydown(e: ReactKeyboardEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement;
+    if (!open || !(target instanceof HTMLTextAreaElement) || target.id !== 'message-input') return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); setSelected(Math.min(highlighted + 1, matches.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); e.stopPropagation(); setSelected(Math.max(highlighted - 1, 0)); }
+    else if ((e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) || e.key === 'Tab') { e.preventDefault(); e.stopPropagation(); accept(matches[highlighted]); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setDismissed(true); }
+  }
+  return <div className="command-area" onKeyDownCapture={keydown} onKeyUp={sync} onClick={sync} onInput={e => { sync(e); setDismissed(false); setSelected(0); }}>
+    {open && <div className="command-popover" id="command-popover" role="listbox" aria-label="Workspace commands">{matches.map((c, i) => <button key={c.name} id={`command-option-${i}`} role="option" aria-selected={i === highlighted} tabIndex={-1} className={i === highlighted ? 'selected' : ''} onMouseMove={() => setSelected(i)} onMouseDown={e => e.preventDefault()} onClick={() => accept(c)}><strong>/{c.name}</strong><small>{c.description}</small></button>)}</div>}
+    {children}
+    {active && <div className="command-hint" role="status">Command: {active.name} — {active.description}</div>}
   </div>;
 }
 

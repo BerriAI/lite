@@ -17,7 +17,7 @@ Research tasks are available to ordinary sessions and sessions with instruction 
 
 A researcher inherits the accepted parent turn's provider/model, canonical workspace, pinned instruction skills, and project guidance. It receives the explicit task prompt, not an automatic copy of the parent's full conversation, permissions, or provider-specific reasoning state.
 
-Its tool ceiling is `read_file`, `glob`, `grep`, `web_fetch`, and `todo_read`, intersected with the parent's allowed scope. It cannot write/edit files, run shell commands, update todos, use MCP, ask the user a question, or launch another researcher. An instruction in a file or model response cannot add those tools. Provider credentials remain server-side and are not persisted in the task's linkage or transcript as configuration.
+Its tool ceiling is `read_file`, `glob`, `grep`, `web_fetch`, `todo_read`, and read-only `history_search` over saved local sessions, intersected with the parent's allowed scope. It cannot write/edit files, run shell commands, update todos, use MCP, ask the user a question, or launch another researcher. An instruction in a file or model response cannot add those tools. Provider credentials remain server-side and are not persisted in the task's linkage or transcript as configuration.
 
 Read-only here describes the available tools, not an operating-system sandbox. Web retrieval still sends network requests. As with any model workflow, review conclusions against the recorded evidence rather than treating a confident report as proof.
 

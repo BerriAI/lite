@@ -52,6 +52,24 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('SEARCH_BROWSER')){
+    // Actual history_search calls: search then around, driven by markers so
+    // tests can steer the query; the run then reports the actual tool results.
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Search outcome: ${data.messages.filter((m:any)=>m.role==='tool').map((m:any)=>m.content).join(' | ')}`});
+    else{
+      const query=/SEARCH_FOR\[(.+?)\]/.exec(prompt)?.[1];
+      if(query){toolCall=true;emit({tool_calls:[{index:0,id:'browser-history-search',type:'function',function:{name:'history_search',arguments:JSON.stringify({operation:'search',query})}}]});}
+      else emit({content:'No search was requested.'});
+    }
+  }else if(prompt.includes('MEMORY_BROWSER')){
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Memory outcome: ${data.messages.filter((m:any)=>m.role==='tool').map((m:any)=>m.content).join(' | ')}`});
+    else if(prompt.includes('MEMORY_ADVERTISE'))emit({content:`Advertised tools: ${(data.tools||[]).map((tool:any)=>tool.function.name).join(', ')}`});
+    else{
+      const remember=/REMEMBER\[(.+?)\]/.exec(prompt)?.[1],recall=/RECALL\[(.+?)\]/.exec(prompt)?.[1];
+      if(remember){toolCall=true;emit({tool_calls:[{index:0,id:'browser-memory-remember',type:'function',function:{name:'memory_remember',arguments:JSON.stringify({name:'browser-fact',description:'Recorded by the browser test',body:remember})}}]});}
+      else if(recall){toolCall=true;emit({tool_calls:[{index:0,id:'browser-memory-recall',type:'function',function:{name:'memory_recall',arguments:JSON.stringify({query:recall})}}]});}
+      else emit({content:'No memory operation was requested.'});
+    }
   }else if(prompt.includes('RULES_BROWSER')){
     // Actual rule-governed calls: one bash command and one file write drawn from
     // the prompt so tests can steer subjects; the run then reports its results.

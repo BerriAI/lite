@@ -24,7 +24,7 @@ function CopyCode({ children }: { children: React.ReactNode }) {
   }
   return <CopyButton text={text(children).replace(/\n$/, '')} label="Copy code" />;
 }
-const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Delegate task', ask_user: 'Ask a question' };
+const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Delegate task', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
 function ToolCard({ tool }: { tool: ToolCall }) {
   const working = tool.status === 'running' || tool.status === 'pending';
   const title = tool.args?.path || tool.args?.command || tool.args?.pattern || tool.args?.url;

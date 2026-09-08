@@ -3,10 +3,11 @@ import { ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server,
 import type { McpServerConfig, Provider, Settings as SettingsType } from '../../shared/types';
 import type { PermissionDecision, PermissionRuleSet } from '../../shared/permissions';
 import { PERMISSION_LIMITS } from '../../shared/permissions';
-import { api, errorMessage, patch, post } from './api';
+import { api, errorMessage, patch, post, query } from './api';
 import { CopyButton, Modal, SpeedRail } from './ui';
 
 import type { McpServerStatus } from '../../shared/mcp';
+import type { MemoryFactSummary } from '../../shared/memory';
 
 type McpSnapshot = { servers: McpServerStatus[]; configRevision: string };
 type McpReview = { servers: Record<string, McpServerConfig>; revision: string };
@@ -81,6 +82,14 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
   const baselineVersion = useRef(0);
   const [login, setLogin] = useState<Login | null>(null);
   const [authBusy, setAuthBusy] = useState(false);
+  const [memoryFacts, setMemoryFacts] = useState<MemoryFactSummary[] | null>(null);
+  const [memoryLoading, setMemoryLoading] = useState(false);
+  const [memoryError, setMemoryError] = useState('');
+  const [memoryBusy, setMemoryBusy] = useState('');
+  const memoryTouched = useRef(false);
+  const memoryRead = useRef(0);
+  const memoryWorkspace = draft.workspace.trim();
+  const memoryWorkspaceRef = useRef(memoryWorkspace); memoryWorkspaceRef.current = memoryWorkspace;
   const initialMcp = useRef(JSON.stringify(settings.mcpServers, null, 2));
   useEffect(() => {
     if (!login) return;
@@ -124,6 +133,38 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
     const timer = window.setInterval(() => { if (!saving.current && !mcpOperations.current.size) void refreshMcp(); }, 3000);
     return () => { clearInterval(timer); mcpGeneration.current++; mcpRead.current++; mcpReadPending.current = null; };
   }, [tab, refreshMcp]);
+  const refreshMemory = useCallback(async (workspace: string) => {
+    if (!alive.current || tabRef.current !== 'general' || !workspace) return;
+    const request = ++memoryRead.current;
+    setMemoryLoading(true);
+    try {
+      const value = await api<{ facts: MemoryFactSummary[] }>(`/memory?${query({ workspace })}`);
+      if (alive.current && tabRef.current === 'general' && memoryRead.current === request && memoryWorkspaceRef.current === workspace) { setMemoryFacts(value.facts); setMemoryError(''); }
+    } catch (e) {
+      if (alive.current && tabRef.current === 'general' && memoryRead.current === request && memoryWorkspaceRef.current === workspace) { setMemoryFacts(null); setMemoryError(`Could not read recorded facts: ${errorMessage(e)}`); }
+    } finally {
+      if (alive.current && memoryRead.current === request) setMemoryLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    memoryRead.current++;
+    if (tab !== 'general') return;
+    setMemoryFacts(null); setMemoryError('');
+    void refreshMemory(memoryWorkspace);
+    return () => { memoryRead.current++; };
+  }, [tab, memoryWorkspace, refreshMemory]);
+  async function forgetFact(name: string) {
+    if (memoryBusy) return;
+    const workspace = memoryWorkspaceRef.current;
+    setMemoryBusy(name); setMemoryError('');
+    try {
+      await api<{ removed: boolean }>(`/memory/${encodeURIComponent(name)}?${query({ workspace })}`, { method: 'DELETE' });
+    } catch (e) {
+      if (alive.current && memoryWorkspaceRef.current === workspace) setMemoryError(`Could not delete the fact: ${errorMessage(e)}`);
+    } finally {
+      if (alive.current) { setMemoryBusy(''); if (memoryWorkspaceRef.current === workspace) void refreshMemory(workspace); }
+    }
+  }
   const mcpDirty = mcp !== initialMcp.current;
   const mcpMismatch = !reviewedRevision.current || Boolean(mcpSnapshot && mcpSnapshot.configRevision !== reviewedRevision.current);
   const anyMcpAction = mcpActions.size > 0;
@@ -190,7 +231,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       if (!draft.providers.some(p => p.id === draft.defaultProvider)) throw new Error('Choose a default provider.');
       const mcpChanged = mcp !== initialMcp.current;
       if (mcpChanged && !reviewedRevision.current) throw new Error('Review the saved MCP configuration before saving MCP changes.');
-      const { mcpServers: _mcp, mcpConfigRevision: _revision, permissionRules: _rules, ...values } = draft;
+      const { mcpServers: _mcp, mcpConfigRevision: _revision, permissionRules: _rules, memoryEnabled: _memory, ...values } = draft;
       let permissionRules: PermissionRuleSet | undefined;
       if (rulesTouched.current) {
         try { permissionRules = parseRuleRows(ruleRows); } catch (error) { setTab('permissions'); throw error; }
@@ -201,7 +242,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         catch (error) { setSelected(p.id); setTab('providers'); throw error; }
         return { ...p, models: p.models?.filter(Boolean), ...(contextRows[p.id] !== undefined || p.contextWindows !== undefined ? { contextWindows } : {}) };
       });
-      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(permissionRules !== undefined ? { permissionRules } : {}), ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
+      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(memoryTouched.current ? { memoryEnabled: Boolean(draft.memoryEnabled) } : {}), ...(permissionRules !== undefined ? { permissionRules } : {}), ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
       if (!alive.current) return saved;
       onSave(saved);
       if (mcpChanged) {
@@ -211,7 +252,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       // An unrelated save is not consent to adopt unseen changes to saved executable configuration.
       setDraft({ ...saved, mcpServers: savedMcp.current, mcpConfigRevision: reviewedRevision.current, providers: saved.providers.map(({ apiKey: _key, ...p }) => p) });
       setContextRows(contextRowsFor(saved.providers));
-      setRuleRows(ruleRowsFor(saved.permissionRules)); rulesTouched.current = false;
+      setRuleRows(ruleRowsFor(saved.permissionRules)); rulesTouched.current = false; memoryTouched.current = false;
       if (close) onClose(); else { setNotice('Settings saved.'); void refreshMcp(true); }
       return saved;
     } catch (e) { if (alive.current) { setError(errorMessage(e)); void refreshMcp(true); } return null; }
@@ -280,6 +321,20 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         <div className="form-columns"><label>Default provider<select value={draft.defaultProvider} onChange={e => setDraft(s => ({ ...s, defaultProvider: e.target.value }))}>{draft.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Default model<input value={draft.defaultModel} onChange={e => setDraft(s => ({ ...s, defaultModel: e.target.value }))} /></label></div>
         <label>Permissions<select value={draft.permissionMode} onChange={e => setDraft(s => ({ ...s, permissionMode: e.target.value as SettingsType['permissionMode'] }))}><option value="ask">Ask before changes and commands</option><option value="auto">Allow changes and commands automatically</option></select><span className="field-hint">Automatic mode lets the agent modify files and execute shell commands without asking.</span></label>
         <div className="form-columns"><label>Maximum steps<input type="number" min="1" max="100" value={draft.maxSteps} onChange={e => setDraft(s => ({ ...s, maxSteps: Number(e.target.value) }))} /></label><label>Appearance<select value={draft.theme} onChange={e => setDraft(s => ({ ...s, theme: e.target.value as SettingsType['theme'] }))}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+        <section className="memory-section" aria-label="Agent memory">
+          <div className="mcp-cache-heading"><div><strong>Memory</strong><p>Recorded facts for the workspace above.</p></div><button className="button secondary" disabled={memoryLoading || busy || !memoryWorkspace} onClick={() => void refreshMemory(memoryWorkspace)}>Refresh facts</button></div>
+          <label className="memory-toggle"><input type="checkbox" checked={Boolean(draft.memoryEnabled)} disabled={busy} onChange={e => { memoryTouched.current = true; setNotice(''); const memoryEnabled = e.target.checked; setDraft(s => ({ ...s, memoryEnabled })); }} />Enable agent memory</label>
+          <p className="field-hint">Memory is off by default. Facts are low-authority background data stored locally per workspace, and the agent’s remember and forget actions go through normal tool permissions.</p>
+          {memoryLoading && <p className="field-hint" role="status">Loading recorded facts…</p>}
+          {memoryError && <div className="inline-alert" role="alert">{memoryError}</div>}
+          {(draft.memoryEnabled || Boolean(memoryFacts?.length)) && !memoryLoading && !memoryError && <>
+            {memoryFacts?.length === 0 && <p className="field-hint">No recorded facts for this workspace.</p>}
+            {Boolean(memoryFacts?.length) && <ul className="memory-facts">{memoryFacts!.map(fact => <li className="memory-fact" key={fact.id}>
+              <div><strong>{fact.name}</strong><p>{fact.description}</p><small>Updated {new Date(fact.updatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</small></div>
+              <button className="icon-button danger" type="button" disabled={busy || Boolean(memoryBusy)} aria-label={`Delete fact ${fact.name}`} title="Delete fact" onClick={() => void forgetFact(fact.name)}><Trash2 size={15} /></button>
+            </li>)}</ul>}
+          </>}
+        </section>
         <div className="quiet-callout"><ShieldCheck size={18} /><p>Plan mode is read-only. Switch to Build when you are ready to make changes.</p></div>
       </div>}
       {tab === 'permissions' && <div className="form-stack"><div className="section-heading"><div><h3>Decide once, ahead of time.</h3><p>Explicit rules run before the session’s permission mode.</p></div></div>

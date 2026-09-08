@@ -34,6 +34,10 @@ npm start
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
+- Cross-session history search — a read-only `history_search` tool over every saved local conversation, with honest zero-result reporting. See [history search](docs/search.md).
+- Optional agent memory (off by default) — durable low-authority workspace facts with remember/forget/recall tools, bounded automatic recall, and a Settings fact browser. See [agent memory](docs/memory.md).
+- Composer slash commands — type `/` for project command templates (`.lite/commands`, `.claude/commands`) with `$ARGUMENTS` and positional substitution.
+- A cache-stable request prefix: volatile facts (date, mode, permission posture, recalled memory) travel in a digest-tagged session-context snapshot instead of rewriting the system prompt every turn.
 - Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - Explicit project profiles and instruction skills, previewed before selection and pinned per session, with tool restrictions and deliberate reloads.

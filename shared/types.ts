@@ -16,7 +16,7 @@ export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
 export type ProviderKind = 'openai' | 'anthropic' | 'codex';
 export interface Provider { id: string; name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; configured?: boolean; models?: string[]; contextWindows?: Record<string, number>; }
 export interface Model { id: string; name: string; providerId: string; contextWindow?: number; }
-export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; }
+export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean; }
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
 export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string; }
 export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number; }
