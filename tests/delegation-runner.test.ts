@@ -39,7 +39,7 @@ describe('foreground bounded researcher Runner/API integration',()=>{
 
   it('persists an independent read-only child and returns exactly one bounded report without MCP capture',async()=>{
     const s=await create();await run(s.id);expect(calls).toHaveLength(4);const detail=(await api(`/sessions/${s.id}`)).body,delegation=detail.delegations[0];expect(delegation.status).toBe('completed');
-    expect(names(calls[1]).sort()).toEqual(['glob','grep','history_search','read_file','todo_read','web_fetch']);expect(calls[1].messages.filter((m:any)=>m.role!=='system')).toEqual([{role:'user',content:'CHILD inspect'}]);expect(calls[1].model).toBe('model');expect(calls[1].messages[0].content).not.toContain('ROOT');
+    expect(names(calls[1]).sort()).toEqual(['glob','grep','history_search','read_file','todo_read','tool_output_page','web_fetch']);expect(calls[1].messages.filter((m:any)=>m.role!=='system')).toEqual([{role:'user',content:'CHILD inspect'}]);expect(calls[1].model).toBe('model');expect(calls[1].messages[0].content).not.toContain('ROOT');
     const transcript=(await api(`/sessions/${s.id}/delegations/${delegation.id}`)).body;expect(transcript.readOnly).toBe(true);expect(transcript.messages.map((m:any)=>m.role)).toEqual(['user','assistant','tool','assistant']);expect(transcript.messages[2].content).toContain('Verified workspace evidence');
     expect(detail.messages.filter((m:any)=>m.role==='tool')).toHaveLength(1);expect(detail.messages.find((m:any)=>m.role==='tool').content).toContain('Child final evidence');expect(external.capture).toHaveBeenCalledOnce();expect(store.sessions()).toHaveLength(1);expect(store.changes(s.id)).toEqual([]);expect(store.changes(delegation.childSessionId)).toEqual([]);
   });
@@ -55,7 +55,7 @@ describe('foreground bounded researcher Runner/API integration',()=>{
   });
 
   it('Plan Auto authorizes launch without expanding the child read-only ceiling',async()=>{
-    const s=await create({mode:'plan'});await run(s.id);expect(calls).toHaveLength(4);expect(runner.permissions(s.id)).toEqual([]);expect(names(calls[1]).sort()).toEqual(['glob','grep','history_search','read_file','todo_read','web_fetch']);expect(runner.delegations.list(s.id)[0].status).toBe('completed');
+    const s=await create({mode:'plan'});await run(s.id);expect(calls).toHaveLength(4);expect(runner.permissions(s.id)).toEqual([]);expect(names(calls[1]).sort()).toEqual(['glob','grep','history_search','read_file','todo_read','tool_output_page','web_fetch']);expect(runner.delegations.list(s.id)[0].status).toBe('completed');
   });
 
   it('accepted provider, model, project guidance and skills survive source and settings replacement before child launch',async()=>{

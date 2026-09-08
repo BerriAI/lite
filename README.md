@@ -31,6 +31,7 @@ npm start
 - Fine-grained permission rules — per-tool allow/ask/deny with bash command-prefix and file-path patterns, app-level and per-project (`.lite/permissions.json`), where an explicit deny outranks every automatic approval. See [permission rules](docs/permissions.md).
 - Structured agent questions with deliberate option/custom replies, browser reload recovery, and interactive CLI input—separate from tool approval.
 - Bounded transient HTTP retries, repeated-tool-loop detection, advisory request-context estimates, and one-shot proactive/overflow compaction that preserves the latest task and archives older history.
+- Free context pruning before paid summarization: stale tool outputs shrink in the outbound request only, while the saved conversation stays complete; truncated tool results keep a hash receipt and can be read back losslessly with `tool_output_page`.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.

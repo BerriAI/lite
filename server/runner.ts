@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Attachment, Message, PermissionRequest, Provider, Session, ToolCall, ToolDefinition } from '../shared/types.js';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
-import { executeTool, isReadOnlyTool, toolDefinitions, historySearchTool, memoryToolDefinitions, captureProjectGuidance, captureProjectPermissions, researchTaskInput } from './tools.js';
+import { executeTool, executeToolOutputPage, isReadOnlyTool, toolDefinitions, historySearchTool, toolOutputPageTool, memoryToolDefinitions, captureProjectGuidance, captureProjectPermissions, researchTaskInput } from './tools.js';
 import { SearchIndex, type SearchKind } from './search.js';
 import { Memory } from './memory.js';
 import { renderEnvelope } from './envelope.js';
@@ -13,8 +13,8 @@ import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
 import type { DelegationSummary } from '../shared/delegation.js';
 import { streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
-import { completeToolBoundary, planCompaction } from './context.js';
-import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, type BudgetRequest } from './budget.js';
+import { completeToolBoundary, planCompaction, pruneToolOutputs } from './context.js';
+import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, resolveContextBudget, type BudgetRequest } from './budget.js';
 import { History } from './history.js';
 import { Questions, questionTool } from './questions.js';
 import type { ProfileSnapshot } from './profiles.js';
@@ -231,7 +231,7 @@ export class Runner {
     // history_search is always advertised: reading saved local history is read-only.
     // memoryEnabled is captured at acceptance like rules/guidance; later settings
     // edits never change an accepted turn's advertised tools.
-    const policy:RunPolicy={session:structuredClone(session),provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool].map(tool=>tool.function.name)};
+    const policy:RunPolicy={session:structuredClone(session),provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool].map(tool=>tool.function.name)};
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile, policy, budget:{launches:0,steps:0,elapsedMs:0} };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     try {
@@ -485,29 +485,52 @@ export class Runner {
     // researchers; like task, it disappears under a profile allowlist, which
     // narrows the surface to exactly the named tools. Memory tools follow the
     // acceptance-time snapshot; children get none.
-    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&policy.tools.includes(name):name==='history_search'?allowlist==null:name.startsWith('memory_')?policy.memory&&allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
+    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&policy.tools.includes(name):name==='history_search'||name==='tool_output_page'?allowlist==null:name.startsWith('memory_')?policy.memory&&allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
     const externalTools=run.external?.definitions??[];
     // Memory tools are advertised only per the acceptance-time snapshot and never
     // to child researchers; history_search is a read-only local-history search.
-    const tools = [...toolDefinitions, historySearchTool, ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
+    const tools = [...toolDefinitions, historySearchTool, toolOutputPageTool, ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
     // An ignored invalid rules file must be visible in the session detail, not
     // only when a prompt happens to occur. The child transcript inherits the
     // parent's captured rules; the parent already carries the notice.
     if(policy.rules?.advisory&&!run.child)this.save({id:randomUUID(),sessionId:id,role:'system',content:policy.rules.advisory,createdAt:Date.now()});
-    let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false;
+    let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false, overflowPruneUsed = false, retryPruned = false, reuseMessageId: string | undefined;
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
       if(run.child) { const budget=run.child.parent.budget!;if(budget.steps>=DELEGATION_LIMITS.totalSteps)throw conflict('The parent turn reached its delegated model-step limit.');budget.steps++; }
-      const message: Message = {id:randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
+      // A pruned-retry step reuses the saved placeholder row instead of orphaning it.
+      const message: Message = {id:reuseMessageId??randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
+      reuseMessageId=undefined;
       const fragments = new Map<number,{id:string;name:string;arguments:string}>();
       const original=this.store.messages(id);
-      // Request-projection only: the envelope exists in this outbound array and
-      // nowhere else. Rebuilt fresh each step, so a retry never stacks two.
-      let history=this.withEnvelope(this.providerMessages(id,original),run,session,provider), retainedMessages:ProviderMessage[]|undefined;
+      // Request-projection only: the envelope and any tool-output pruning exist
+      // in this outbound array and nowhere else. Rebuilt fresh each step, so a
+      // retry never stacks two envelopes or double-prunes.
+      const project=(messages:Message[])=>this.withEnvelope(this.providerMessages(id,messages),run,session,provider);
+      const prunedReason='Older tool output was pruned in this request to make room; conversation history is unchanged.';
+      let requestPruned=retryPruned;retryPruned=false;
+      let history=project(requestPruned?pruneToolOutputs(original).messages:original), retainedMessages:ProviderMessage[]|undefined;
       const limits=compactionLimits(provider,session.model);
       if(limits&&completeToolBoundary(original)===original.length) {
         try {retainedMessages=this.providerMessages(id,planCompaction(original,{retainLatestTurn:true,maxSourceChars:limits.maxSourceChars}).retained);} catch {/* No safe older prefix is advisory only. */}
       }
       message.context=assessContext({provider,model:session.model,messages:history,system,tools},{retainedMessages,autoCompactionAttempted});
+      if(requestPruned) {
+        // Overflow retry: the pruned projection was already validated against the
+        // hard ceiling; retrying must not spend the one automatic summary attempt.
+        message.context={...message.context,action:'continue',reason:`The provider rejected context size. ${prunedReason}`};
+      } else if(message.context.action==='compact') {
+        // Free first rung before paid summarization: prune stale older tool
+        // output in the outbound copy only. Persisted history, exports, and the
+        // transcript keep the full output, so this is not a history rewrite for
+        // cache diagnostics; the changed request content shows up as input size,
+        // not a prefix reason.
+        const pruned=pruneToolOutputs(original);
+        if(pruned.prunedCount) {
+          requestPruned=true;history=project(pruned.messages);
+          const reassessed=assessContext({provider,model:session.model,messages:history,system,tools},{retainedMessages,autoCompactionAttempted});
+          message.context=reassessed.action==='compact'?reassessed:{...reassessed,action:'continue',reason:prunedReason};
+        }
+      }
       // Cache observability: compare this request's cacheable prefix against the
       // session's previous request and record why it changed. Children track
       // their own child session id, so a researcher never muddies the parent.
@@ -558,6 +581,22 @@ export class Runner {
         }
       } catch (error) {
         message.activity='';
+        // Free overflow rung: retry once with older tool output pruned in the
+        // outbound copy, before spending the single automatic summary attempt.
+        // Children may prune (it relieves transcript pressure) but never summarize.
+        if (!signal.aborted && !overflowPruneUsed && !requestPruned && error instanceof ProviderError && error.contextOverflow && error.status && !message.content && !message.reasoning && !fragments.size) {
+          const pruned=pruneToolOutputs(this.store.messages(id));
+          if(pruned.prunedCount) {
+            const estimate=estimateRequest({provider,model:session.model,messages:this.withEnvelope(this.providerMessages(id,pruned.messages),run,session,provider),system,tools});
+            const budget=resolveContextBudget(provider,session.model);
+            // With a known window require fitting under the hard ceiling; with an
+            // unknown one require meaningful savings before a second attempt.
+            if(budget.contextWindow===undefined?hasMeaningfulSavings(estimateRequest({provider,model:session.model,messages:history,system,tools}).estimatedInputTokens,estimate.estimatedInputTokens):estimate.estimatedInputTokens+budget.outputReserve<=budget.contextWindow) {
+              overflowPruneUsed=true;retryPruned=true;reuseMessageId=message.id;
+              previousBatch='';repeatedBatches=0;step--;continue;
+            }
+          }
+        }
         // Recover only an explicit rejected context request, never replay a partial response.
         if (!run.child && !signal.aborted && !autoCompactionAttempted && error instanceof ProviderError && error.contextOverflow && error.status && !message.content && !message.reasoning && !fragments.size) {
           autoCompactionAttempted=true;
@@ -632,12 +671,14 @@ export class Runner {
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else {
             call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
-            output = call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
+            output = call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name==='tool_output_page' ? executeToolOutputPage(this.store,id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
               workspace:session.workspace,sessionId:id,signal,
               prepareChange:change => { this.history.prepareChange(id,change); },
               onChange:change => { this.history.commitChange(id,change); },
               onTodos:todos => { this.store.saveTodos(id,todos); this.bus.emit(id,'todos',todos); },
               getTodos:() => this.store.todos(id),
+              saveToolOutput:content => this.store.saveToolOutput(id,call.id,content),
+              callId:call.id,
             });
             call.status='completed';
           }

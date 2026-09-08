@@ -206,7 +206,12 @@ export function compactionLimits(provider: Provider, model: string, cache = mode
  * mutates, fetches, rejects a prompt, or authorizes another compaction attempt. */
 export function assessContext(request: BudgetRequest, options: { retainedMessages?: readonly ProviderMessage[]; autoCompactionAttempted?: boolean } = {}, cache = modelCatalog): ContextSnapshot {
   const estimate = estimateRequest(request), budget = resolveContextBudget(request.provider, request.model, cache);
-  const snapshot: ContextSnapshot = { providerId: request.provider.id, model: request.model, ...estimate, ...budget, action: 'continue' };
+  // The component split reuses the same bounded heuristic per part; it is a
+  // readability aid for the /context view, never a second budgeting authority.
+  const system = estimateRequest({ messages: [], system: request.system }).estimatedInputTokens;
+  const tools = estimateRequest({ messages: [], tools: request.tools }).estimatedInputTokens;
+  const snapshot: ContextSnapshot = { providerId: request.provider.id, model: request.model, ...estimate, ...budget, action: 'continue',
+    components: { system, tools, history: Math.max(0, estimate.estimatedInputTokens - system - tools) } };
   const continuation = (reason: string) => ({ ...snapshot, reason });
   if (budget.contextWindow === undefined) return continuation('Context window is unknown. This text estimate is advisory; the provider decides whether the request fits.');
   const limits = compactionLimits(request.provider, request.model, cache);

@@ -133,6 +133,30 @@ export function completeToolBoundary(messages: readonly Message[], endExclusive 
   return beforeCrossingGroups(toolSpans(messages), endExclusive);
 }
 
+export const PRUNE_MARKER = '\n[... middle of this tool result pruned to save context; the full output was shown when the tool ran ...]\n';
+export interface PruneResult { messages: Message[]; prunedCount: number; savedChars: number }
+/** Nudge an index that lands between the halves of a surrogate pair. */
+const unsplit = (text: string, index: number): number =>
+  index > 0 && index < text.length && (text.charCodeAt(index) & 0xfc00) === 0xdc00 && (text.charCodeAt(index - 1) & 0xfc00) === 0xd800 ? index - 1 : index;
+
+/** Free first compaction rung: middle-out prune of stale tool results. Pure and
+ * request-projection oriented — callers apply it to the outbound copy only, so
+ * persisted history, exports, and the UI transcript keep the full output. The
+ * latest accepted turn's tool results stay verbatim by default. Never mutates. */
+export function pruneToolOutputs(messages: Message[], options: { headChars?: number; tailChars?: number; threshold?: number; protectLatestTurn?: boolean } = {}): PruneResult {
+  const threshold = options.threshold ?? 8192, headChars = options.headChars ?? 4096, tailChars = options.tailChars ?? 1024;
+  const boundary = options.protectLatestTurn === false ? messages.length : messages.findLastIndex(message => message.role === 'user');
+  let prunedCount = 0, savedChars = 0;
+  const result = messages.map((message, index) => {
+    if (message.role !== 'tool' || index >= boundary || message.content.length <= threshold) return message;
+    const content = message.content.slice(0, unsplit(message.content, headChars)) + PRUNE_MARKER + message.content.slice(unsplit(message.content, message.content.length - tailChars));
+    if (content.length >= message.content.length) return message; // Custom limits must never grow the request.
+    prunedCount++; savedChars += message.content.length - content.length;
+    return { ...message, content };
+  });
+  return { messages: result, prunedCount, savedChars };
+}
+
 /** Pure, deterministic compaction preparation. Does not mutate messages, call a model, or perform I/O. */
 export function planCompaction(messages: Message[], options: CompactionOptions = {}): CompactionPlan {
   const limit = options.maxSourceChars ?? MAX_SOURCE_CHARS;

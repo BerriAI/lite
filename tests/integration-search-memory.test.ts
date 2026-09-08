@@ -105,7 +105,7 @@ describe('history_search, memory tools and session-context envelope integration'
     respond = (body, res) => { if (child(body)) { if (body.messages.at(-1)?.role === 'tool') text(res, 'Child report'); else tools(res, [{ name: 'history_search', args: { operation: 'search', query: 'QUARKPHASE' } }]); } else if (body.messages.at(-1)?.role === 'tool') text(res); else tools(res, [{ name: 'task', args: { description: 'Inspect', prompt: 'CHILD inspect history' } }]); };
     const s = await create({ permissionMode: 'auto' }); await run(s.id);
     const childCall = calls.find(child)!;
-    expect(names(childCall).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'web_fetch']);
+    expect(names(childCall).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'web_fetch']);
     for (const name of MEMORY_TOOLS) expect(names(childCall)).not.toContain(name);
     const delegation = runner.delegations.list(s.id)[0];
     expect(delegation.status).toBe('completed');

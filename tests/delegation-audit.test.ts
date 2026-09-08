@@ -230,7 +230,7 @@ describe('independent researcher delegation seam audit', () => {
     expect(serialized).toContain('ORIGINAL_ACCEPTED_GUIDANCE'); expect(serialized).toContain('ORIGINAL_PINNED_SKILL');
     expect(serialized).not.toContain('CHANGED_UNACCEPTED_GUIDANCE'); expect(serialized).not.toContain('PARENT_ATTACHMENT_NOT_COPIED');
     expect(serialized).not.toContain('synthetic-delegation-original-key'); expect(serialized).not.toContain('synthetic-replacement-key');
-    expect(research.tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'web_fetch']);
+    expect(research.tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'web_fetch']);
     const delegation = app.runner.delegations.list(parent.id)[0];
     expect(delegation.status).toBe('completed'); expect(store.profileSnapshot(delegation.childSessionId)).toEqual(resolved.snapshot);
   });
@@ -284,7 +284,7 @@ describe('independent researcher delegation seam audit', () => {
     const auto = store.createSession({ mode: 'plan', permissionMode: 'auto' });
     app.runner.start(auto.id, 'Use explicit Plan Auto.'); await app.runner.whenIdle();
     expect(requests).toHaveLength(9); expect(app.runner.permissions(auto.id)).toEqual([]);
-    for (const research of requests.filter(isResearch)) expect(research.tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'web_fetch']);
+    for (const research of requests.filter(isResearch)) expect(research.tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'web_fetch']);
     expect(app.runner.delegations.list(parent.id).map(delegation => delegation.status)).toEqual(['completed', 'completed']);
   });
 

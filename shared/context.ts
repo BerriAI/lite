@@ -15,4 +15,6 @@ export interface ContextSnapshot {
   /** Observability only: whether the cacheable prefix (system text + tool
    * schemas) changed since this session's previous request, and why. */
   cache?: import('./cache.js').CacheDiagnostics;
+  /** Advisory per-component split of the same heuristic estimate. */
+  components?: { system: number; tools: number; history: number };
 }

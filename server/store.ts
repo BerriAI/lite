@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { completeToolBoundary } from './context.js';
 import type { ApplyProfileRequest } from '../shared/profiles.js';
 import type { ProfileSnapshot, ResolvedProfile } from './profiles.js';
@@ -36,7 +36,9 @@ export class Store {
         status TEXT NOT NULL,
         data TEXT NOT NULL,
         UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
-      CREATE INDEX IF NOT EXISTS delegations_parent ON delegations(parent_session_id);`);
+      CREATE INDEX IF NOT EXISTS delegations_parent ON delegations(parent_session_id);
+      CREATE TABLE IF NOT EXISTS tool_outputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, content BLOB NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS tool_outputs_session ON tool_outputs(session_id, created_at);`);
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
@@ -199,6 +201,33 @@ export class Store {
       this.db.exec('RELEASE SAVEPOINT lite_compaction');
       return archive;
     } catch(error) { this.db.exec('ROLLBACK TO SAVEPOINT lite_compaction; RELEASE SAVEPOINT lite_compaction');throw error; }
+  }
+  /** Persist the full pre-truncation output of one tool call so
+   * tool_output_page can read it back. Storage is capped at 4 MiB of UTF-8
+   * (rounded down to a character boundary, with the cap noted in the stored
+   * text); the sha256 covers exactly the stored bytes so paged reassembly is
+   * verifiable. Retention is bounded per session: only the newest 200 rows
+   * survive a save. Rows ride the sessions ON DELETE CASCADE. */
+  saveToolOutput(sessionId: string, callId: string, content: string): void {
+    this.session(sessionId);
+    if (typeof callId !== 'string' || !callId || typeof content !== 'string') throw new Error('Invalid tool output.');
+    const cap = 4 * 1024 * 1024;
+    let bytes = Buffer.from(content, 'utf8');
+    if (bytes.length > cap) {
+      let end = cap;
+      while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+      bytes = Buffer.concat([bytes.subarray(0, end), Buffer.from('\n[Stored output capped at 4 MiB; the remainder was not retained.]', 'utf8')]);
+    }
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    this.atomic(() => {
+      this.db.prepare('INSERT OR REPLACE INTO tool_outputs(id,session_id,content,sha256,created_at) VALUES(?,?,?,?,?)').run(callId, sessionId, bytes, sha256, Date.now());
+      this.db.prepare('DELETE FROM tool_outputs WHERE session_id=? AND rowid NOT IN (SELECT rowid FROM tool_outputs WHERE session_id=? ORDER BY created_at DESC, rowid DESC LIMIT 200)').run(sessionId, sessionId);
+    });
+  }
+  /** Session-scoped read-back: a call id from another session is not visible. */
+  toolOutput(sessionId: string, callId: string): { content: string; sha256: string } | undefined {
+    const row = this.db.prepare('SELECT content,sha256 FROM tool_outputs WHERE id=? AND session_id=?').get(callId, sessionId) as { content: Uint8Array; sha256: string } | undefined;
+    return row ? { content: Buffer.from(row.content).toString('utf8'), sha256: row.sha256 } : undefined;
   }
   todos(id: string): Todo[] { const row = this.db.prepare('SELECT data FROM todos WHERE session_id=?').get(id) as {data:string}|undefined; return row ? JSON.parse(row.data) : []; }
   saveTodos(id: string, todos: Todo[]) { this.db.prepare('INSERT INTO todos(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id, JSON.stringify(todos)); }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { completeToolBoundary, planCompaction } from '../server/context.js';
+import { completeToolBoundary, planCompaction, pruneToolOutputs, PRUNE_MARKER } from '../server/context.js';
 import type { Message, ToolCall } from '../shared/types.js';
 
 function message(id: string, role: Message['role'], content: string, extra: Partial<Message> = {}): Message {
@@ -165,5 +165,83 @@ describe('pure context compaction planning', () => {
   });
   it.each([0, 100, 511, 48001, -1, 1024.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid budget %s', limit => {
     expect(() => planCompaction([message('a', 'assistant', 'one')], { retainLatestTurn: false, maxSourceChars: limit })).toThrow('between 512 and 48000');
+  });
+});
+
+describe('free tool-output pruning', () => {
+  const brokenSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  const turn = (index: number, size: number) => [
+    message(`u-${index}`, 'user', `request ${index}`),
+    message(`a-${index}`, 'assistant', '', { toolCalls: [tool(`c-${index}`)] }),
+    message(`t-${index}`, 'tool', `HEAD-${index} `.padEnd(Math.floor(size / 2), 'x') + ` TAIL-${index}`.padStart(Math.ceil(size / 2), 'y'), { toolCallId: `c-${index}` }),
+  ];
+  it('leaves exactly-threshold output untouched and prunes one character over', () => {
+    for (const [size, pruned] of [[8192, 0], [8193, 1]] as const) {
+      const messages = freeze([...turn(1, size), message('u-latest', 'user', 'next')]);
+      const result = pruneToolOutputs(messages);
+      expect(result.prunedCount).toBe(pruned);
+      if (!pruned) { expect(result.messages).toEqual(messages); expect(result.messages[2]).toBe(messages[2]); expect(result.savedChars).toBe(0); }
+    }
+  });
+  it('preserves head and tail around the marker and reports accurate savings', () => {
+    const original = 'HEAD_SENTINEL ' + 'm'.repeat(20_000) + ' TAIL_SENTINEL';
+    const messages = freeze([...turn(1, 10), message('t-big', 'tool', original, { toolCallId: 'c-1' }), message('u-latest', 'user', 'next')]);
+    const result = pruneToolOutputs(messages);
+    const content = result.messages[3].content;
+    expect(content.startsWith(original.slice(0, 4096))).toBe(true);
+    expect(content.endsWith(original.slice(-1024))).toBe(true);
+    expect(content).toContain(PRUNE_MARKER);
+    expect(content).toContain('the full output was shown when the tool ran');
+    expect(content.length).toBe(4096 + PRUNE_MARKER.length + 1024);
+    expect(result.prunedCount).toBe(1);
+    expect(result.savedChars).toBe(original.length - content.length);
+    // New object for the pruned row; untouched rows pass through by reference.
+    expect(result.messages[3]).not.toBe(messages[3]);
+    expect(result.messages[3]).toMatchObject({ id: 't-big', role: 'tool', toolCallId: 'c-1' });
+    expect(result.messages[0]).toBe(messages[0]); expect(result.messages[2]).toBe(messages[2]);
+    expect(messages[3].content).toBe(original);
+  });
+  it('never splits a surrogate pair at either boundary', () => {
+    // Emoji straddle index 4096 (head cut) and length-1024 (tail cut).
+    const original = 'a'.repeat(4095) + '😀'.repeat(3000) + 'z'.repeat(1023);
+    expect(original.charCodeAt(4096)).toBeGreaterThanOrEqual(0xdc00); // Boundary is mid-pair by construction.
+    const messages = freeze([...turn(1, 10), message('t-emoji', 'tool', original, { toolCallId: 'c-1' }), message('u-latest', 'user', 'next')]);
+    const content = pruneToolOutputs(messages).messages[3].content;
+    expect(content).toContain(PRUNE_MARKER);
+    expect(brokenSurrogate.test(content)).toBe(false);
+    for (const part of content.split(PRUNE_MARKER)) expect(brokenSurrogate.test(part)).toBe(false);
+  });
+  it('protects the latest turn by default but prunes it with protectLatestTurn: false', () => {
+    const messages = freeze([...turn(1, 9000), ...turn(2, 9000)]);
+    const protectedResult = pruneToolOutputs(messages);
+    expect(protectedResult.prunedCount).toBe(1);
+    expect(protectedResult.messages[2].content).toContain(PRUNE_MARKER);
+    expect(protectedResult.messages[5]).toBe(messages[5]); // Latest turn stays verbatim.
+    const full = pruneToolOutputs(messages, { protectLatestTurn: false });
+    expect(full.prunedCount).toBe(2);
+    expect(full.messages[5].content).toContain(PRUNE_MARKER);
+    expect(full.savedChars).toBeGreaterThan(protectedResult.savedChars);
+  });
+  it('passes through empty input, histories without tool messages, and long non-tool messages', () => {
+    expect(pruneToolOutputs([])).toEqual({ messages: [], prunedCount: 0, savedChars: 0 });
+    const chatty = freeze([message('u', 'user', 'x'.repeat(20_000)), message('a', 'assistant', 'y'.repeat(20_000)), message('u2', 'user', 'latest')]);
+    const result = pruneToolOutputs(chatty);
+    expect(result).toMatchObject({ prunedCount: 0, savedChars: 0 });
+    chatty.forEach((original, index) => expect(result.messages[index]).toBe(original));
+  });
+  it('without any user message prunes nothing under protection and everything eligible without it', () => {
+    const orphan = freeze([message('a', 'assistant', '', { toolCalls: [tool('c')] }), message('t', 'tool', 'x'.repeat(9000), { toolCallId: 'c' })]);
+    expect(pruneToolOutputs(orphan).prunedCount).toBe(0);
+    expect(pruneToolOutputs(orphan, { protectLatestTurn: false }).prunedCount).toBe(1);
+  });
+  it('honors custom limits and refuses a "prune" that would not shrink the message', () => {
+    const messages = [message('u', 'user', 'ask'), message('t', 'tool', 'A'.repeat(400), { toolCallId: 'c' }), message('u2', 'user', 'latest')];
+    const custom = pruneToolOutputs(messages, { threshold: 100, headChars: 50, tailChars: 20 });
+    expect(custom.prunedCount).toBe(1);
+    expect(custom.messages[1].content.length).toBe(50 + PRUNE_MARKER.length + 20);
+    // head + tail + marker >= original: keeping the original is smaller and honest.
+    const growing = pruneToolOutputs(messages, { threshold: 100, headChars: 300, tailChars: 300 });
+    expect(growing.prunedCount).toBe(0);
+    expect(growing.messages[1]).toBe(messages[1]);
   });
 });

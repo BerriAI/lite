@@ -24,6 +24,7 @@ export function ContextIndicator({ context }: { context: ContextSnapshot }) {
       <p>Approximate pre-request snapshot for this response, not live remaining context or draft usage. Text token counts are heuristic estimates, not provider-reported usage.</p>
       <dl>
         <div><dt>Estimated input</dt><dd>{input ? `≈${input} tokens` : 'Unavailable'}</dd></div>
+        {context.components && <div><dt>Breakdown</dt><dd>{`system ≈${tokenCount(context.components.system) ?? 0} · tools ≈${tokenCount(context.components.tools) ?? 0} · history ≈${tokenCount(context.components.history) ?? 0}`}</dd></div>}
         <div><dt>Context window</dt><dd>{window ? `${window} tokens` : 'Unknown · no verified limit'}</dd></div>
         <div><dt>Output reserve</dt><dd>{reserve ? `${reserve} tokens` : 'Unavailable'}</dd></div>
         <div><dt>Limit source</dt><dd>{source}</dd></div>
