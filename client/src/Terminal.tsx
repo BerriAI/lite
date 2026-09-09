@@ -12,15 +12,15 @@ const colors = (): ITheme => {
   const css = getComputedStyle(root);
   const token = (name: string, fallback: string) => css.getPropertyValue(name).trim() || fallback;
   return {
-    background: token('--code', dark ? '#181b20' : '#f5f6f8'),
-    foreground: token('--text', dark ? '#e8eaf0' : '#26292e'),
-    cursor: token('--blue', dark ? '#729cff' : '#3269ed'),
-    selectionBackground: dark ? '#3c4350' : '#cddcff',
-    black: dark ? '#242933' : '#26292e', brightBlack: '#747d8c',
+    background: token('--code', dark ? '#121218' : '#f6f6f8'),
+    foreground: token('--text', dark ? '#e8e8f0' : '#272b37'),
+    cursor: token('--blue', dark ? '#b8a8ff' : '#5b3fd1'),
+    selectionBackground: dark ? '#3b3b4d' : '#ddd6f7',
+    black: dark ? '#21212c' : '#272b37', brightBlack: '#747d8c',
     red: dark ? '#f09592' : '#b13232', brightRed: '#e76b68',
-    green: dark ? '#76c5a6' : '#267556', brightGreen: '#66ba95',
+    green: dark ? '#7ee2a8' : '#2f9e5e', brightGreen: '#66ba95',
     yellow: dark ? '#dfb46b' : '#916016', brightYellow: '#d4a85a',
-    blue: dark ? '#729cff' : '#3269ed', brightBlue: '#8bb0ff',
+    blue: dark ? '#b8a8ff' : '#5b3fd1', brightBlue: dark ? '#c9bdff' : '#7c6cf0',
     magenta: dark ? '#c5a0e5' : '#8857a8', brightMagenta: '#ccaceb',
     cyan: dark ? '#79c5cc' : '#287b86', brightCyan: '#85d4da',
     white: dark ? '#d1d6df' : '#7a8493', brightWhite: dark ? '#ffffff' : '#a3a8b1',
