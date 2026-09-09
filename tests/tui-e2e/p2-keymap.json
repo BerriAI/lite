@@ -1,0 +1,51 @@
+[
+  {
+    "wait": "fixture/test-model",
+    "note": "status line shows the session model"
+  },
+  {
+    "send": "hi there\r"
+  },
+  {
+    "wait": "Hello from Lite",
+    "note": "fixture reply rendered"
+  },
+  {
+    "send": "\u0018",
+    "note": "ctrl+x arms the leader"
+  },
+  {
+    "wait": "leader",
+    "note": "pending-leader indicator visible"
+  },
+  {
+    "send": "\u001b",
+    "note": "escape cancels the pending sequence"
+  },
+  {
+    "sleep": 400
+  },
+  {
+    "send": "still alive\r"
+  },
+  {
+    "wait": "still alive",
+    "note": "input works after a cancelled sequence"
+  },
+  {
+    "send": "\u0018",
+    "note": "ctrl+x arms the leader again"
+  },
+  {
+    "wait": "leader"
+  },
+  {
+    "send": "q",
+    "note": "leader q completes app_exit"
+  },
+  {
+    "expectExit": 0,
+    "timeout": 10000,
+    "note": "clean exit via leader sequence"
+  }
+]

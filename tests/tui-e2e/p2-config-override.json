@@ -1,0 +1,32 @@
+[
+  {
+    "wait": "fixture/test-model",
+    "note": "TUI boots with LITE_TUI_CONFIG override"
+  },
+  {
+    "send": "\u0003",
+    "note": "ctrl+c is unbound by the override"
+  },
+  {
+    "send": "\u0003"
+  },
+  {
+    "sleep": 600
+  },
+  {
+    "send": "config check\r"
+  },
+  {
+    "wait": "config check",
+    "note": "still running after double ctrl+c"
+  },
+  {
+    "send": "\u0011",
+    "note": "remapped ctrl+q exits immediately"
+  },
+  {
+    "expectExit": 0,
+    "timeout": 10000,
+    "note": "clean exit via remapped binding"
+  }
+]

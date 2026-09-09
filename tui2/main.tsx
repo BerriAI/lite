@@ -11,6 +11,10 @@ import { LiteClient } from '../tui/client.js';
 import { parseOptions } from './options.js';
 import { SessionSync } from './sync.js';
 import { App } from './app.tsx';
+import { getTheme, setCustomThemes, type Theme } from './theme.js';
+import { BUILTIN_THEMES, DEFAULT_THEME_NAME } from './themes.js';
+import { KeymapRouter, buildBindings, resolveLeader } from './keymap.js';
+import { discoverCustomThemes, loadTuiConfig } from './tuiConfig.js';
 
 async function main() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
@@ -20,6 +24,16 @@ async function main() {
   }
   const options = parseOptions(process.argv.slice(2));
   const client = new LiteClient(options.url);
+
+  // Config + theme + keymap load before the renderer so a bad config file
+  // warns on stderr while it is still visible.
+  const config = loadTuiConfig();
+  setCustomThemes(discoverCustomThemes());
+  const themeName = config.theme ?? DEFAULT_THEME_NAME;
+  const theme: Theme = getTheme(themeName, 'dark', BUILTIN_THEMES)
+    ?? getTheme(DEFAULT_THEME_NAME, 'dark', BUILTIN_THEMES)!;
+  const router = new KeymapRouter(resolveLeader(config.keybinds), config.leader_timeout);
+  router.addLayer({ name: 'app', bindings: buildBindings(config.keybinds, ['app_exit', 'session_interrupt']) });
 
   let sessionId = options.sessionId;
   if (!sessionId) {
@@ -60,6 +74,7 @@ async function main() {
     if (quitting) return;
     quitting = true;
     process.exitCode = code;
+    router.dispose();
     sync.stop();
     renderer.destroy();
   };
@@ -68,7 +83,7 @@ async function main() {
   const finished = new Promise<void>(resolve => renderer.once('destroy', () => resolve()));
 
   const root = createRoot(renderer);
-  root.render(<App sync={sync} onQuit={() => quit(0)} />);
+  root.render(<App sync={sync} theme={theme} router={router} onQuit={() => quit(0)} />);
 
   await finished;
   root.unmount();
