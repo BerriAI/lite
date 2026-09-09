@@ -15,6 +15,8 @@ import type { TurnReceipts } from './receipts.js';
 export type { TurnReceipts } from './receipts.js';
 import type { HookConfig } from './hooks.js';
 export type { HookConfig, HookEvent } from './hooks.js';
+import type { PluginRegistryEntry } from './plugins.js';
+export type { PluginRegistryEntry, PluginItem, InstallAction, InstallPlan, UninstallResult } from './plugins.js';
 
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
@@ -27,7 +29,10 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
   hooks?: HookConfig[];
   /** Canonical (realpath) workspace paths the user marked trusted. Project
    * .lite/hooks.json only runs for a workspace listed here. */
-  trustedWorkspaces?: string[]; }
+  trustedWorkspaces?: string[];
+  /** Installed plugin registry (design note 4.4): per-plugin provenance so
+   * uninstall removes exactly the items an install recorded. */
+  plugins?: Record<string, PluginRegistryEntry>; }
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
 export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */

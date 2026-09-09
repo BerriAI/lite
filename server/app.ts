@@ -12,6 +12,8 @@ import { modelCatalog } from './budget.js';
 import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
 import { validateRuleSet } from './permissions.js';
 import { validateHooks } from './hooks.js';
+import { planInstall, applyInstall, uninstall, publicPlan } from './plugins.js';
+import { PLUGIN_LIMITS } from '../shared/plugins.js';
 import { HOOK_LIMITS } from '../shared/hooks.js';
 import type { ProfileDetail } from '../shared/profiles.js';
 import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
@@ -283,6 +285,30 @@ export function createApp(options:AppOptions = {}) {
       }
     }
     res.json({commands});
+  });
+  // Plugin packages (design note 4.4). Local directories only (git URLs are
+  // out of scope: clone first). POST /plan is the pure dry run; POST /install
+  // RE-PLANS and applies in one call so there is no stale-plan window between
+  // reviewing and applying. Settings UI is deliberately absent in v1 —
+  // config/CLI-first; the API is the whole surface.
+  const pluginInput=z.object({source:z.string().min(1).max(PLUGIN_LIMITS.sourcePath),workspace:z.string().max(4096).optional()}).strict();
+  app.post('/api/plugins/plan',async(req,res)=>{
+    const input=pluginInput.parse(req.body);
+    const root=await workspace(input.workspace);
+    res.json({plan:publicPlan(await planInstall(input.source,root,store))});
+  });
+  app.post('/api/plugins/install',async(req,res)=>{
+    const input=pluginInput.parse(req.body);
+    const root=await workspace(input.workspace);
+    const plan=await planInstall(input.source,root,store);
+    const result=await applyInstall(plan,root,store);
+    res.json({plan:publicPlan({...plan,warnings:result.warnings}),applied:true,plugin:{name:result.name,...result.entry}});
+  });
+  app.get('/api/plugins',(_req,res)=>res.json({plugins:store.settings().plugins??{}}));
+  app.delete('/api/plugins/:name',async(req,res)=>{
+    const name=z.string().min(1).max(64).parse(req.params.name);
+    const root=queryString(req.query.workspace)||store.settings().workspace;
+    res.json(await uninstall(name,root,store));
   });
   app.get('/api/mcp',(_req,res)=>res.json(mcpStatus()));
   for(const action of ['refresh','reconnect'] as const)app.post(`/api/mcp/:name/${action}`,async(req,res)=>{

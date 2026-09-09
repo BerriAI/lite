@@ -20,7 +20,9 @@ const supported = {
   run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
   profiles: new Set(['--url', '--workspace', '--json']),
   sessions: new Set(['--url']), models: new Set(['--url', '--provider']), export: new Set(['--url']),
+  plugin: new Set(['--url', '--workspace', '--json']),
 };
+const pluginSubcommands = new Set(['plan', 'install', 'list', 'remove']);
 const option = (name, fallback) => options.get(name) ?? fallback;
 
 function parse() {
@@ -43,7 +45,13 @@ function parse() {
   }
   if (command === 'run' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: lite run "your prompt" [--model ID]');
   if (command === 'export' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: lite export <session-id>');
-  if (!['run', 'export'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use lite --help.`);
+  if (command === 'plugin') {
+    const usage = 'Usage: lite plugin plan <dir> | install <dir> | list | remove <name>';
+    if (!pluginSubcommands.has(positional[0])) throw new Error(usage);
+    const wantsArgument = positional[0] !== 'list';
+    if (positional.length !== (wantsArgument ? 2 : 1) || (wantsArgument && !positional[1].trim())) throw new Error(usage);
+  }
+  if (!['run', 'export', 'plugin'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use lite --help.`);
   if (command === 'run' && options.has('--session')) {
     const override = ['--model', '--provider', '--profile', '--skills', '--plan', '--build', '--auto'].find(name => options.has(name));
     if (override) throw new Error(`${override} cannot be combined with --session. Change the existing session settings in Lite, or start a new session.`);
@@ -75,9 +83,9 @@ function terminalText(value, multiline = false) {
   });
 }
 
-async function api(path, body, signal) {
+async function api(path, body, signal, method) {
   const response = await fetch(`${base}/api${path}`, {
-    method: body === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' },
+    method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: signal ?? AbortSignal.timeout(30000),
   });
   let data;
@@ -289,6 +297,46 @@ async function runPrompt(prompt) {
   }
 }
 
+// Plugin packages: everything runs against the server API (like run/profiles);
+// local directories only — clone git packages first. The plan/install output
+// escapes all package-controlled text before it reaches the terminal.
+function printPlan(plan) {
+  console.log(`Plugin: ${terminalText(plan.plugin.name)}@${terminalText(plan.plugin.version)}${plan.plugin.description ? ` — ${terminalText(plan.plugin.description)}` : ''}`);
+  if (!plan.actions.length) console.log('  No installable items.');
+  for (const action of plan.actions) {
+    const status = action.conflict === 'exists' ? 'SKIP (exists)' : action.conflict === 'same-plugin-update' ? 'update' : 'add';
+    console.log(`  ${status.padEnd(14)} ${action.kind.padEnd(8)} ${terminalText(action.name)}  -> ${terminalText(action.target)}`);
+  }
+  for (const warning of plan.warnings) process.stderr.write(`Warning: ${terminalText(warning)}\n`);
+  for (const key of plan.unmapped ?? []) process.stderr.write(`Unmapped compatible-manifest key ignored: ${terminalText(key)}\n`);
+}
+async function pluginCommand(subcommand, argument) {
+  const root = resolve(option('--workspace', process.cwd()));
+  if (subcommand === 'plan' || subcommand === 'install') {
+    const data = await api(`/plugins/${subcommand}`, { source: resolve(argument), workspace: root });
+    if (options.has('--json')) { console.log(JSON.stringify(data)); return; }
+    printPlan(data.plan);
+    if (subcommand === 'install') {
+      const landed = data.plan.actions.filter(action => action.conflict !== 'exists');
+      console.log(`Installed ${terminalText(data.plugin.name)}@${terminalText(data.plugin.version)}: ${landed.length} item${landed.length === 1 ? '' : 's'} landed.`);
+      if (landed.some(action => action.kind === 'mcp')) console.log('MCP servers were installed DISABLED; connect them explicitly in Settings.');
+      if (landed.some(action => action.kind === 'hook')) console.log('Hooks were added to Settings; project workspaces still require explicit trust.');
+    } else console.log('Dry run only. Use lite plugin install to apply.');
+  } else if (subcommand === 'list') {
+    const data = await api('/plugins');
+    if (options.has('--json')) { console.log(JSON.stringify(data)); return; }
+    const entries = Object.entries(data.plugins ?? {});
+    if (!entries.length) { console.log('No plugins installed.'); return; }
+    for (const [name, entry] of entries) console.log(`${terminalText(name)}@${terminalText(entry.version)}  ${entry.items?.length ?? 0} item${entry.items?.length === 1 ? '' : 's'}  ${terminalText(entry.workspace)}`);
+  } else {
+    const data = await api(`/plugins/${encodeURIComponent(argument)}?workspace=${encodeURIComponent(root)}`, undefined, undefined, 'DELETE');
+    if (options.has('--json')) { console.log(JSON.stringify(data)); return; }
+    for (const item of data.removed) console.log(`Removed ${item.kind}: ${terminalText(item.target)}`);
+    for (const warning of data.warnings) process.stderr.write(`Warning: ${terminalText(warning)}\n`);
+    console.log(`Uninstalled ${terminalText(argument)} (${data.removed.length} item${data.removed.length === 1 ? '' : 's'} removed).`);
+  }
+}
+
 try {
   parse();
   if (command === 'help') console.log(`
@@ -300,6 +348,10 @@ try {
   lite models              List available models
   lite profiles            List project profiles, skills, and diagnostics
   lite export <session>    Export a session as JSON
+  lite plugin plan <dir>       Dry-run: what a local plugin package would install
+  lite plugin install <dir>    Install a local plugin package (plan + apply)
+  lite plugin list             List installed plugins
+  lite plugin remove <name>    Uninstall exactly the plugin's recorded items
 
 Server: --port 3210, --workspace PATH
 Client: --url URL (or LITE_URL)
@@ -307,6 +359,9 @@ Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
         --profile ID, --skills ID,ID (or none)
 Models: --provider ID
 Profiles: --workspace PATH (default current directory), --json
+Plugin:  --workspace PATH (default current directory), --json
+         Local directories only; clone git packages first. MCP servers install
+         DISABLED; hooks stay behind workspace trust; conflicts are skipped.
 
 --session continues existing settings; model, provider, profile, skills,
 mode, and permission flags cannot override it. --json emits newline-delimited
@@ -339,6 +394,7 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     if (data.error) throw new Error(data.error);
     for (const model of data.models) console.log(`${model.id}  (${model.providerId})`);
   } else if (command === 'export') console.log(JSON.stringify(await api(`/sessions/${encodeURIComponent(positional[0])}/export`), null, 2));
+  else if (command === 'plugin') await pluginCommand(positional[0], positional[1]);
 } catch (error) {
   console.error(`Lite: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with lite serve first.' : terminalText(error.message)}`);
   process.exitCode = process.exitCode || 1;
