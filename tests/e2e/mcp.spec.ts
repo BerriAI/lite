@@ -9,7 +9,9 @@ let directory: string, controlPath: string, journalPath: string, settings: Setti
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
 const card = (page: Page) => panel(page).getByRole('region', { name: 'MCP server demo', exact: true });
-const config = (identity = 'original'): McpServerConfig => ({ command: process.execPath, args: [resolve('scripts/mcp-e2e-fixture.mjs'), controlPath, journalPath, identity], enabled: true });
+// advertise:true — these browser scenarios exercise DIRECT advertisement, which
+// Phase 4.6 made per-server opt-in (default routes via the capability gateway).
+const config = (identity = 'original'): McpServerConfig => ({ command: process.execPath, args: [resolve('scripts/mcp-e2e-fixture.mjs'), controlPath, journalPath, identity], enabled: true, advertise: true });
 async function journal(): Promise<{ type: string; identity: string; name?: string; pid: number; version?: number }[]> { try { return (await readFile(journalPath, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); } catch { return []; } }
 async function changeControl(patch: Record<string, unknown>) { control = { ...control, ...patch }; await writeFile(controlPath + '.next', JSON.stringify(control)); await rename(controlPath + '.next', controlPath); }
 async function status(request: APIRequestContext): Promise<{ servers: McpServerStatus[]; configRevision: string }> { const response = await request.get('/api/mcp'); expect(response.ok()).toBe(true); return response.json(); }

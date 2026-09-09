@@ -9,6 +9,12 @@ export interface ExternalToolLease {
   assertCurrent(name: string): void;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
   release(): void;
+  /** GATEWAY PARTITION (docs/design-capability-proxy.md, Option 3): names of
+   * gateway-routed tools (their server's advertise !== true) mapped to the
+   * server name, frozen with the rest of this lease. OPTIONAL so mock leases
+   * and older ExternalTools keep working: when absent the runner advertises
+   * every leased tool directly — exactly the pre-gateway behavior. */
+  gatewayTools?(): ReadonlyMap<string, string>;
 }
 export interface ExternalTools {
   /** Synchronous, cache-only: cannot connect, discover, or await tools/list. */

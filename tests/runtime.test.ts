@@ -574,7 +574,9 @@ createInterface({input:process.stdin}).on('line',line=>{
 });
 process.stdin.on('end',()=>process.exit(0));
 `);
-    const mcpConfig = (endpoint: string) => ({ runtime: { command: runtime!, args: [mcpScript, mcpLog, mcpCatalog, mcpNotify, endpoint], env: { HOME: temporary, PATH: '/usr/bin:/bin' } } });
+    // advertise:true — this scenario asserts the DIRECT advertisement path,
+    // which Phase 4.6 made per-server opt-in (default routes via the capability gateway).
+    const mcpConfig = (endpoint: string) => ({ runtime: { command: runtime!, args: [mcpScript, mcpLog, mcpCatalog, mcpNotify, endpoint], env: { HOME: temporary, PATH: '/usr/bin:/bin' }, advertise: true } });
     const mcpRecords = async (): Promise<{ event: string; endpoint: string }[]> => {
       try { return (await readFile(mcpLog, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line)); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error; }

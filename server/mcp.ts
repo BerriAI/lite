@@ -295,12 +295,18 @@ export class McpManager implements ExternalTools {
     if (signal.aborted || this.shutdown.signal.aborted) throw cancelled();
     const routes = new Map<string, { entry: Entry; connection: Connection; generation: number; remote: string; scope: string; validity: AbortSignal }>();
     const definitions: ToolDefinition[] = [];
+    // Gateway partition, frozen with the lease: a tool routes through the
+    // capability gateway unless its server opted into direct advertisement
+    // (advertise: true). Membership is read from the entry's pinned config, so
+    // a later settings edit cannot repartition an accepted turn.
+    const gateway = new Map<string, string>();
     for (const entry of this.entries.values()) {
       if (entry.status !== 'connected' || !entry.connection?.ready || !entry.catalog) continue;
       for (const definition of entry.catalog.definitions) {
         const name = definition.function.name;
         if (routes.has(name)) throw new SafeError('Ambiguous MCP tool catalog.');
         routes.set(name, { entry, connection: entry.connection, generation: entry.generation, remote: entry.catalog.names.get(name)!, scope: digest([entry.name, entry.fingerprint, entry.catalog.digest]), validity: entry.validity.signal });
+        if (entry.config.advertise !== true) gateway.set(name, entry.name);
         definitions.push(definition);
       }
     }
@@ -316,6 +322,7 @@ export class McpManager implements ExternalTools {
     };
     return Object.freeze({
       definitions: freeze(definitions),
+      gatewayTools: () => gateway,
       scope: (name: string) => assert(name).scope,
       assertCurrent: (name: string) => { assert(name); },
       execute: (name: string, args: Record<string, unknown>, requestSignal: AbortSignal) => {

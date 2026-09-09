@@ -33,7 +33,12 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
   /** Installed plugin registry (design note 4.4): per-plugin provenance so
    * uninstall removes exactly the items an install recorded. */
   plugins?: Record<string, PluginRegistryEntry>; }
-export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
+/** advertise: true opts this server's tools back into DIRECT tool-array
+ * advertisement (decode-time schemas, prefix churn on catalog change). Default
+ * false routes them through the fixed-schema capability gateway so connect/
+ * refresh/disconnect never reshapes the advertised tool array
+ * (docs/design-capability-proxy.md, Option 3). */
+export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; advertise?: boolean; }
 export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
   goal?: SessionGoal;
