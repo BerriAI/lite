@@ -137,17 +137,17 @@ export function captureProjectGuidance(workspace: string): string {
   return result;
 }
 
-/** Acceptance-time snapshot of the optional .lite/permissions.json rules file.
+/** Acceptance-time snapshot of one optional .lite/<file> configuration file.
  * Same guarded synchronous posture as captureProjectGuidance — turn acceptance
  * is synchronous, so the async profile reader cannot be used here. A missing
  * file is silent; any unsafe or unreadable state returns an advisory so the
  * turn still runs with the file visibly ignored, never silently emptied. */
-export function captureProjectPermissions(workspace: string): { text: string | null; advisory?: string } {
-  const ignored = { text: null, advisory: 'Project permission rules in .lite/permissions.json could not be read safely and were ignored for this turn.' };
+function captureProjectFile(workspace: string, file: string, advisory: string): { text: string | null; advisory?: string } {
+  const ignored = { text: null, advisory };
   let descriptor: number | undefined;
   try {
     const root = realpathSync(workspace);
-    const target = path.join(root, '.lite', 'permissions.json'), parent = path.dirname(target);
+    const target = path.join(root, '.lite', file), parent = path.dirname(target);
     try { lstatSync(target); } catch (error) { return hasCode(error, 'ENOENT') ? { text: null } : ignored; }
     if (lstatSync(parent).isSymbolicLink() || realpathSync(parent) !== parent || realpathSync(target) !== target) return ignored;
     descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -160,6 +160,20 @@ export function captureProjectPermissions(workspace: string): { text: string | n
     return content.includes('\0') ? ignored : { text: content };
   } catch { return ignored; }
   finally { if (descriptor !== undefined) closeSync(descriptor); }
+}
+export function captureProjectPermissions(workspace: string): { text: string | null; advisory?: string } {
+  return captureProjectFile(workspace, 'permissions.json', 'Project permission rules in .lite/permissions.json could not be read safely and were ignored for this turn.');
+}
+/** Guarded bounded read of the optional .lite/hooks.json project hooks file.
+ * The workspace-trust decision lives in the caller (server/hooks.ts) — this
+ * only answers "what does the file safely contain right now". */
+export function captureProjectHooksFile(workspace: string): { text: string | null; advisory?: string } {
+  return captureProjectFile(workspace, 'hooks.json', 'Project hooks in .lite/hooks.json could not be read safely and were ignored for this turn.');
+}
+/** Existence probe only (lstat, no follow): powers the honest "hooks are
+ * present but this workspace is not trusted" advisory without reading. */
+export function projectHooksFileExists(workspace: string): boolean {
+  try { lstatSync(path.join(realpathSync(workspace), '.lite', 'hooks.json')); return true; } catch { return false; }
 }
 
 export function researchTaskInput(args: Record<string, unknown>): { description: string; prompt: string } {

@@ -21,13 +21,15 @@ import { completeToolBoundary, planCompaction, pruneToolOutputs } from './contex
 import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, resolveContextBudget, type BudgetRequest } from './budget.js';
 import { History } from './history.js';
 import { Questions, questionTool } from './questions.js';
+import { Hooks, type CapturedHooks, type HookPayload } from './hooks.js';
+import { HOOK_LIMITS, type HookEvent } from '../shared/hooks.js';
 import type { ProfileSnapshot } from './profiles.js';
 import type { ExternalToolLease, ExternalTools } from './external.js';
 export type { ExternalTools } from './external.js';
 
 type PendingPermission = { request: PermissionRequest; scope: string; resolve: (approved: boolean) => void };
 type CapturedRules = { project: PermissionRule[]; app: PermissionRule[]; hidden: string[]; advisory?: string };
-type RunPolicy = { session: Session; provider: Provider; maxSteps: number; guidance: string; rules: CapturedRules; tools: readonly string[]; memory: boolean };
+type RunPolicy = { session: Session; provider: Provider; maxSteps: number; guidance: string; rules: CapturedRules; hooks: CapturedHooks; tools: readonly string[]; memory: boolean };
 type ResearchBudget = { launches: number; steps: number; elapsedMs: number };
 type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; policy?: RunPolicy; budget?: ResearchBudget; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message; child?: { delegation: DelegationSummary; parent: ActiveRun; timedOut: boolean }; done?: Promise<void>; resolveDone?: () => void; failure?: string; jobsNotice?: string;
   /** Mid-turn steering notes accepted for THIS response (max 5 per run). Notes
@@ -76,6 +78,9 @@ export class Runner {
   // In-memory background shell jobs; do not survive a restart. Runner-owned so
   // the completion drain, session-detail projection and shutdown can reach them.
   readonly jobs = new Jobs();
+  // Lifecycle hook engine (design note 4.3). Public so tests can shorten the
+  // timeout; configuration is read per-turn via captureHooks, never live.
+  readonly hooks = new Hooks();
   constructor(readonly store: Store, readonly bus: EventBus, private external?: ExternalTools) { this.history=new History(store);this.delegations=new Delegations(store,this.history);this.questions=new Questions(store,bus); }
   private assertRoot(id:string) { if(this.delegations.isChild(id))throw conflict('Research transcripts are read-only. Use their parent task controls.'); }
   active(id: string) { return this.runs.has(id); }
@@ -353,7 +358,11 @@ export class Runner {
     // history_search is always advertised: reading saved local history is read-only.
     // memoryEnabled is captured at acceptance like rules/guidance; later settings
     // edits never change an accepted turn's advertised tools.
-    const policy:RunPolicy={session:{...structuredClone(session),providerId:pair.providerId,model:pair.model},provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool,bashOutputTool,killShellTool,waitTool].map(tool=>tool.function.name)};
+    // Hooks pinned at acceptance exactly like rules: later edits to
+    // Settings.hooks, trustedWorkspaces, or .lite/hooks.json never change a
+    // running turn. captureHooks never throws; invalid config -> advisory.
+    const hooks=this.hooks.captureHooks(session.workspace,this.store.settings());
+    const policy:RunPolicy={session:{...structuredClone(session),providerId:pair.providerId,model:pair.model},provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,hooks,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool,bashOutputTool,killShellTool,waitTool].map(tool=>tool.function.name)};
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile, policy, budget:{launches:0,steps:0,elapsedMs:0} };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     try {
@@ -535,6 +544,16 @@ export class Runner {
       this.save(message);
     } catch { /* observation only */ }
   }
+  /** Stop hook: fired only where a turn seals NORMALLY — the same sites as
+   * sealReceipts (after receipts, so a hook observing the final text sees the
+   * receipts notice too). Cancellation, failures, and step-limit exits do not
+   * fire Stop: the design event marks a completed response, not any teardown.
+   * Observational only (exit 2 warns like any nonzero exit); children never
+   * reach here because fireHooks refuses child runs. */
+  private async fireStop(id: string, run: ActiveRun, message: Message) {
+    if (run.child) return;
+    await this.fireHooks(id, run, 'Stop', { finalText: utf8Bounded(message.content, HOOK_LIMITS.stdioBytes) });
+  }
   private safeError(error: unknown, run?:ActiveRun): string {
     let text = error instanceof Error ? error.message : 'An unexpected error occurred.';
     for (const provider of [...this.store.settings().providers,...(run?.policy?[run.policy.provider]:[])]) if (provider.apiKey) text = text.split(provider.apiKey).join('[redacted]');
@@ -689,6 +708,41 @@ export class Runner {
   private ruleDenial(match: RuleMatch): string {
     return `This call was denied by an explicit ${match.source} permission rule for ${JSON.stringify(match.tool)}${match.pattern!==undefined?` (pattern ${JSON.stringify(match.pattern)})`:''}. Do not retry it or work around this rule.`;
   }
+  /** Run every captured hook for one event SEQUENTIALLY (a hook may depend on
+   * an earlier hook's side effects) and persist notices. Exit code contract:
+   * 0 = allow (silent unless stdout is nonempty — silent success is silent);
+   * 2 = block, honored ONLY for PreToolUse (the design note's one gating
+   * event; on UserPromptSubmit/PostToolUse/Stop an exit 2 is a warn like any
+   * other nonzero exit — those events observe, they cannot veto); anything
+   * else (including timeout and spawn failure) = warn notice. Returns the
+   * first blocking result for PreToolUse, else null. Never throws: hooks must
+   * never crash a turn, so every spawn is wrapped and failures become warns.
+   * Notices persist as system messages — honest records that reach the
+   * provider on later turns as ordinary history. */
+  private async fireHooks(id: string, run: ActiveRun, event: HookEvent, payload: Omit<HookPayload, 'event' | 'sessionId' | 'workspace'>, tool?: string, sink?: (content: string) => void): Promise<{ blocked: true; stderr: string } | null> {
+    const policy = run.policy;
+    if (!policy || run.child) return null; // Children never run hooks.
+    // Persist immediately by default; the PreToolUse dispatch path passes a
+    // sink that defers notices until after the tool result row is saved, so a
+    // system notice never lands between an assistant tool_call and its result
+    // (providers require that adjacency in serialized history).
+    const emit = sink ?? ((content: string) => { try { this.save({ id: randomUUID(), sessionId: id, role: 'system', content, createdAt: Date.now() }); } catch { console.error('Could not persist a hook notice.'); } });
+    for (const hook of this.hooks.select(policy.hooks, event, tool)) {
+      try {
+        const result = await this.hooks.run({ event, sessionId: id, workspace: policy.session.workspace, ...payload }, hook, policy.session.workspace);
+        const notice = (text: string) => emit(`[Hook ${event}] ${text}`);
+        if (result.timedOut) notice(`Hook timed out after ${this.hooks.timeoutMs / 1000}s and was ignored (timeouts warn, never block).${result.stdout ? `\n${result.stdout}` : ''}`);
+        else if (result.code === 2 && event === 'PreToolUse') { if (result.stdout) notice(result.stdout); return { blocked: true, stderr: result.stderr }; }
+        else if (result.code !== 0) notice(`Hook exited with code ${result.code ?? 'unknown'} (warning only; execution continues).${result.stderr ? `\n${result.stderr}` : ''}${result.stdout ? `\n${result.stdout}` : ''}`);
+        else if (result.stdout) notice(result.stdout);
+      } catch (error) {
+        // Belt and braces: run() should never throw, but a hook failure must
+        // never fail the turn regardless.
+        try { emit(`[Hook ${event}] Hook failed to run: ${this.safeError(error, run)}`); } catch { console.error('Could not persist a hook failure notice.'); }
+      }
+    }
+    return null;
+  }
   private async approve(session: Session, call: ToolCall, run: ActiveRun): Promise<boolean> {
     // update_goal writes only session-local goal state (like todo_write's
     // plan writes): no workspace, shell, or network effect, so it auto-runs
@@ -771,6 +825,15 @@ export class Runner {
     // only when a prompt happens to occur. The child transcript inherits the
     // parent's captured rules; the parent already carries the notice.
     if(policy.rules?.advisory&&!run.child)this.save({id:randomUUID(),sessionId:id,role:'system',content:policy.rules.advisory,createdAt:Date.now()});
+    // An ignored/untrusted hooks configuration is equally visible: the user
+    // must be able to see WHY their project hooks did not fire.
+    if(policy.hooks?.advisory&&!run.child)this.save({id:randomUUID(),sessionId:id,role:'system',content:policy.hooks.advisory,createdAt:Date.now()});
+    // UserPromptSubmit: fired once per accepted root turn, synchronously
+    // before the first provider request. The message was ALREADY accepted at
+    // start() — v1 hooks observe user input, they cannot veto it (exit 2 here
+    // is a warn like any other nonzero exit; only PreToolUse blocks). stdout
+    // and warnings become system notices ahead of the model's first step.
+    if(!run.child)await this.fireHooks(id,run,'UserPromptSubmit',{prompt:utf8Bounded(this.store.messages(id).find(item=>item.id===run.turnId)?.content??'',HOOK_LIMITS.stdioBytes)});
     let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false, overflowPruneUsed = false, retryPruned = false, reuseMessageId: string | undefined;
     // Storm breaker state: consecutive identical FAILURES per call signature
     // (name + canonical args, status error/denied). Any success clears every
@@ -928,7 +991,7 @@ export class Runner {
       });
       if (!message.toolCalls.length) delete message.toolCalls;
       this.save(message);
-      if (!message.toolCalls?.length) { run.completed=true;this.sealReceipts(id,run,message);return; }
+      if (!message.toolCalls?.length) { run.completed=true;this.sealReceipts(id,run,message);await this.fireStop(id,run,message);return; }
       if(new Set(message.toolCalls.map(call=>call.id)).size!==message.toolCalls.length) {
         // Preserve the rejected provider response for explicit recovery, but do
         // not execute any part or invent ambiguous tool results for this batch.
@@ -942,7 +1005,21 @@ export class Runner {
       // Repeated identical actions can spend tokens or mutate twice without progress.
       const stalled = repeatedBatches >= 3;
       for (const call of message.toolCalls) {
-        let output = '', questionStarted = false;
+        let output = '', questionStarted = false, executed = false;
+        // Hook notices produced while this call is in flight are DEFERRED and
+        // persisted after the tool result row: a system row must never land
+        // between an assistant tool_call and its result in serialized history.
+        const hookNotices: string[] = [];
+        const flushHookNotices = () => { for (const content of hookNotices.splice(0)) this.save({ id: randomUUID(), sessionId: id, role: 'system', content, createdAt: Date.now() }); };
+        // PreToolUse gate: runs AFTER approval, immediately before execution —
+        // a hook cannot approve what the user denied, only block what was
+        // approved. Exit 2 denies the call; the model sees an ordinary denied
+        // result honestly attributed to the hook.
+        const preToolVeto = async (): Promise<boolean> => {
+          const veto = await this.fireHooks(id, run, 'PreToolUse', { tool: call.name, args: call.args }, call.name, content => hookNotices.push(content));
+          if (veto) { call.status = 'denied'; output = `Blocked by PreToolUse hook${veto.stderr.trim() ? `: ${utf8Bounded(veto.stderr.trim(), HOOK_LIMITS.stdioBytes)}` : '. Do not retry it or work around this decision.'}`; }
+          return Boolean(veto);
+        };
         try {
           if (signal.aborted) { call.status = 'denied'; output = 'Cancelled by the user.'; }
           else if (stalled) { call.status = 'denied'; output = 'Stopped repeated identical tool calls. Ask the user how to proceed; do not work around this guard.'; }
@@ -969,16 +1046,19 @@ export class Runner {
           else if (call.name==='task') {
             const input=researchTaskInput(call.args);
             if(!(await this.approve(session,call,run))) { call.status='denied';output=call.ruleMatch?.decision==='deny'?this.ruleDenial(call.ruleMatch):'The user denied or cancelled the research task. Do not retry it or bypass this decision.'; }
-            else {
+            // task is a tool like any other for the PreToolUse gate: an
+            // approved launch can still be blocked before the child spawns.
+            else if (!(await preToolVeto())) {
               const settled=await this.research(id,run,message,call,input,()=>{questionStarted=true;});
               for(const saved of settled.assistant.toolCalls??[]) { const local=message.toolCalls!.find(item=>item.id===saved.id);if(local)Object.assign(local,saved); }
               if(settled.delegation.status!=='completed')run.blocked=true;
+              flushHookNotices();
               continue;
             }
           }
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
-          else {
-            call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
+          else if (!(await preToolVeto())) {
+            call.status='running';call.startedAt=Date.now();executed=true;this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
             output = call.name==='update_goal' ? this.executeUpdateGoal(id,run,call.args) : call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name==='tool_output_page' ? executeToolOutputPage(this.store,id,call.args) : call.name==='bash_output' ? await executeBashOutput(this.jobs,id,call.args) : call.name==='kill_shell' ? await executeKillShell(this.jobs,id,call.args) : call.name==='wait' ? await executeWait(this.jobs,id,call.args) : call.name==='bash'&&call.args.run_in_background===true ? await this.startBackgroundJob(session.workspace,id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
               workspace:session.workspace,sessionId:id,signal,
               prepareChange:change => { this.history.prepareChange(id,change); },
@@ -996,6 +1076,13 @@ export class Runner {
           if(questionStarted)throw error;
           call.status='error';output=this.safeError(error,run);
         }
+        // PostToolUse: observational only, after execution completed OR errored
+        // (executed marks the actual execution branch — never after a denial,
+        // veto, or pre-execution failure: nothing ran, so there is nothing to
+        // observe). The payload carries the bounded output; the result can
+        // annotate the transcript (stdout -> notice, deferred past the result
+        // row) but never modifies the tool result.
+        if (executed) await this.fireHooks(id, run, 'PostToolUse', { tool: call.name, args: call.args, output: utf8Bounded(output, HOOK_LIMITS.stdioBytes) }, call.name, content => hookNotices.push(content));
         if(run.child) {
           output=utf8Bounded(output,32*1024);
           const projected={...call,output,endedAt:Date.now()};
@@ -1013,6 +1100,9 @@ export class Runner {
         call.output=output;call.endedAt=Date.now();
         this.persist(message);this.bus.emit(id,'tool',{messageId:message.id,tool:call});
         this.save({id:randomUUID(),sessionId:id,role:'tool',content:output,toolCallId:call.id,createdAt:Date.now()});
+        // Deferred hook notices land AFTER the tool result row so the
+        // assistant tool_call / tool result adjacency stays intact.
+        flushHookNotices();
       }
       if (stalled && !signal.aborted) {
         this.save({id:randomUUID(),sessionId:id,role:'assistant',content:'I stopped because the model requested the same tools three times in a row. The third batch was not executed. Your progress is saved; clarify the next step or choose another model to continue.',createdAt:Date.now()});
@@ -1033,6 +1123,7 @@ export class Runner {
           this.save(message);
           run.completed=true;
           this.sealReceipts(id,run,message);
+          await this.fireStop(id,run,message);
           return;
         }
       }
@@ -1058,7 +1149,9 @@ export class Runner {
     budget.launches++;
     const policy=parent.policy!,created=this.delegations.create({parentSessionId:id,parentTurnId:parent.turnId!,parentMessageId:message.id,toolCallId:call.id,...input,childSession:{workspace:policy.session.workspace,providerId:policy.session.providerId,model:policy.session.model,mode:policy.session.mode,permissionMode:policy.session.permissionMode},profile:parent.profile??null});
     accepted();
-    const child:ActiveRun={controller:new AbortController(),approvals:new Map(),profile:parent.profile,turnId:created.user.id,policy:{...policy,session:{...policy.session,...created.child},tools:policy.tools.filter(isReadOnlyTool)},child:{delegation:created.delegation,parent,timedOut:false}};
+    // policy.hooks is EMPTIED for the child: researchers never run hooks — a
+    // project hook would be an authority leak into an unattended context.
+    const child:ActiveRun={controller:new AbortController(),approvals:new Map(),profile:parent.profile,turnId:created.user.id,policy:{...policy,hooks:{hooks:[]},session:{...policy.session,...created.child},tools:policy.tools.filter(isReadOnlyTool)},child:{delegation:created.delegation,parent,timedOut:false}};
     const started=Date.now(),abort=()=>child.controller.abort();parent.controller.signal.addEventListener('abort',abort,{once:true});
     const timer=setTimeout(()=>{child.child!.timedOut=true;child.controller.abort();},Math.min(DELEGATION_LIMITS.childMs,DELEGATION_LIMITS.totalMs-budget.elapsedMs));timer.unref();
     const operation=(async()=>{

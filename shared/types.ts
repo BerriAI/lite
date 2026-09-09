@@ -13,6 +13,8 @@ import type { SessionGoal } from './goals.js';
 export type { SessionGoal, GoalStatus, GoalReportStatus } from './goals.js';
 import type { TurnReceipts } from './receipts.js';
 export type { TurnReceipts } from './receipts.js';
+import type { HookConfig } from './hooks.js';
+export type { HookConfig, HookEvent } from './hooks.js';
 
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
@@ -20,7 +22,12 @@ export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
 export type ProviderKind = 'openai' | 'anthropic' | 'codex';
 export interface Provider { id: string; name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; configured?: boolean; models?: string[]; contextWindows?: Record<string, number>; }
 export interface Model { id: string; name: string; providerId: string; contextWindow?: number; }
-export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean; }
+export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean;
+  /** Lifecycle hooks configured at the app level (design note 4.3). */
+  hooks?: HookConfig[];
+  /** Canonical (realpath) workspace paths the user marked trusted. Project
+   * .lite/hooks.json only runs for a workspace listed here. */
+  trustedWorkspaces?: string[]; }
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
 export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
