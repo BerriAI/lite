@@ -5,7 +5,7 @@ async function send(page:any,text:string){await page.getByRole('textbox',{name:'
 
 test('welcome is usable, keyboard palette works, and layout fits desktop',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await fresh(page);
-  await expect(page.getByRole('heading',{name:'Good ideas move fast.'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Lite.'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Send message',exact:true})).toBeDisabled();
   await page.keyboard.press('Control+k');await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);expect(errors).toEqual([]);
@@ -42,7 +42,7 @@ test('stops a live stream and sends a follow-up',async({page})=>{
 
 test('surfaces provider errors and remains navigable',async({page})=>{
   await fresh(page);await send(page,'provider failure');await expect(page.getByRole('alert').first()).toContainText('HTTP 401');await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
-  await page.getByRole('button',{name:/New session/}).first().click();await expect(page.getByRole('heading',{name:'Good ideas move fast.'})).toBeVisible();
+  await page.getByRole('button',{name:/New session/}).first().click();await expect(page.getByRole('heading',{name:'Lite.'})).toBeVisible();
 });
 
 test('discovers models and attaches workspace context',async({page})=>{
