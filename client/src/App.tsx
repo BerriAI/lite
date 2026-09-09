@@ -363,6 +363,22 @@ export default function App() {
       return false;
     } finally { queueOperation.current = false; setQueueBusy(false); }
   }
+  // Mid-turn steering: the note lands between steps of the RUNNING response.
+  // No detail-state update is needed — the server persists a [Steering] system
+  // marker that arrives through the normal message event stream.
+  async function steerMessage(content: string) {
+    const id = activeId;
+    if (!id || queueOperation.current || configOperation.current || historyOperation.current) return false;
+    queueOperation.current = true; setQueueBusy(true); setError('');
+    try {
+      await post(`/sessions/${id}/steer`, { content });
+      if (currentId.current === id) setToast('Steering note sent to the running response.');
+      return true;
+    } catch (e) {
+      if (currentId.current === id) setError(errorMessage(e));
+      return false;
+    } finally { queueOperation.current = false; setQueueBusy(false); }
+  }
   async function queueAction(action: 'pause' | 'resume' | 'remove', queueId?: string) {
     const id = activeId;
     if (!id || queueOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery || (action === 'remove' && !queueId)) return;
@@ -550,7 +566,7 @@ export default function App() {
             const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
             return task ? <TaskCard task={task} tool={tool} onOpen={() => setOpenTask({ parentSessionId: task.parentSessionId, id: task.id })} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
           }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
+          {detail && <div className="chat-composer">{history && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} onSteer={content => steerMessage(content)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><div className="welcome-visual"><SpeedRail /></div><div className="welcome-eyebrow">LESS FRICTION. MORE FLOW.</div><h1>Good ideas move fast<span>.</span></h1><p className="welcome-description">A little space to think big. What’s on your mind?</p>
           <div className="welcome-input"><CommandArea commands={commands} text={text} setText={setText}><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} profileLabel={String(profileLabel)} onProfiles={openProfiles} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>

@@ -27,7 +27,16 @@ type PendingPermission = { request: PermissionRequest; scope: string; resolve: (
 type CapturedRules = { project: PermissionRule[]; app: PermissionRule[]; hidden: string[]; advisory?: string };
 type RunPolicy = { session: Session; provider: Provider; maxSteps: number; guidance: string; rules: CapturedRules; tools: readonly string[]; memory: boolean };
 type ResearchBudget = { launches: number; steps: number; elapsedMs: number };
-type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; policy?: RunPolicy; budget?: ResearchBudget; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message; child?: { delegation: DelegationSummary; parent: ActiveRun; timedOut: boolean }; done?: Promise<void>; resolveDone?: () => void; failure?: string; jobsNotice?: string };
+type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; policy?: RunPolicy; budget?: ResearchBudget; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message; child?: { delegation: DelegationSummary; parent: ActiveRun; timedOut: boolean }; done?: Promise<void>; resolveDone?: () => void; failure?: string; jobsNotice?: string;
+  /** Mid-turn steering notes accepted for THIS response (max 5 per run). Notes
+   * land between steps, never inside a tool execution; steeringDelivered marks
+   * how many were already drained. In-memory only: cancellation or any run end
+   * discards undelivered notes with the run. */
+  steering?: string[]; steeringDelivered?: number;
+  /** Consecutive evidence-free rounds (every call failed, was denied, or
+   * repeated an earlier signature). Read by withEnvelope for the nudge; per-run
+   * and never persisted, so children get their own protection. */
+  deadRounds?: number };
 export const DELEGATION_LIMITS = { active: 4, launches: 4, steps: 12, totalSteps: 24, childMs: 120_000, totalMs: 300_000, resultBytes: 32 * 1024, transcriptBytes: 4 * 1024 * 1024 } as const;
 const utf8Bounded = (text: string, limit: number) => { const bytes=Buffer.from(text);if(bytes.length<=limit)return text;let end=limit;while(end>0&&(bytes[end]&0xc0)===0x80)end--;return bytes.subarray(0,end).toString('utf8'); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
@@ -180,6 +189,21 @@ export class Runner {
     this.assertRoot(id);this.assertOpen();const run=this.runs.get(id);
     const queue=this.store.enqueue(id,content,attachments,Boolean(run&&!run.compacting&&!run.controller.signal.aborted));
     this.bus.emit(id,'queue',queue);return queue;
+  }
+  /** Mid-turn steering: a short user note delivered between steps of the ACTIVE
+   * response (queued messages, by contrast, wait for the run to end). Never
+   * interrupts a tool mid-execution — the note is drained at the start of the
+   * next step, where the envelope is built. Cancellation or any run end discards
+   * undelivered notes with the run (they were addressed to that response only).
+   * Children are unreachable here: the app-level child guard 409s the route and
+   * assertRoot rejects child ids defensively. */
+  steer(id: string, content: string) {
+    this.assertRoot(id);this.assertOpen();
+    const run=this.runs.get(id);
+    if(!run||run.compacting||run.controller.signal.aborted)throw conflict('No active response to steer. Send a normal message instead.');
+    const notes=run.steering??=[];
+    if(notes.length>=5)throw conflict('Too many steering notes for this response.');
+    notes.push(content);
   }
   removeQueued(id: string, itemId: string) {
     this.assertRoot(id);const queue=this.store.removeQueued(id,itemId);this.bus.emit(id,'queue',queue);return queue;
@@ -354,7 +378,11 @@ export class Runner {
     // run, so retries/re-projection within the same turn keep the notice while a
     // later turn (a new run) never repeats it. Children never have jobs.
     if (run.jobsNotice === undefined) run.jobsNotice = run.child ? '' : finishedNotice(this.jobs.drainFinished(session.id));
-    const envelope = renderEnvelope({ posture: this.posture(session), runtime: `Today: ${new Date().toISOString().slice(0,10)}.`, memory: memoryBlock, jobs: run.jobsNotice });
+    // No-progress nudge: after 2 consecutive evidence-free rounds, a one-line
+    // host notice rides the runtime section of the NEXT request (the hard stop
+    // at 4 lives in the step loop). Volatile by design; runtime already changes.
+    const nudge=(run.deadRounds??0)>=2?'\nNotice: the last 2 rounds produced no new information. Change approach or report the blocker.':'';
+    const envelope = renderEnvelope({ posture: this.posture(session), runtime: `Today: ${new Date().toISOString().slice(0,10)}.${nudge}`, memory: memoryBlock, jobs: run.jobsNotice });
     if (!envelope) return history;
     const at = history.map(message => message.role).lastIndexOf('user');
     if (at < 0) return history; // No user turn to anchor to; skip rather than misplace.
@@ -384,6 +412,14 @@ export class Runner {
           }
         }
         history.push({role:'user',content:parts.length === 1 ? message.content : parts});
+      } else if (message.role === 'system' && message.content.startsWith('[Steering] ')) {
+        // A steering note IS user input — the user typed it into the running
+        // response. It is persisted as a system marker for auditability, but it
+        // must reach the provider with user authority and its chronological
+        // position: gateways hoist mid-conversation system messages into the
+        // static system prompt for some model families, which buries the note
+        // before the plan it supersedes and gets it (correctly) ignored.
+        history.push({role:'user',content:message.content});
       } else history.push({role:'system',content:message.content});
     }
     return history;
@@ -525,8 +561,36 @@ export class Runner {
     // parent's captured rules; the parent already carries the notice.
     if(policy.rules?.advisory&&!run.child)this.save({id:randomUUID(),sessionId:id,role:'system',content:policy.rules.advisory,createdAt:Date.now()});
     let previousBatch = '', repeatedBatches = 0, autoCompactionAttempted = false, overflowPruneUsed = false, retryPruned = false, reuseMessageId: string | undefined;
+    // Storm breaker state: consecutive identical FAILURES per call signature
+    // (name + canonical args, status error/denied). Any success clears every
+    // streak ("a different call succeeds" — and a same-call success breaks its
+    // own streak); an interleaved DIFFERENT failure does not. seenCalls
+    // remembers every attempted signature this run so a repeat carries no new
+    // evidence for the no-progress counter. All per-run only, never persisted —
+    // children get the same protection with their own state.
+    const failureStreaks=new Map<string,number>();
+    const seenCalls=new Set<string>();
+    const signature=(call:ToolCall)=>canonical({name:call.name,args:call.args});
     for (let step = 0; step < settings.maxSteps && !signal.aborted; step++) {
       if(run.child) { const budget=run.child.parent.budget!;if(budget.steps>=DELEGATION_LIMITS.totalSteps)throw conflict('The parent turn reached its delegated model-step limit.');budget.steps++; }
+      // Steering drain: exactly once per note, between steps (never mid-tool).
+      // The persisted [Steering] system marker is both the audit record and the
+      // delivery: it lands chronologically after the work already done, where
+      // the model reads it as the user's latest instruction.
+      {
+        const pending=(run.steering??[]).slice(run.steeringDelivered??0);
+        run.steeringDelivered=(run.steeringDelivered??0)+pending.length;
+        // Explicit authority framing: the system prompt teaches the model that
+        // instructions embedded in non-user content are untrusted, so a bare
+        // note is (correctly!) ignored. This marker is host-authored from a
+        // real user action and must say so, or steering does not steer.
+        // Delivery is the persisted marker alone: chronologically placed after
+        // the work already done, so it reads as the LATEST user instruction.
+        // The envelope is the wrong channel — its preamble subordinates it to
+        // "the user's current request", which a steering note must supersede,
+        // and it anchors before the original plan.
+        for(const note of pending)this.save({id:randomUUID(),sessionId:id,role:'system',content:`[Steering] The user sent this note to the running response. It supersedes their earlier request in this turn; follow it as the user's latest instruction: ${note}`,createdAt:Date.now()});
+      }
       // A pruned-retry step reuses the saved placeholder row instead of orphaning it.
       const message: Message = {id:reuseMessageId??randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
       reuseMessageId=undefined;
@@ -671,6 +735,9 @@ export class Runner {
         try {
           if (signal.aborted) { call.status = 'denied'; output = 'Cancelled by the user.'; }
           else if (stalled) { call.status = 'denied'; output = 'Stopped repeated identical tool calls. Ask the user how to proceed; do not work around this guard.'; }
+          // Storm breaker: the 4th identical failing call is answered without
+          // executing (no approval prompt, no side effects, no spend).
+          else if ((failureStreaks.get(signature(call))??0)>=3) { call.status = 'denied'; output = 'This exact call has failed 3 times in a row. Do not repeat it. Change approach: inspect state with a different tool, reconsider the arguments, or explain the blocker to the user.'; }
           else if (malformed.has(call.id)) { call.status = 'error'; output = malformed.get(call.id)!; }
           else if (!allowed(call.name)||!tools.some(t => t.function.name === call.name)) { call.status = 'denied'; output = 'This tool is unavailable under the active profile or mode. Use one of the provided tools; do not bypass this restriction.'; }
           else if (call.name === 'ask_user') {
@@ -727,6 +794,11 @@ export class Runner {
           if(bytes>DELEGATION_LIMITS.transcriptBytes-4096) { call.status='error';output='The research transcript reached its 4 MiB limit.';run.failure=output; }
         }
         if(call.status==='denied'||call.status==='error')run.blocked=true;
+        // Storm accounting: any success clears every failure streak; a failure
+        // (error or denied) extends its own signature's streak only, so an
+        // interleaved different failure cannot launder a repeating one.
+        if(call.status==='completed')failureStreaks.clear();
+        else failureStreaks.set(signature(call),(failureStreaks.get(signature(call))??0)+1);
         call.output=output;call.endedAt=Date.now();
         this.persist(message);this.bus.emit(id,'tool',{messageId:message.id,tool:call});
         this.save({id:randomUUID(),sessionId:id,role:'tool',content:output,toolCallId:call.id,createdAt:Date.now()});
@@ -734,6 +806,23 @@ export class Runner {
       if (stalled && !signal.aborted) {
         this.save({id:randomUUID(),sessionId:id,role:'assistant',content:'I stopped because the model requested the same tools three times in a row. The third batch was not executed. Your progress is saved; clarify the next step or choose another model to continue.',createdAt:Date.now()});
         return;
+      }
+      // Evidence accounting: a round earns progress only through a SUCCESSFUL
+      // call whose signature is new this run (ask_user/task settlements refresh
+      // call statuses above, so they count here too). Repeats and failures are
+      // evidence-free; success-on-new resets the counter entirely.
+      {
+        const progress=message.toolCalls.some(call=>call.status==='completed'&&!seenCalls.has(signature(call)));
+        for(const call of message.toolCalls)seenCalls.add(signature(call));
+        run.deadRounds=progress?0:(run.deadRounds??0)+1;
+        // Hard stop after 4 dead rounds: end the turn honestly, preserving the
+        // model's own partial text and sealing normally (idle, not error).
+        if(run.deadRounds>=4&&!signal.aborted) {
+          message.content=`${message.content?`${message.content}\n\n`:''}[Stopped: several rounds produced no new information. Summarize what was learned and what is blocking.]`;
+          this.save(message);
+          run.completed=true;
+          return;
+        }
       }
     }
     if (!signal.aborted) this.save({id:randomUUID(),sessionId:id,role:'assistant',content:`I reached the ${settings.maxSteps}-step limit for this response. Your progress is saved. Send a message to continue, or adjust the limit in Settings.`,createdAt:Date.now()});

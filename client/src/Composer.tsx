@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, File, Hammer, Image, ListPlus, ListTree, Paperclip, Pause, Play, Search, Shield, ShieldCheck, Square, X } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, File, Hammer, Image, ListPlus, ListTree, Navigation, Paperclip, Pause, Play, Search, Shield, ShieldCheck, Square, X } from 'lucide-react';
 import type { Attachment, Mode, Model, PermissionMode, QueueState, Settings } from '../../shared/types';
 import { api, errorMessage, query } from './api';
 import { Modal, SpeedRail } from './ui';
@@ -9,6 +9,7 @@ interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;
   onQueue?: (content: string, attachments: Attachment[]) => Promise<boolean>;
+  onSteer?: (content: string) => Promise<boolean>;
   queue?: QueueState; queueBusy?: boolean;
   onQueueAction?: (action: 'pause' | 'resume' | 'remove', queueId?: string) => void;
   running: boolean; disabled?: boolean; welcome?: boolean; workspace: string;
@@ -17,7 +18,7 @@ interface Props {
   draftNotice?: string; onSettings: () => void;
   profileLabel?: string; onProfiles?: () => void; selectionDisabled?: boolean;
 }
-export function Composer({ settings, selection, onSelection, onSend, onQueue, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, profileLabel, onProfiles, selectionDisabled }: Props) {
+export function Composer({ settings, selection, onSelection, onSend, onQueue, onSteer, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, profileLabel, onProfiles, selectionDisabled }: Props) {
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextQuery, setContextQuery] = useState('');
@@ -61,6 +62,17 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, qu
       const submit = queueMode ? onQueue! : onSend;
       const ok = await submit(text.trim() || 'Please review the attached files.', attachments);
       if (ok && alive.current) { setContextOpen(false); input.current?.focus(); }
+    } catch (e) { if (alive.current) setError(errorMessage(e)); } finally { if (alive.current) setSending(false); }
+  }
+  // Steering sends the composer text into the RUNNING response (between steps);
+  // it never carries attachments and never touches the queue. Kept separate from
+  // send() so Enter still queues — steering is an explicit secondary action.
+  async function steer() {
+    if (!onSteer || !running || disabled || sending || queueBusy || !text.trim()) return;
+    setError(''); setSending(true);
+    try {
+      const ok = await onSteer(text.trim().slice(0, 4000));
+      if (ok && alive.current) { setText(''); input.current?.focus(); }
     } catch (e) { if (alive.current) setError(errorMessage(e)); } finally { if (alive.current) setSending(false); }
   }
   async function addFiles(selected: FileList | File[]) {
@@ -121,6 +133,7 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, qu
         <button className="model-trigger" onClick={() => setModelOpen(true)} disabled={configDisabled} title={`${provider?.name || 'Choose provider'} · ${selection.model || 'Choose model'}`}><span className="model-dot" /><span>{selection.model?.split('/').at(-1) || 'Select model'}</span><ChevronDown size={12} /></button>
         {onProfiles && <button className="profile-trigger" aria-label="Project profiles" title={`Project profiles · ${profileLabel || 'Default'}`} disabled={configDisabled} onClick={onProfiles}><span>{profileLabel || 'Default'}</span><ChevronDown size={12} /></button>}
       </div><div className="composer-actions"><input ref={fileInput} type="file" multiple className="sr-only" tabIndex={-1} aria-label="Attach files" onChange={e => { if (e.target.files) void addFiles(e.target.files).catch(e => setError(errorMessage(e))); e.target.value = ''; }} /><button className="icon-button attach-button" title="Attach files" aria-label="Attach files" onClick={() => fileInput.current?.click()}><Paperclip size={17} /></button><button className="icon-button context-button" title="Add workspace file" aria-label="Add workspace file context" onClick={() => { setContextOpen(v => !v); setContextQuery(''); }}><AtSign size={17} /></button>
+        {onSteer && running && <button className="text-button steer-button" aria-label="Steer the running response" title="Send a steering note to the running response" disabled={disabled || sending || queueBusy || !text.trim()} onClick={() => void steer()}><Navigation size={13} />Steer</button>}
         {queueMode ? <button className="send-button queue-send" aria-label="Add to queue" title="Add to queue (Enter)" disabled={disabled || sending || readingFiles || queueBusy || queueFull || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ListPlus size={16} />}<span>Queue</span></button> : !running && <button className="send-button" aria-label="Send message" title="Send message (Enter)" disabled={disabled || sending || readingFiles || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ArrowUp size={20} />}</button>}
         {running && <button className="send-button stop" aria-label="Stop generation" title="Stop generation and pause queued messages" disabled={disabled} onClick={onCancel}><Square size={14} fill="currentColor" /></button>}
       </div></div>

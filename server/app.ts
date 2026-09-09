@@ -179,6 +179,14 @@ export function createApp(options:AppOptions = {}) {
     res.status(202).json(queue);
   });
   app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
+  // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
+  // is delivered between steps of the ACTIVE response. Child ids are already
+  // rejected by the app-level child guard above; the runner 409s when idle.
+  app.post('/api/sessions/:id/steer',(req,res)=>{
+    const {content}=z.object({content:z.string().trim().min(1).max(4000)}).parse(req.body);
+    runner.steer(req.params.id,content);
+    res.status(202).json({ok:true});
+  });
   app.post('/api/sessions/:id/queue/pause',(req,res)=>res.json(runner.pauseQueue(req.params.id)));
   app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});

@@ -13,7 +13,11 @@ export interface EnvelopeSections {
   /** Rendered low-authority background memory block, or ''. */
   memory: string;
   /** One-line notice of background jobs that finished since the last turn, or
-   * omitted/''. Rendered last so it never disturbs the stable prefix. */
+   * omitted/''. Rendered last so it never disturbs the stable prefix.
+   * Mid-turn steering deliberately does NOT ride this envelope: the preamble
+   * subordinates snapshot content to "the user's current request", which a
+   * steering note must supersede — it is delivered as a persisted, explicitly
+   * host-attributed [Steering] message in the conversation instead. */
   jobs?: string;
 }
 
