@@ -172,7 +172,8 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     expect(providerCalls).toHaveLength(2);
     const completed = await api(sessionPath);
-    expect(completed.messages.at(-1).content).toBe('Runtime complete.');
+    // A mutation turn with no checks gets the host receipts notice appended.
+    expect(completed.messages.at(-1).content).toBe('Runtime complete.\n\n[Receipts: 1 file(s) changed, no checks were run.]');
     expect(completed.history).toMatchObject({ hasCheckpoints: true, canUndo: true, canRedo: false });
     expect(completed.history.undoId).toEqual(expect.any(String));
     expect(completed.history.pendingRecovery).toBeUndefined();
@@ -375,9 +376,12 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(summaryRequest.messages[1].content).toContain('Prior runtime goal');
     expect(summaryRequest.messages[1].content.length).toBeLessThanOrEqual(48000);
     expect(summaryRequest.messages[1].content).not.toContain(latestPrompt);
-    expect(completionRequest.messages.map(message => message.role)).toEqual(['system', 'system', 'user']);
+    // System prompt, archived summary, then the session-context envelope
+    // anchored immediately before the latest user turn (openai route).
+    expect(completionRequest.messages.map(message => message.role)).toEqual(['system', 'system', 'system', 'user']);
     expect(completionRequest.messages[1].content).toContain('Earlier runtime context: preserve the existing file bytes');
-    expect(completionRequest.messages[2].content).toEqual([
+    expect(completionRequest.messages[2].content).toContain('<session-context version="1">');
+    expect(completionRequest.messages[3].content).toEqual([
       { type: 'text', text: latestPrompt },
       { type: 'text', text: `\n<attached_file name="latest.txt">\n${latestAttachment.content}\n</attached_file>` },
     ]);
