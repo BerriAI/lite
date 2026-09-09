@@ -38,6 +38,7 @@ npm start
 - Mid-response steering: send a short note into a running response with the Steer button; it lands between steps as your latest instruction, auditable in the transcript.
 - Loop guards beyond identical-batch blocking: a repeated failing call is refused after three attempts with a change-approach directive, and rounds that produce no new information first draw a nudge, then an honest stop.
 - Session goals: set one objective and the agent pursues it across turns, reporting continue/complete/blocked each turn and continuing itself within a turn budget — with a bounded host evaluator when it forgets to report.
+- Planner + executor pairing: optionally set a planner model per session — Plan-mode turns think on the big model, Build turns execute on the fast one, and every message shows which model ran it.
 - Turn receipts: every mutating turn records what changed, what commands ran, and whether checks were run — and says so honestly when files changed with no checks, or after the last check passed.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
 - Cross-session history search — a read-only `history_search` tool over every saved local conversation, with honest zero-result reporting. See [history search](docs/search.md).

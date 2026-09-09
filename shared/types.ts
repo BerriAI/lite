@@ -24,7 +24,11 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
 export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
-  goal?: SessionGoal; }
+  goal?: SessionGoal;
+  /** Optional planner half of a planner+executor pair. Plan-mode turns run on
+   * this pair; Build turns run on the session providerId/model (the executor).
+   * A model-routing decision only — workspace, permissions, and profile are shared. */
+  planner?: { providerId: string; model: string }; }
 export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
 export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;

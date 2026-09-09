@@ -137,14 +137,19 @@ export class Store {
       return session;
     });
   }
-  updateSession(id: string, patch: Partial<Session>, expectedConfigRevision?: number): Session {
+  updateSession(id: string, patch: Omit<Partial<Session>, 'planner'> & { planner?: Session['planner'] | null }, expectedConfigRevision?: number): Session {
     return this.atomic(() => {
       this.assertChildMutable(id);
       const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
-      const { profile: _profile, configRevision: _revision, ...safe } = patch;
-      const changed = (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
+      const { profile: _profile, configRevision: _revision, planner, ...safe } = patch;
+      // planner routes Plan-mode turns, so setting or clearing it is a model
+      // configuration change exactly like `model`: revision bump + queue hold.
+      // null clears (the field is removed, never stored as null).
+      const plannerChanged = planner !== undefined && JSON.stringify(planner ?? undefined) !== JSON.stringify(previous.planner);
+      const changed = plannerChanged || (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
       if (safe.workspace !== undefined && safe.workspace !== previous.workspace && (previous.profile || this.db.prepare('SELECT 1 FROM session_profiles WHERE session_id=?').get(id))) throw Object.assign(new Error('Clear the profile before changing the workspace.'), { status: 409 });
       const session = { ...previous, ...safe, id, updatedAt: Date.now(), configRevision: previous.configRevision! + (changed ? 1 : 0) };
+      if (planner !== undefined) { if (planner === null) delete session.planner; else session.planner = planner; }
       this.db.prepare('UPDATE sessions SET data=? WHERE id=?').run(JSON.stringify(session), id);
       if (changed) this.pauseConfigurationQueue(id);
       return session;

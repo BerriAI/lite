@@ -111,8 +111,8 @@ export default function App() {
   const profileLabel = selectedProfile ? ('name' in selectedProfile && selectedProfile.name || selectedProfile.profileId || (selectedProfile.skillIds.length ? 'Skills only' : 'Default')) : 'Default';
   useEffect(() => {
     const session = detail?.session;
-    if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode });
-  }, [detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.configRevision, configBusy]);
+    if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode, planner: session.planner });
+  }, [detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.planner?.providerId, detail?.session.planner?.model, detail?.session.configRevision, configBusy]);
   const provider = settings?.providers.find(p => p.id === selection.providerId);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
@@ -233,7 +233,7 @@ export default function App() {
       try {
         const initial = await api<SessionDetail>(`/sessions/${id}`);
         if (!live) return;
-        setDetail(initial); setSelection({ providerId: initial.session.providerId, model: initial.session.model, mode: initial.session.mode, permissionMode: initial.session.permissionMode }); setSessionLoading(false);
+        setDetail(initial); setSelection({ providerId: initial.session.providerId, model: initial.session.model, mode: initial.session.mode, permissionMode: initial.session.permissionMode, planner: initial.session.planner }); setSessionLoading(false);
         source = new EventSource(`/api/sessions/${id}/events`);
         source.onopen = () => {
           if (!live) return;

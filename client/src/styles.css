@@ -238,6 +238,8 @@ summary::-webkit-details-marker { display: none; }
 .model-trigger { min-width: 0; display: flex; align-items: center; gap: 7px; padding: 6px 2px; color: var(--secondary); font-size: 11px; }
 .model-trigger > span:nth-child(2) { max-width: 185px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-dot { display: inline-block; height: 6px; width: 6px; flex-shrink: 0; background: var(--blue); border-radius: 2px; transform: rotate(45deg); opacity: .8; }
+.planner-tag { flex-shrink: 0; font-size: 9px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); background: var(--subtle); color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.model-slot-switch { align-self: flex-start; margin-bottom: 10px; }
 .composer-actions { gap: 3px; flex-shrink: 0; }
 .composer-actions .icon-button { height: 28px; width: 28px; }
 .send-button { display: inline-flex; align-items: center; justify-content: center; height: 32px; width: 32px; border-radius: 7px; background: var(--blue); color: #fff; margin-left: 6px; transition: background .15s, transform .15s; }

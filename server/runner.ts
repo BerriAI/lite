@@ -15,7 +15,7 @@ import { decide, validateRuleSet } from './permissions.js';
 import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
 import type { DelegationSummary } from '../shared/delegation.js';
-import { streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
+import { boundedReview, streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
 import { computeReceipts, receiptsNotice } from './receipts.js';
 import { completeToolBoundary, planCompaction, pruneToolOutputs } from './context.js';
 import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, resolveContextBudget, type BudgetRequest } from './budget.js';
@@ -333,16 +333,27 @@ export class Runner {
     this.assertIdle(id);
     if(!queuedId&&this.store.queue(id).items.length)throw conflict('Resume or remove queued messages before sending a new message.');
     const session = this.store.session(id);
-    const provider = this.store.settings().providers.find(p => p.id === session.providerId);
-    if (!provider) throw Object.assign(new Error('Choose a connected provider in Settings.'), { status: 400 });
-    if (!session.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
+    // TURN MODEL: Plan-mode turns run on the session planner when one is set;
+    // Build turns (and plan turns without a planner) run on the executor — the
+    // session provider/model. Resolved ONCE here and written into the captured
+    // RunPolicy (policy.provider + policy.session.model), so everything
+    // downstream — envelope posture, cache shapes, context budgets, usage
+    // attribution, and children, which inherit the captured policy — sees
+    // exactly one provider/model pair per accepted turn. No second resolution
+    // path exists: a researcher launched from a planner-routed plan turn
+    // therefore runs on the planner (recorded in docs/design-dual-model.md).
+    const planned = session.mode === 'plan' ? session.planner : undefined;
+    const pair = planned ?? { providerId: session.providerId, model: session.model };
+    const provider = this.store.settings().providers.find(p => p.id === pair.providerId);
+    if (!provider) throw Object.assign(new Error(planned ? 'The planner provider is not connected. Update or clear the planner in the model selector.' : 'Choose a connected provider in Settings.'), { status: 400 });
+    if (!pair.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
     // Validate and pin before accepting a user message or consuming queued work.
     const profile=this.store.profileSnapshot(id);
     const rules=this.captureRules(session.workspace);
     // history_search is always advertised: reading saved local history is read-only.
     // memoryEnabled is captured at acceptance like rules/guidance; later settings
     // edits never change an accepted turn's advertised tools.
-    const policy:RunPolicy={session:structuredClone(session),provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool,bashOutputTool,killShellTool,waitTool].map(tool=>tool.function.name)};
+    const policy:RunPolicy={session:{...structuredClone(session),providerId:pair.providerId,model:pair.model},provider:structuredClone(provider),maxSteps:this.store.settings().maxSteps,guidance:captureProjectGuidance(session.workspace),rules,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool,bashOutputTool,killShellTool,waitTool].map(tool=>tool.function.name)};
     const run: ActiveRun = { controller: new AbortController(), approvals: new Map(), profile, policy, budget:{launches:0,steps:0,elapsedMs:0} };
     const message: Message = { id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
     try {
@@ -432,23 +443,28 @@ export class Runner {
       try {this.bus.emit(id,'error',{message:`Goal settlement failed: ${this.safeError(error)}`});} catch {console.error('Could not report a goal settlement failure.');}
     } finally {this.operations.delete(id);this.notifyIdle();}
   }
-  /** Bounded no-report evaluator: one provider request with ONLY a fixed
+  /** Bounded no-report evaluator: one boundedReview call with ONLY a fixed
    * review system text and the goal + final assistant text — no tools, no
-   * conversation history, 15s hard timeout. Any failure means 'continue'. */
+   * conversation history, 15s hard timeout. Any failure means 'continue'.
+   * WHY the planner: a reviewer is a planning-shaped task (judgment, no
+   * tools), so it runs on the session planner when one is set, else on the
+   * live session provider/model — resolved against LIVE session config, not
+   * the turn's captured policy, since the review happens post-seal. */
   private async evaluateGoal(id:string,run:ActiveRun):Promise<GoalReportStatus> {
-    const goal=this.store.session(id).goal!;
-    const policy=run.policy!;
+    const session=this.store.session(id),goal=session.goal!;
+    const pair=session.planner??{providerId:session.providerId,model:session.model};
+    const found=this.store.settings().providers.find(p=>p.id===pair.providerId);
+    // A vanished provider falls back to the turn's captured pair as a unit —
+    // never the planner's model against a different provider.
+    const {provider,model}=found?{provider:found,model:pair.model}:{provider:run.policy!.provider,model:run.policy!.session.model};
     const finalText=this.store.messages(id).findLast(message=>message.role==='assistant'&&!message.toolCalls?.length)?.content??'';
     let answer='';
     try {
-      for await(const chunk of streamCompletion({provider:policy.provider,model:policy.session.model,signal:AbortSignal.timeout(15_000),
+      answer=await boundedReview({provider,model,
         system:'You review whether a coding-session goal is met. Answer with exactly one word: continue, complete, or blocked.',
-        messages:[{role:'user',content:`Goal:\n${goal.text}\n\nFinal assistant message:\n${finalText.slice(0,8000)}`}]})) {
-        if(chunk.type==='text')answer+=chunk.text||'';
-        if(answer.length>100)break; // The verdict is one word; never buffer a runaway stream.
-      }
+        prompt:`Goal:\n${goal.text}\n\nFinal assistant message:\n${finalText.slice(0,8000)}`});
     } catch {return 'continue';} // Timeout or provider failure never blocks the goal.
-    const word=answer.trim().toLowerCase().match(/^(continue|complete|blocked)\b/)?.[1];
+    const word=answer.toLowerCase().match(/^(continue|complete|blocked)\b/)?.[1];
     return (word as GoalReportStatus|undefined)??'continue';
   }
   private failRun(id: string, run: ActiveRun, error: unknown) {

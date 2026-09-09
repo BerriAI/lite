@@ -147,7 +147,7 @@ export function visibleDelegations(detail: SessionDetail): DelegationSummary[] {
 /** Session configuration is monotonic even when an older snapshot overlaps a newer mutation. */
 export function reconcileSession(current: Session, incoming: Session): Session {
   if ((incoming.configRevision ?? 0) >= (current.configRevision ?? 0)) return incoming;
-  return { ...incoming, providerId: current.providerId, model: current.model, mode: current.mode,
+  return { ...incoming, providerId: current.providerId, model: current.model, mode: current.mode, planner: current.planner,
     permissionMode: current.permissionMode, profile: current.profile, configRevision: current.configRevision };
 }
 

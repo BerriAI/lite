@@ -476,6 +476,22 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
   else if (provider.kind === 'codex') yield* responsesStream(response, signal, { providerId: provider.id, model });
   else yield* chatStream(response, signal, { providerId: provider.id, model });
 }
+/** Bounded reviewer (4.2): ONE tool-less, history-less completion — a fixed
+ * review system text plus a single user message — under a hard timeout, that
+ * returns the trimmed text. The shape is a guarantee, not a convention: no
+ * tools are advertised so a reviewer can never act, no history is sent so it
+ * can never be steered by transcript content, and the timeout bounds spend.
+ * Provider errors and timeouts throw; the CALLER decides the fallback (the
+ * goal evaluator, for example, treats any failure as 'continue'). */
+export async function boundedReview(options: { provider: Provider; model: string; system: string; prompt: string; timeoutMs?: number }): Promise<string> {
+  let text = '';
+  for await (const chunk of streamCompletion({ provider: options.provider, model: options.model, signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+    system: options.system, messages: [{ role: 'user', content: options.prompt }] })) {
+    if (chunk.type === 'text') text += chunk.text || '';
+    if (text.length > 100_000) break; // Reviews are short verdicts; never buffer a runaway stream.
+  }
+  return text.trim();
+}
 export async function listModels(provider: Provider, signal?: AbortSignal): Promise<Model[]> {
   const requestSignal = AbortSignal.any([...(signal ? [signal] : []), AbortSignal.timeout(30_000)]);
   let headers: Record<string, string> = {}, url: string;

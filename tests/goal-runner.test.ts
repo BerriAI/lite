@@ -155,7 +155,10 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     let released!: () => void; const gate = new Promise<void>(resolve => { released = resolve; });
     respond = (_body, res) => { void gate.then(() => text(res)); };
     const running = (async () => { runner.start(session.id, 'Start the goal'); await runner.whenIdle(); })();
-    while ((await api(`/sessions/${session.id}`)).body.session.status !== 'running') await new Promise(resolve => setTimeout(resolve, 5));
+    // Wait for the request to REACH the provider, not merely for status
+    // 'running' (set before dispatch): cancelling in that gap aborts the fetch
+    // and the mock never records a call, flaking the assertion below.
+    while (calls.length === 0) await new Promise(resolve => setTimeout(resolve, 5));
     runner.cancel(session.id); released!(); await running;
     expect(calls).toHaveLength(1); // No evaluator, no continuation after a cancel.
     const goal = store.session(session.id).goal!;

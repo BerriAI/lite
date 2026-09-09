@@ -9,7 +9,7 @@ A session may optionally pair two models: a **planner** and an **executor**. The
 ## Routing (deliberately simple)
 
 - **Plan mode turns** run on the planner model when one is set; Build turns run on the executor. That's it — no automatic phase detection, no arbiter, no mid-turn handoff. The user's existing Plan/Build toggle IS the routing control; it already gates tools correctly (Plan = read-only) and its semantics are understood.
-- A researcher child keeps the parent's captured executor model (unchanged from today).
+- A researcher child inherits the parent turn's captured provider/model exactly as today — one captured pair per accepted turn, no second resolution path — so a researcher launched from a planner-routed Plan turn runs on the planner.
 - The context-estimate row and usage already record per-message provider/model, so attribution comes free.
 
 ## Why not an in-turn coordinator

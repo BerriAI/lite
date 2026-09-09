@@ -13,12 +13,13 @@ import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type Pro
 import { validateRuleSet } from './permissions.js';
 import type { ProfileDetail } from '../shared/profiles.js';
 import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
-import type { Message, Settings } from '../shared/types.js';
+import type { Message, Session, Settings } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
-const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional()});
+// planner: the optional planning half of a planner+executor pair; null clears it.
+const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
@@ -99,8 +100,10 @@ export function createApp(options:AppOptions = {}) {
       const defaults=resolved?.defaults,pair=input.providerId&&input.model?{providerId:input.providerId,model:input.model}:nonempty?defaults?.model:undefined;
       const selection={...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
       if(selection.mode===undefined)delete selection.mode;
+      // planner:null means "no planner" on create; a set planner needs a real provider.
+      if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
       checkProvider(selection.providerId);
-      return store.createSession(selection,resolved);
+      return store.createSession(selection as Partial<Session>,resolved);
     },requestSignal(res));
     res.status(201).json(session);
   });
@@ -108,7 +111,8 @@ export function createApp(options:AppOptions = {}) {
     const imported=z.object({session:sessionSchema,messages:z.array(z.object({id:z.string(),role:z.enum(['user','assistant','tool','system']),content:z.string().max(500000),createdAt:z.number(),providerMetadata:z.record(z.string(),z.unknown()).optional(),reasoning:z.string().max(500000).optional(),toolCallId:z.string().optional(),toolCalls:z.array(z.object({id:z.string(),name:z.string(),args:z.record(z.string(),z.unknown()),status:z.enum(['pending','running','completed','error','denied']),output:z.string().optional()})).optional(),attachments:z.array(attachmentSchema).max(10).optional()})).max(10000)}).parse(req.body);
     // Imports are inert history: no tools execute and no imported path is opened.
     const settings=store.settings();
-    const session=store.createSession({...imported.session,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'});
+    // An imported planner may name a provider this install does not have; drop it.
+    const session=store.createSession({...imported.session,planner:undefined,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'} as Partial<Session>);
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
@@ -143,9 +147,12 @@ export function createApp(options:AppOptions = {}) {
   });
   app.patch('/api/sessions/:id',(req,res)=>{
     const {expectedConfigRevision,...patch}=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional(),expectedConfigRevision:configRevisionSchema.optional()}).parse(req.body);
-    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined;
+    // Setting or clearing the planner reroutes future Plan turns, so it follows
+    // the exact model-change contract: idle-only, provider validated, queue held.
+    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined;
     if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
-    checkProvider(patch.providerId);const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
+    checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);
+    const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
     if(configChange)publishConfiguration(req.params.id);res.json(session);
   });
   app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);runner.jobs.killSession(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
