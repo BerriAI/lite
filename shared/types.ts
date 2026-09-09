@@ -9,6 +9,10 @@ import type { QuestionRequest } from './questions.js';
 export type { QuestionOption, QuestionRequest, QuestionAnswer, QuestionResolution, AnswerReceipt } from './questions.js';
 import type { PermissionRuleSet, RuleMatch } from './permissions.js';
 export type { PermissionDecision, PermissionRule, PermissionRuleSet, RuleMatch } from './permissions.js';
+import type { SessionGoal } from './goals.js';
+export type { SessionGoal, GoalStatus, GoalReportStatus } from './goals.js';
+import type { TurnReceipts } from './receipts.js';
+export type { TurnReceipts } from './receipts.js';
 
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
@@ -18,10 +22,14 @@ export interface Provider { id: string; name: string; kind: ProviderKind; baseUr
 export interface Model { id: string; name: string; providerId: string; contextWindow?: number; }
 export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean; }
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; }
-export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string; }
+export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
+  /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
+  goal?: SessionGoal; }
 export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
-export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string; }
+export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
+  /** Host-computed end-of-turn evidence account. Only on the FINAL assistant message of a completed root turn; observation only, never persisted for children. */
+  receipts?: TurnReceipts; }
 export interface Usage { inputTokens: number; outputTokens: number; cachedTokens?: number; cost?: number; durationMs?: number; }
 export interface Todo { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; }
 export interface PermissionRequest { id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }

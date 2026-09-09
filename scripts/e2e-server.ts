@@ -52,6 +52,15 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('RECEIPTS_BROWSER')){
+    // A real write with no check: the sealed turn must carry a receipts notice.
+    if(data.messages.at(-1)?.role==='tool')emit({content:'The write is complete.'});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:'receipts-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'receipts-demo.txt',content:'Written for the receipts test.\n'})}}]});}
+  }else if(prompt.includes('GOAL_BROWSER')){
+    // Reports progress against the session goal, honoring a FORCE_* marker.
+    if(data.messages.at(-1)?.role==='tool')emit({content:'Goal progress recorded.'});
+    else{const status=prompt.includes('FORCE_COMPLETE')?'complete':prompt.includes('FORCE_BLOCKED')?'blocked':'continue';
+      toolCall=true;emit({tool_calls:[{index:0,id:'goal-report',type:'function',function:{name:'update_goal',arguments:JSON.stringify({status,note:`Reporting ${status} from the browser fixture.`})}}]});}
   }else if(prompt.includes('SEARCH_BROWSER')){
     // Actual history_search calls: search then around, driven by markers so
     // tests can steer the query; the run then reports the actual tool results.

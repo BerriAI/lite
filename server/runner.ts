@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Attachment, Message, PermissionRequest, Provider, Session, ToolCall, ToolDefinition } from '../shared/types.js';
 import { Store } from './store.js';
 import { EventBus } from './events.js';
-import { executeTool, executeToolOutputPage, isReadOnlyTool, toolDefinitions, historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, memoryToolDefinitions, captureProjectGuidance, captureProjectPermissions, researchTaskInput, resolveWorkspacePath } from './tools.js';
+import { executeTool, executeToolOutputPage, isReadOnlyTool, toolDefinitions, historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, memoryToolDefinitions, updateGoalTool, captureProjectGuidance, captureProjectPermissions, researchTaskInput, resolveWorkspacePath } from './tools.js';
+import { GOAL_LIMITS, type GoalReportStatus, type SessionGoal } from '../shared/goals.js';
 import { Jobs, executeBashOutput, executeKillShell, executeWait, finishedNotice } from './jobs.js';
 import * as fs from 'node:fs/promises';
 import { SearchIndex, type SearchKind } from './search.js';
@@ -15,6 +16,7 @@ import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
 import type { DelegationSummary } from '../shared/delegation.js';
 import { streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
+import { computeReceipts, receiptsNotice } from './receipts.js';
 import { completeToolBoundary, planCompaction, pruneToolOutputs } from './context.js';
 import { assessContext, compactionLimits, estimateRequest, hasMeaningfulSavings, resolveContextBudget, type BudgetRequest } from './budget.js';
 import { History } from './history.js';
@@ -36,7 +38,12 @@ type ActiveRun = { turnId?: string; profile?: ProfileSnapshot | null; policy?: R
   /** Consecutive evidence-free rounds (every call failed, was denied, or
    * repeated an earlier signature). Read by withEnvelope for the nudge; per-run
    * and never persisted, so children get their own protection. */
-  deadRounds?: number };
+  deadRounds?: number;
+  /** Goal mode, per-run: goalTurn is the 1-based turn number captured when
+   * this run started against an active goal (its envelope counter); goalReport
+   * records the ONE update_goal call executed this turn (extra calls are
+   * refused). Both in-memory only; durable goal state lives on Session. */
+  goalTurn?: number; goalReport?: GoalReportStatus };
 export const DELEGATION_LIMITS = { active: 4, launches: 4, steps: 12, totalSteps: 24, childMs: 120_000, totalMs: 300_000, resultBytes: 32 * 1024, transcriptBytes: 4 * 1024 * 1024 } as const;
 const utf8Bounded = (text: string, limit: number) => { const bytes=Buffer.from(text);if(bytes.length<=limit)return text;let end=limit;while(end>0&&(bytes[end]&0xc0)===0x80)end--;return bytes.subarray(0,end).toString('utf8'); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
@@ -208,6 +215,78 @@ export class Runner {
   removeQueued(id: string, itemId: string) {
     this.assertRoot(id);const queue=this.store.removeQueued(id,itemId);this.bus.emit(id,'queue',queue);return queue;
   }
+  /** GOAL MODE lifecycle. One goal at a time: a live 'active' goal must be
+   * cleared (or settle as completed/blocked) before a replacement, so a stray
+   * second POST cannot silently reset the turn counter of a goal mid-flight.
+   * Idle-only (assertIdle): goal text is a USER instruction and changing it
+   * under a running turn would desynchronize the pinned envelope counter. */
+  setGoal(id: string, text: string, maxTurns?: number): Session {
+    this.assertIdle(id);
+    const session = this.store.session(id);
+    if (session.goal?.status === 'active') throw conflict('A session goal is already active. Clear it before setting a new one.');
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length > GOAL_LIMITS.textChars) throw Object.assign(new Error(`Goal text must be 1-${GOAL_LIMITS.textChars} characters.`), { status: 400 });
+    const ceiling = maxTurns === undefined ? GOAL_LIMITS.defaultMaxTurns : maxTurns;
+    if (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > GOAL_LIMITS.maxTurnsCap) throw Object.assign(new Error(`maxTurns must be an integer between 1 and ${GOAL_LIMITS.maxTurnsCap}.`), { status: 400 });
+    const now = Date.now();
+    const goal: SessionGoal = { text: trimmed, status: 'active', startedAt: now, updatedAt: now, turns: 0, maxTurns: ceiling };
+    const updated = this.store.updateSession(id, { goal });
+    this.bus.emit(id, 'session', updated);
+    return updated;
+  }
+  clearGoal(id: string): Session {
+    this.assertIdle(id);
+    const session = this.store.session(id);
+    if (!session.goal) throw Object.assign(new Error('This session has no goal to clear.'), { status: 404 });
+    const updated = this.store.updateSession(id, { goal: { ...session.goal, status: 'cleared', updatedAt: Date.now() } });
+    this.bus.emit(id, 'session', updated);
+    return updated;
+  }
+  /** update_goal dispatch (like history_search): settles THIS turn's report on
+   * the run, persists the durable goal transition, and emits a session event.
+   * continue keeps the goal active; complete/blocked settle it, which also
+   * stops host continuation at seal time. */
+  private executeUpdateGoal(id: string, run: ActiveRun, args: Record<string, unknown>): string {
+    const status = args.status, note = args.note;
+    if (status !== 'continue' && status !== 'complete' && status !== 'blocked') throw new Error('status must be "continue", "complete", or "blocked".');
+    if (typeof note !== 'string' || !note.trim() || note.length > GOAL_LIMITS.noteChars) throw new Error(`note must be a non-empty string of at most ${GOAL_LIMITS.noteChars} characters.`);
+    const goal = this.store.session(id).goal;
+    if (!goal || goal.status !== 'active') throw new Error('No active session goal. Do not call update_goal again this turn.');
+    if (run.goalReport) throw new Error('update_goal was already called this turn. Report at most once per turn.');
+    run.goalReport = status;
+    const next: SessionGoal = { ...goal, status: status === 'complete' ? 'completed' : status === 'blocked' ? 'blocked' : 'active', updatedAt: Date.now(), lastReport: { status, note } };
+    this.setSession(id, { goal: next });
+    return status === 'continue' ? `Progress recorded (turn ${goal.turns} of ${goal.maxTurns}). The goal stays active; the host will continue with the next turn.`
+      : status === 'complete' ? 'Goal marked completed. Host continuation stops here.'
+      : 'Goal marked blocked. Host continuation stops here; the user will review what is missing.';
+  }
+  /** HOST CONTINUATION, called after finishRun released the sealed turn.
+   * Starts the next goal turn iff: the run succeeded (completed, not blocked,
+   * not cancelled — a user cancel deliberately pauses continuation), the goal
+   * is still active, this turn reported 'continue' (a missing report was
+   * settled by the evaluator before we get here), the turn budget remains, and
+   * nothing else is pending (queued messages outrank continuation). Restart
+   * note: continuation state is derived from Session + the finished run only,
+   * so it never auto-resumes after a process restart — the next user message
+   * starts a goal turn through the same start() path. */
+  private continueGoal(id: string, run: ActiveRun) {
+    try {
+      const goal = this.store.session(id).goal;
+      if (!goal || goal.status !== 'active' || !run.goalTurn) return;
+      if (goal.turns >= goal.maxTurns) {
+        this.setSession(id, { goal: { ...goal, status: 'blocked', updatedAt: Date.now(), lastReport: { status: 'blocked', note: `[Goal paused: reached the ${goal.maxTurns}-turn limit. Review progress and set a new goal to continue.]` } } });
+        return;
+      }
+      if ((run.goalReport ?? 'continue') !== 'continue') return; // Settled reports never continue.
+      if (this.store.queue(id).items.length || this.active(id) || this.operations.has(id) || this.preparations.has(id)) return;
+      // Normal acceptance path: checkpoints, policy capture, envelope counter.
+      this.start(id, `Continue working toward the session goal. Turn ${goal.turns + 1} of ${goal.maxTurns}.`);
+    } catch (error) {
+      // Continuation is best-effort: a failed auto-start must never crash the
+      // sealed turn. Surface it and leave the goal active for the user.
+      try { this.bus.emit(id, 'error', { message: `Could not continue the session goal: ${this.safeError(error)}` }); } catch { console.error('Could not report a goal continuation failure.'); }
+    }
+  }
   pauseQueue(id: string, reason = 'Paused. Resume when you are ready.', manual = true) { this.assertRoot(id);return this.holdQueue(id,reason,manual); }
   private holdQueue(id:string,reason:string,manual=false) {
     const previous=this.store.queue(id);
@@ -278,6 +357,22 @@ export class Runner {
       if(queuedId)this.bus.emit(id,'queue',this.store.queue(id));
       if (session.title === 'New session') this.setSession(id, { title:content.replace(/\s+/g,' ').slice(0,70) || 'Attachment review' });
       this.setSession(id, { status:'running' });
+      // GOAL TURN: every accepted root turn while a goal is active counts
+      // against maxTurns and carries the goal envelope block — user-typed,
+      // queued and host-continued messages alike (a restart or cancel pauses
+      // continuation, and the next user message resumes goal turns here).
+      // Incremented durably before launch so a crash never replays a free turn.
+      // An already-exhausted budget (e.g. the limit turn failed before
+      // continueGoal could settle it) blocks here instead of overcounting.
+      if (session.goal?.status === 'active') {
+        if (session.goal.turns >= session.goal.maxTurns) {
+          this.setSession(id, { goal: { ...session.goal, status: 'blocked', updatedAt: Date.now(), lastReport: { status: 'blocked', note: `[Goal paused: reached the ${session.goal.maxTurns}-turn limit. Review progress and set a new goal to continue.]` } } });
+        } else {
+          const goal: SessionGoal = { ...session.goal, turns: session.goal.turns + 1, updatedAt: Date.now() };
+          run.goalTurn = goal.turns;
+          this.setSession(id, { goal });
+        }
+      }
     } catch(error) {
       this.failRun(id,run,error);this.finishRun(id,run);
       throw error;
@@ -287,7 +382,74 @@ export class Runner {
   }
   private launch(id:string,run:ActiveRun) {
     run.done=new Promise<void>(resolve=>{run.resolveDone=resolve;});
-    void this.run(id,run).catch(error=>this.failRun(id,run,error)).finally(()=>this.finishRun(id,run));
+    void this.run(id,run).catch(error=>this.failRun(id,run,error)).finally(()=>{
+      // GOAL MODE hook: the idle gate (operations) must be held BEFORE
+      // finishRun's notifyIdle, or a whenIdle waiter would observe a false
+      // idle between a sealed goal turn and its host continuation. The gate is
+      // skipped when queued messages exist so finishRun's drainQueue (which
+      // yields to operations) still starts them — queued work outranks
+      // continuation.
+      const goalPending=this.goalSettlementPending(id,run);
+      if(goalPending)this.operations.add(id);
+      try {this.finishRun(id,run);}
+      finally {if(goalPending)void this.settleGoal(id,run);}
+    });
+  }
+  /** True when this sealed run may owe goal settlement (evaluator and/or host
+   * continuation). A superset pre-check only — settleGoal re-verifies success
+   * after finishRun ran (it can still mark the run blocked/error). */
+  private goalSettlementPending(id:string,run:ActiveRun):boolean {
+    if(run.child||!run.goalTurn||run.controller.signal.aborted||this.stopping)return false;
+    try {
+      if(this.store.session(id).goal?.status!=='active')return false;
+      if(this.store.queue(id).items.length)return false;
+    } catch {return false;}
+    return true;
+  }
+  /** Post-seal goal settlement: (1) if the turn made no update_goal report,
+   * ask a bounded, tool-less, history-less evaluator whether the goal is met
+   * and apply its verdict with a host note (timeout/failure/unparseable →
+   * 'continue' — the evaluator can only ever settle or continue a goal, never
+   * crash the sealed turn); (2) hand an unsettled goal to continueGoal. The
+   * evaluator's usage shows as ordinary provider usage (deliberate: it is a
+   * real request). The operations gate added in launch is released just before
+   * continuation so start()'s assertIdle passes with no awaited gap. */
+  private async settleGoal(id:string,run:ActiveRun) {
+    try {
+      const succeeded=Boolean(run.completed&&!run.blocked&&!run.controller.signal.aborted&&!this.stopping&&this.store.session(id).status!=='error');
+      if(succeeded&&this.store.session(id).goal?.status==='active'&&!run.goalReport) {
+        const verdict=await this.evaluateGoal(id,run);
+        const goal=this.store.session(id).goal;
+        if(goal?.status==='active') {
+          const note=verdict==='continue'?'[No update_goal report this turn; the host evaluator continued the goal.]':`[No update_goal report this turn; the host evaluator judged the goal ${verdict==='complete'?'met':'blocked'}.]`;
+          run.goalReport=verdict;
+          this.setSession(id,{goal:{...goal,status:verdict==='complete'?'completed':verdict==='blocked'?'blocked':'active',updatedAt:Date.now(),lastReport:{status:verdict,note}}});
+        }
+      }
+      this.operations.delete(id);
+      if(succeeded)this.continueGoal(id,run);
+    } catch(error) {
+      try {this.bus.emit(id,'error',{message:`Goal settlement failed: ${this.safeError(error)}`});} catch {console.error('Could not report a goal settlement failure.');}
+    } finally {this.operations.delete(id);this.notifyIdle();}
+  }
+  /** Bounded no-report evaluator: one provider request with ONLY a fixed
+   * review system text and the goal + final assistant text — no tools, no
+   * conversation history, 15s hard timeout. Any failure means 'continue'. */
+  private async evaluateGoal(id:string,run:ActiveRun):Promise<GoalReportStatus> {
+    const goal=this.store.session(id).goal!;
+    const policy=run.policy!;
+    const finalText=this.store.messages(id).findLast(message=>message.role==='assistant'&&!message.toolCalls?.length)?.content??'';
+    let answer='';
+    try {
+      for await(const chunk of streamCompletion({provider:policy.provider,model:policy.session.model,signal:AbortSignal.timeout(15_000),
+        system:'You review whether a coding-session goal is met. Answer with exactly one word: continue, complete, or blocked.',
+        messages:[{role:'user',content:`Goal:\n${goal.text}\n\nFinal assistant message:\n${finalText.slice(0,8000)}`}]})) {
+        if(chunk.type==='text')answer+=chunk.text||'';
+        if(answer.length>100)break; // The verdict is one word; never buffer a runaway stream.
+      }
+    } catch {return 'continue';} // Timeout or provider failure never blocks the goal.
+    const word=answer.trim().toLowerCase().match(/^(continue|complete|blocked)\b/)?.[1];
+    return (word as GoalReportStatus|undefined)??'continue';
   }
   private failRun(id: string, run: ActiveRun, error: unknown) {
     run.blocked=true;run.failure=this.safeError(error,run);run.progressMessage=undefined;
@@ -340,6 +502,23 @@ export class Runner {
     this.persist(message); this.bus.emit(message.sessionId, 'message', message);
   }
   private setSession(id: string, patch: Partial<Session>) { this.bus.emit(id, 'session', this.store.updateSession(id, patch)); }
+  /** Seal-time evidence receipts on the turn's FINAL assistant message: an
+   * honest host account computed from tool receipts (never model claims), so
+   * silence cannot hide unverified work. A short notice is appended to the
+   * content only when files changed unverified (no checks, or edits after the
+   * last check); pure-read turns keep receipts data with no appended text.
+   * Children are skipped entirely — researchers cannot mutate, so their
+   * receipts would always be empty. Advisory: a failure here must never fail
+   * or block the sealed turn. */
+  private sealReceipts(id: string, run: ActiveRun, message: Message) {
+    if (run.child) return;
+    try {
+      message.receipts = computeReceipts(this.store.messages(id), run.turnId);
+      const notice = receiptsNotice(message.receipts);
+      if (notice) message.content += notice;
+      this.save(message);
+    } catch { /* observation only */ }
+  }
   private safeError(error: unknown, run?:ActiveRun): string {
     let text = error instanceof Error ? error.message : 'An unexpected error occurred.';
     for (const provider of [...this.store.settings().providers,...(run?.policy?[run.policy.provider]:[])]) if (provider.apiKey) text = text.split(provider.apiKey).join('[redacted]');
@@ -382,7 +561,14 @@ export class Runner {
     // host notice rides the runtime section of the NEXT request (the hard stop
     // at 4 lives in the step loop). Volatile by design; runtime already changes.
     const nudge=(run.deadRounds??0)>=2?'\nNotice: the last 2 rounds produced no new information. Change approach or report the blocker.':'';
-    const envelope = renderEnvelope({ posture: this.posture(session), runtime: `Today: ${new Date().toISOString().slice(0,10)}.${nudge}`, memory: memoryBlock, jobs: run.jobsNotice });
+    // Session goal block: read LIVE goal state (update_goal may settle it
+    // mid-turn) but the turn counter pinned at acceptance, so a retry inside
+    // one turn never shows two different counters. Children never see it —
+    // they have their own researcher prompt and no goal tools.
+    const liveGoal = run.child ? undefined : this.store.session(session.id).goal;
+    const goalBlock = liveGoal?.status === 'active' && run.goalTurn
+      ? `${liveGoal.text}\nTurn ${run.goalTurn} of ${liveGoal.maxTurns}. Report progress with update_goal before finishing.` : '';
+    const envelope = renderEnvelope({ posture: this.posture(session), runtime: `Today: ${new Date().toISOString().slice(0,10)}.${nudge}`, goal: goalBlock, memory: memoryBlock, jobs: run.jobsNotice });
     if (!envelope) return history;
     const at = history.map(message => message.role).lastIndexOf('user');
     if (at < 0) return history; // No user turn to anchor to; skip rather than misplace.
@@ -488,6 +674,11 @@ export class Runner {
     return `This call was denied by an explicit ${match.source} permission rule for ${JSON.stringify(match.tool)}${match.pattern!==undefined?` (pattern ${JSON.stringify(match.pattern)})`:''}. Do not retry it or work around this rule.`;
   }
   private async approve(session: Session, call: ToolCall, run: ActiveRun): Promise<boolean> {
+    // update_goal writes only session-local goal state (like todo_write's
+    // plan writes): no workspace, shell, or network effect, so it auto-runs
+    // without a prompt in every mode — but it is NOT read-only (it mutates
+    // goal state), so this is an explicit carve-out, not a READ_ONLY entry.
+    if (call.name === 'update_goal') return true;
     const localReadOnly = isReadOnlyTool(call.name) && !call.name.startsWith('mcp_');
     const researchLaunch=call.name==='task'&&!run.child&&run.profile?.active.tools==null;
     if (session.mode === 'plan' && !localReadOnly&&!researchLaunch) return false;
@@ -551,11 +742,15 @@ export class Runner {
     // disappear under a profile allowlist, and the plan-mode read-only filter
     // still hides the mutable kill_shell.
     const jobTool=(name:string)=>name==='bash_output'||name==='kill_shell'||name==='wait';
-    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&!jobTool(name)&&policy.tools.includes(name):jobTool(name)?allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='history_search'||name==='tool_output_page'?allowlist==null:name.startsWith('memory_')?policy.memory&&allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
+    // update_goal is advertised only on a goal turn (run.goalTurn pinned at
+    // acceptance), never to children, and follows the history_search allowlist
+    // convention; it works in Plan mode too (it writes only session-local goal
+    // state, no workspace mutation).
+    const allowed=(name:string)=>run.child?isReadOnlyTool(name)&&!jobTool(name)&&policy.tools.includes(name):name==='update_goal'?Boolean(run.goalTurn)&&allowlist==null:jobTool(name)?allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='history_search'||name==='tool_output_page'?allowlist==null:name.startsWith('memory_')?policy.memory&&allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
     const externalTools=run.external?.definitions??[];
     // Memory tools are advertised only per the acceptance-time snapshot and never
     // to child researchers; history_search is a read-only local-history search.
-    const tools = [...toolDefinitions, historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
+    const tools = [...toolDefinitions, historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, updateGoalTool, ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name));
     // An ignored invalid rules file must be visible in the session detail, not
     // only when a prompt happens to occur. The child transcript inherits the
     // parent's captured rules; the parent already carries the notice.
@@ -717,7 +912,7 @@ export class Runner {
       });
       if (!message.toolCalls.length) delete message.toolCalls;
       this.save(message);
-      if (!message.toolCalls?.length) { run.completed=true;return; }
+      if (!message.toolCalls?.length) { run.completed=true;this.sealReceipts(id,run,message);return; }
       if(new Set(message.toolCalls.map(call=>call.id)).size!==message.toolCalls.length) {
         // Preserve the rejected provider response for explicit recovery, but do
         // not execute any part or invent ambiguous tool results for this batch.
@@ -768,7 +963,7 @@ export class Runner {
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else {
             call.status='running';call.startedAt=Date.now();this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
-            output = call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name==='tool_output_page' ? executeToolOutputPage(this.store,id,call.args) : call.name==='bash_output' ? await executeBashOutput(this.jobs,id,call.args) : call.name==='kill_shell' ? await executeKillShell(this.jobs,id,call.args) : call.name==='wait' ? await executeWait(this.jobs,id,call.args) : call.name==='bash'&&call.args.run_in_background===true ? await this.startBackgroundJob(session.workspace,id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
+            output = call.name==='update_goal' ? this.executeUpdateGoal(id,run,call.args) : call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name==='tool_output_page' ? executeToolOutputPage(this.store,id,call.args) : call.name==='bash_output' ? await executeBashOutput(this.jobs,id,call.args) : call.name==='kill_shell' ? await executeKillShell(this.jobs,id,call.args) : call.name==='wait' ? await executeWait(this.jobs,id,call.args) : call.name==='bash'&&call.args.run_in_background===true ? await this.startBackgroundJob(session.workspace,id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
               workspace:session.workspace,sessionId:id,signal,
               prepareChange:change => { this.history.prepareChange(id,change); },
               onChange:change => { this.history.commitChange(id,change); },
@@ -821,6 +1016,7 @@ export class Runner {
           message.content=`${message.content?`${message.content}\n\n`:''}[Stopped: several rounds produced no new information. Summarize what was learned and what is blocking.]`;
           this.save(message);
           run.completed=true;
+          this.sealReceipts(id,run,message);
           return;
         }
       }

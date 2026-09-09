@@ -187,6 +187,14 @@ export function createApp(options:AppOptions = {}) {
     runner.steer(req.params.id,content);
     res.status(202).json({ok:true});
   });
+  // GOAL MODE: set one session objective pursued across host-continued turns.
+  // Idle-only (runner.assertIdle inside setGoal/clearGoal); 409 while a run is
+  // active or another goal is still 'active'. Goal text is a USER instruction.
+  app.post('/api/sessions/:id/goal',(req,res)=>{
+    const input=z.object({text:z.string().min(1).max(2000),maxTurns:z.number().int().min(1).max(25).optional()}).strict().parse(req.body);
+    res.json(runner.setGoal(req.params.id,input.text,input.maxTurns));
+  });
+  app.delete('/api/sessions/:id/goal',(req,res)=>res.json(runner.clearGoal(req.params.id)));
   app.post('/api/sessions/:id/queue/pause',(req,res)=>res.json(runner.pauseQueue(req.params.id)));
   app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});

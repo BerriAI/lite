@@ -30,6 +30,14 @@ describe('session-context envelope', () => {
     const stablePrefixLength = without.indexOf('\n\nDigest:');
     expect(withMemory.startsWith(without.slice(0, stablePrefixLength))).toBe(true);
   });
+  it('renders an optional session-goal section between runtime and memory and omits it when absent', () => {
+    expect(renderEnvelope(sections)).not.toContain('## Session goal');
+    const withGoal = renderEnvelope({ ...sections, goal: 'Ship the widget\nTurn 2 of 10. Report progress with update_goal before finishing.', memory: 'Background memory:\n- fact' });
+    expect(withGoal).toContain('## Session goal');
+    expect(withGoal).toContain('Turn 2 of 10.');
+    expect(withGoal.indexOf('## Session goal')).toBeGreaterThan(withGoal.indexOf('## Runtime'));
+    expect(withGoal.indexOf('## Session goal')).toBeLessThan(withGoal.indexOf('## Background memory'));
+  });
   it('renders an optional background-jobs section last and omits it when absent', () => {
     expect(renderEnvelope(sections)).not.toContain('## Background jobs');
     const withJobs = renderEnvelope({ ...sections, jobs: 'Background jobs finished since the last turn: job-1 (exit 0, 3s).' });

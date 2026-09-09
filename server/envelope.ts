@@ -10,6 +10,10 @@ export interface EnvelopeSections {
   runtime: string;
   /** Mode and permission posture for this accepted turn. */
   posture: string;
+  /** Active session goal block (user-authored objective plus the host turn
+   * counter), or omitted/''. Rendered right after runtime: it changes once per
+   * turn like the date line, so it never disturbs the posture prefix. */
+  goal?: string;
   /** Rendered low-authority background memory block, or ''. */
   memory: string;
   /** One-line notice of background jobs that finished since the last turn, or
@@ -32,6 +36,7 @@ export function renderEnvelope(sections: EnvelopeSections): string {
   const parts = [
     sections.posture.trim() && `## Posture\n${sections.posture.trim()}`,
     sections.runtime.trim() && `## Runtime\n${sections.runtime.trim()}`,
+    sections.goal?.trim() && `## Session goal\n${sections.goal.trim()}`,
     sections.memory.trim() && `## Background memory\n${sections.memory.trim()}`,
     sections.jobs?.trim() && `## Background jobs\n${sections.jobs.trim()}`,
   ].filter(Boolean);

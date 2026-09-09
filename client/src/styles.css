@@ -374,6 +374,7 @@ summary::-webkit-details-marker { display: none; }
 .message-actions > .copy-button span { display: none; }
 .message-actions .icon-button { width: 25px; height: 25px; }
 .usage { color: var(--faint); font-size: 9px; margin-left: 7px; }
+.receipts-row { margin-top: 13px; color: var(--secondary); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .context-estimate { margin-top: 13px; color: var(--secondary); max-width: 100%; }
 .context-estimate > summary { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; min-height: 28px; list-style: none; cursor: pointer; font-size: 10px; line-height: 1.6; }
 .context-estimate > summary span { min-width: 0; overflow-wrap: anywhere; }
@@ -743,3 +744,15 @@ summary::-webkit-details-marker { display: none; }
 }
 @media (max-height: 780px) and (min-width: 761px) { .welcome { padding-top: 25px; padding-bottom: 25px; }.welcome-visual { height: 60px; margin-bottom: 24px; }.welcome-visual .speed-rail { width: 178px; gap: 8px; }.welcome h1 { font-size: 37px; }.welcome-description { margin-bottom: 27px; }.welcome-footnote { margin-top: 25px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }.speed-rail.active i { left: 40%; }.working-dot { opacity: 1; } }
+
+/* GOAL MODE: slim banner above the conversation while a session goal is active
+ * or paused (blocked), plus modal helpers for the set-goal form. */
+.goal-banner { display: flex; align-items: center; gap: 10px; margin: 10px 26px 0; padding: 8px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--blue-soft); color: var(--blue-text); font-size: 12px; }
+.goal-banner.blocked { background: var(--amber-soft); color: var(--amber); }
+.goal-banner-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.goal-banner-body strong { font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+.goal-banner-body span { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goal-banner-turns { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.goal-banner .button { padding: 4px 10px; font-size: 11px; }
+.rename-form textarea { resize: vertical; font: inherit; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 7px; }
+.goal-hint { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }

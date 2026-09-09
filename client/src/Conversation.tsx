@@ -49,6 +49,15 @@ export function Conversation({ detail, connection, onDecide, onFork, renderQuest
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={14} />Jump to latest</button>}</div>;
 }
+/** Compact host-computed evidence line for a mutating turn, attached under the
+ * final assistant message like the context-estimate row. Rendered only when
+ * files changed; the copy mirrors the appended [Receipts: …] content notice. */
+function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
+  const checks = receipts.checksRun.length === 0 ? '· No checks run'
+    : receipts.filesChangedAfterLastCheck.length ? `· ${receipts.filesChangedAfterLastCheck.length} file${receipts.filesChangedAfterLastCheck.length === 1 ? '' : 's'} changed after last check`
+    : `· Checks: ${receipts.checksRun.at(-1)} ${receipts.checksFailed.includes(receipts.checksRun.at(-1)!) ? '✗' : '✓'}`;
+  return <div className="receipts-row" title="Host-computed from tool receipts, not model claims">Changed: {receipts.filesChanged.join(', ')} {checks}</div>;
+}
 function MessageView({ message, running, onFork, disabled, readOnly, renderTask }: { message: Message; running: boolean; onFork: () => void; disabled: boolean; readOnly?: boolean; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
   if (message.role === 'system') return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
@@ -59,6 +68,7 @@ function MessageView({ message, running, onFork, disabled, readOnly, renderTask 
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
       {message.toolCalls && message.toolCalls.length > 0 && <div className="tool-cards">{message.toolCalls.map(t => <div key={t.id}>{renderTask?.(t, message) ?? <ToolCard tool={t} />}</div>)}</div>}
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
+      {assistant && message.receipts && message.receipts.filesChanged.length > 0 && <ReceiptsRow receipts={message.receipts} />}
       {assistant && message.context && <ContextIndicator context={message.context} />}
     </div>
     {assistant && !running && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{message.usage && <span className="usage" title="Reported by your model provider">{message.usage.outputTokens.toLocaleString()} tokens{message.usage.durationMs ? ` · ${(message.usage.durationMs / 1000).toFixed(1)}s` : ''}{message.usage.cost !== undefined ? ` · $${message.usage.cost.toFixed(4)}` : ''}</span>}</div>}
