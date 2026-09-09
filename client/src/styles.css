@@ -350,6 +350,8 @@ summary::-webkit-details-marker { display: none; }
 .conversation-start { display: flex; align-items: center; gap: 13px; color: var(--faint); font-size: 10px; margin: 0 0 29px; }
 .conversation-start span { height: 1px; background: var(--border); flex: 1; }
 .message { margin-bottom: 30px; min-width: 0; }
+/* Grouped assistant steps continue the same response: no repeated byline, tightened rhythm. */
+.message.grouped { margin-top: -16px; }
 .user-message { max-width: 92%; margin-left: auto; padding: 14px 18px; background: var(--subtle); border: 1px solid var(--border); border-radius: 12px 12px 3px 12px; width: fit-content; }
 .message-byline { display: flex; align-items: center; gap: 8px; margin-bottom: 13px; font-size: 12px; font-weight: 600; }
 .message-live { font-size: 9px; font-weight: 400; color: var(--muted); margin-left: 3px; }
