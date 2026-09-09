@@ -277,7 +277,12 @@ function anthropicMessages(messages: ProviderMessage[], providerId: string, mode
     const content: any[] = [];
     const metadata = scopedMetadata(message, providerId, model);
     if (message.role === 'assistant' && Array.isArray(metadata.anthropicThinking)) content.push(...metadata.anthropicThinking);
-    if (message.role === 'tool') content.push({ type: 'tool_result', tool_use_id: message.tool_call_id, content: contentText(message.content) });
+    // Anthropic tool_result accepts an array of text and image blocks, so a
+    // tool message carrying image parts (view_image) maps each part directly;
+    // plain string results keep the existing scalar shape byte-for-byte.
+    if (message.role === 'tool') content.push({ type: 'tool_result', tool_use_id: message.tool_call_id, content: Array.isArray(message.content)
+      ? message.content.map(part => part.type === 'image_url' ? imagePart(part) : { type: 'text', text: part.type === 'text' ? part.text : '' }).filter(Boolean)
+      : contentText(message.content) });
     else {
       if (Array.isArray(message.content)) for (const part of message.content) {
         if (part.type === 'text' && part.text) content.push({ type: 'text', text: part.text });

@@ -9,8 +9,8 @@ import { PassThrough } from 'node:stream';
 import dns from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import { assertReadablePath, executeTool, gitStatus, isReadOnlyTool, listFiles, readCommand, readFile, resolveWorkspacePath, restoreChanges, searchFiles, toolDefinitions, type ToolContext } from '../server/tools.js';
-import type { FileChange, Todo } from '../shared/types.js';
+import { assertReadablePath, executeTool, gitStatus, isReadOnlyTool, listFiles, parseSearchResults, readCommand, readFile, resetWebSearchCourtesy, resolveWorkspacePath, restoreChanges, searchFiles, toolDefinitions, viewImageTool, webSearchEndpoint, webSearchTool, type ToolContext } from '../server/tools.js';
+import type { Attachment, FileChange, Todo } from '../shared/types.js';
 
 const exec = promisify(execFile);
 let temporary: string;
@@ -75,7 +75,7 @@ describe('schemas and authorization classification', () => {
       expect(definition.function.parameters).toMatchObject({ type: 'object', additionalProperties: false });
       expect(() => JSON.stringify(definition)).not.toThrow();
     }
-    for (const name of ['read_file', 'glob', 'grep', 'web_fetch', 'todo_read']) expect(isReadOnlyTool(name)).toBe(true);
+    for (const name of ['read_file', 'glob', 'grep', 'web_fetch', 'web_search', 'view_image', 'todo_read']) expect(isReadOnlyTool(name)).toBe(true);
     for (const name of ['write_file', 'edit_file', 'bash', 'todo_write', 'task', 'unknown']) expect(isReadOnlyTool(name)).toBe(false);
     expect(toolDefinitions.find(definition => definition.function.name === 'bash')?.function.description).toContain('NOT SANDBOXED');
     await expect(tool('missing')).rejects.toThrow('Unknown tool');
@@ -479,6 +479,134 @@ describe('public HTTP fetching', () => {
     setTimeout(() => controller.abort(), 20);
     await expect(request).rejects.toThrow(/cancelled/);
     expect(mock.requests).toHaveLength(0);
+  });
+});
+
+describe('web search', () => {
+  // Captured-shape DDG lite/html markup: result__a anchors with /l/?uddg=
+  // redirect hrefs (entity-encoded &amp;) and result__snippet elements.
+  const ddgPage = (results: { title: string; target: string; snippet?: string }[]) => `<html><body>${results.map(r => `<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(r.target)}&amp;rut=abc123">${r.title}</a></h2>${r.snippet === undefined ? '' : `<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">${r.snippet}</a>`}</div>`).join('')}</body></html>`;
+  beforeEach(() => { resetWebSearchCourtesy(); });
+  it('declares web_search as a separate read-only definition outside toolDefinitions', () => {
+    expect(toolDefinitions.some(value => value.function.name === 'web_search')).toBe(false);
+    expect(webSearchTool.function.name).toBe('web_search');
+    expect(webSearchTool.function.description).toContain('untrusted');
+    expect(isReadOnlyTool('web_search')).toBe(true);
+  });
+  it('queries the endpoint through the guarded fetch, decodes redirect targets and entities, and carries the untrusted note', async () => {
+    const mock = mockWeb([{ type: 'text/html', body: ddgPage([
+      { title: 'Rate &amp; limits', target: 'https://example.org/docs?a=1&b=2', snippet: 'How <b>rate</b> limiting works &#128512;' },
+      { title: 'Second result', target: 'https://example.net/two' },
+    ]) }]);
+    const result = await tool('web_search', { query: 'rate limiting guide' });
+    expect(mock.requests[0].url.href).toContain('html.duckduckgo.com/html/?q=rate%20limiting%20guide');
+    expect(result).toContain('1. Rate & limits — https://example.org/docs?a=1&b=2');
+    expect(result).toContain('How rate limiting works 😀');
+    expect(result).toContain('2. Second result — https://example.net/two'); // Missing snippet tolerated.
+    expect(result).toContain('untrusted suggestions');
+    expect(result).toContain('web_fetch');
+  });
+  it('clamps limit to 5, bounds total output, and reports an unparseable page honestly', async () => {
+    mockWeb([{ type: 'text/html', body: ddgPage(Array.from({ length: 12 }, (_, i) => ({ title: `Result ${i}`, target: `https://example.org/${i}`, snippet: 'x'.repeat(500) }))) }]);
+    const result = await tool('web_search', { query: 'many', limit: 50 });
+    expect(result).toContain('5. Result 4');
+    expect(result).not.toContain('Result 5');
+    expect(result.length).toBeLessThanOrEqual(8192 + '\n[Output truncated]'.length);
+    resetWebSearchCourtesy();
+    mockWeb([{ type: 'text/html', body: '<html><body>No results markup here</body></html>' }]);
+    const empty = await tool('web_search', { query: 'nothing' });
+    expect(empty).toContain('No results parsed');
+    expect(empty).toContain('untrusted');
+  });
+  it('enforces the 2-second per-session courtesy interval with an honest wait error and no second request', async () => {
+    const mock = mockWeb([{ type: 'text/html', body: ddgPage([{ title: 'One', target: 'https://example.org/1' }]) }]);
+    await tool('web_search', { query: 'first' });
+    await expect(tool('web_search', { query: 'second' })).rejects.toThrow(/wait.*2 seconds/i);
+    expect(mock.requests).toHaveLength(1);
+  });
+  it('reuses the SSRF guard: private DNS answers and redirects to private ranges are refused', async () => {
+    const mock = mockWeb([]);
+    mock.lookup.mockResolvedValue([{ address: '10.0.0.1', family: 4 }] as never);
+    await expect(tool('web_search', { query: 'ssrf' })).rejects.toThrow(/private|reserved/);
+    expect(mock.requests).toHaveLength(0);
+    resetWebSearchCourtesy();
+    vi.restoreAllMocks();
+    const redirect = mockWeb([{ status: 302, location: 'http://127.0.0.1/internal' }]);
+    await expect(tool('web_search', { query: 'redirect' })).rejects.toThrow(/private|Local/);
+    expect(redirect.requests).toHaveLength(1); // The redirect target was never fetched.
+  });
+  it('turns failures and timeouts into single honest errors, never retry loops', async () => {
+    const failing = mockWeb([{ status: 500, body: 'oops' }]);
+    await expect(tool('web_search', { query: 'broken' })).rejects.toThrow(/HTTP 500.*Do not retry/);
+    expect(failing.requests).toHaveLength(1);
+    resetWebSearchCourtesy();
+    vi.restoreAllMocks();
+    const hanging = mockWeb([{ hang: true }]);
+    const original = webSearchEndpoint.timeoutMs;
+    webSearchEndpoint.timeoutMs = 30; // Injectable for tests only.
+    try { await expect(tool('web_search', { query: 'slow' })).rejects.toThrow(/timed out.*Do not retry/); }
+    finally { webSearchEndpoint.timeoutMs = original; }
+    expect(hanging.requests).toHaveLength(1);
+  });
+  it('parseSearchResults is bounded and tolerant of hostile or partial markup', () => {
+    expect(parseSearchResults('<a class="result__a">No href</a>', 5)).toEqual([]);
+    expect(parseSearchResults('<a class="result__a" href="javascript:alert(1)">Bad scheme</a>', 5)).toEqual([]);
+    const direct = parseSearchResults('<a class="result__a" href="https://example.org/direct">Direct link</a>', 5);
+    expect(direct).toEqual([{ title: 'Direct link', url: 'https://example.org/direct', snippet: '' }]);
+  });
+});
+
+describe('image viewing', () => {
+  // Minimal magic-byte-valid headers; sniffing never requires a full decode.
+  const png = (width: number, height: number) => { const b = Buffer.alloc(64); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0); b.write('IHDR', 12, 'latin1'); b.writeUInt32BE(width, 16); b.writeUInt32BE(height, 20); return b; };
+  const attached: Attachment[] = [];
+  beforeEach(() => { attached.length = 0; context.attachImage = attachment => { attached.push(attachment); return true; }; });
+  it('declares view_image as a separate read-only definition outside toolDefinitions', () => {
+    expect(toolDefinitions.some(value => value.function.name === 'view_image')).toBe(false);
+    expect(viewImageTool.function.name).toBe('view_image');
+    expect(isReadOnlyTool('view_image')).toBe(true);
+  });
+  it('sniffs magic bytes, attaches a base64 data URL, and reports dimensions and size', async () => {
+    await put('shots/pic.dat', png(320, 200)); // Wrong extension on purpose: bytes decide.
+    const result = await tool('view_image', { path: 'shots/pic.dat' });
+    expect(result).toBe('[Image shots/pic.dat attached: image/png, 320x200, 64 bytes]');
+    expect(attached).toHaveLength(1);
+    expect(attached[0]).toMatchObject({ name: 'pic.dat', path: 'shots/pic.dat', mimeType: 'image/png' });
+    expect(attached[0].dataUrl).toBe(`data:image/png;base64,${png(320, 200).toString('base64')}`);
+  });
+  it('recognizes JPEG, GIF and WebP by their signatures', async () => {
+    await put('a.jpg', Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(16)]));
+    await put('b.gif', Buffer.concat([Buffer.from('GIF89a', 'latin1'), Buffer.from([0x10, 0x00, 0x08, 0x00]), Buffer.alloc(8)]));
+    await put('c.webp', Buffer.concat([Buffer.from('RIFF', 'latin1'), Buffer.alloc(4), Buffer.from('WEBP', 'latin1'), Buffer.alloc(8)]));
+    expect(await tool('view_image', { path: 'a.jpg' })).toContain('image/jpeg');
+    expect(await tool('view_image', { path: 'b.gif' })).toContain('image/gif, 16x8');
+    expect(await tool('view_image', { path: 'c.webp' })).toContain('image/webp');
+    expect(attached).toHaveLength(3);
+  });
+  it('rejects a .png-named text file by content, not extension', async () => {
+    await put('fake.png', 'plain text pretending to be an image');
+    await expect(tool('view_image', { path: 'fake.png' })).rejects.toThrow(/magic bytes/);
+    expect(attached).toEqual([]);
+  });
+  it('rejects images over 8 MiB honestly instead of downscaling', async () => {
+    const big = Buffer.alloc(8 * 1024 * 1024 + 1);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(big, 0);
+    await put('big.png', big);
+    await expect(tool('view_image', { path: 'big.png' })).rejects.toThrow(/too large.*No downscaling/);
+    expect(attached).toEqual([]);
+  });
+  it('reports honestly when the provider route cannot carry images in tool results', async () => {
+    await put('pic.png', png(2, 2));
+    context.attachImage = () => false; // codex-style route.
+    expect(await tool('view_image', { path: 'pic.png' })).toContain('NOT attached: this provider route does not support images in tool results');
+    delete context.attachImage; // No runner wiring at all: same honest fallback.
+    expect(await tool('view_image', { path: 'pic.png' })).toContain('NOT attached');
+  });
+  it('enforces the workspace read policy: outside paths and protected files are refused', async () => {
+    await fs.writeFile(path.join(outside, 'secret.png'), png(1, 1));
+    await expect(tool('view_image', { path: '../outside/secret.png' })).rejects.toThrow(/outside/);
+    await put('.env', 'SECRET=1'); // The workspace .env is a test fixture, not project state.
+    await expect(tool('view_image', { path: '.env' })).rejects.toThrow(/Protected/);
   });
 });
 

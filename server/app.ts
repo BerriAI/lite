@@ -17,7 +17,7 @@ import { planInstall, applyInstall, uninstall, publicPlan } from './plugins.js';
 import { PLUGIN_LIMITS } from '../shared/plugins.js';
 import { HOOK_LIMITS } from '../shared/hooks.js';
 import type { ProfileDetail } from '../shared/profiles.js';
-import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
+import { listFiles, listWorkspaceStyles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
 import { collectDiagnostics } from './doctor.js';
 import type { Message, Session, Settings, UsageReport, UsageTotals } from '../shared/types.js';
 
@@ -25,7 +25,7 @@ const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),na
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional(),advertise:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),hooks:z.unknown().optional(),sidecars:z.unknown().optional(),trustedWorkspaces:z.array(z.string().min(1).max(4096)).max(HOOK_LIMITS.trustedWorkspaces).optional(),notifications:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 // planner: the optional planning half of a planner+executor pair; null clears it.
-const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional()});
+const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
@@ -164,6 +164,8 @@ export function createApp(options:AppOptions = {}) {
       if(selection.mode===undefined)delete selection.mode;
       // planner:null means "no planner" on create; a set planner needs a real provider.
       if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
+      // outputStyle:null means "no style" on create, mirroring planner.
+      if(!selection.outputStyle)delete selection.outputStyle;
       checkProvider(selection.providerId);
       return store.createSession(selection as Partial<Session>,resolved);
     },requestSignal(res));
@@ -211,7 +213,10 @@ export function createApp(options:AppOptions = {}) {
     const {expectedConfigRevision,...patch}=sessionSchema.omit({workspace:true}).extend({archived:z.boolean().optional(),expectedConfigRevision:configRevisionSchema.optional()}).parse(req.body);
     // Setting or clearing the planner reroutes future Plan turns, so it follows
     // the exact model-change contract: idle-only, provider validated, queue held.
-    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined;
+    // outputStyle rewrites the system prompt of future turns (session-constant
+    // cached-prefix config), so it follows the same contract: idle-only PATCH,
+    // revision bump in the store, queue held.
+    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.outputStyle!==undefined;
     if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
     checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);
     const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
@@ -222,6 +227,15 @@ export function createApp(options:AppOptions = {}) {
   const memoryWorkspace=(value:unknown)=>{const workspace=queryString(value);if(!workspace.trim())throw httpError(400,'workspace is required.');return workspace;};
   app.get('/api/memory',(req,res)=>res.json({facts:memory.list(memoryWorkspace(req.query.workspace))}));
   app.delete('/api/memory/:name',(req,res)=>res.json({removed:memory.forget(memoryWorkspace(req.query.workspace),req.params.name)}));
+  // 5.4 activation tier: pin/unpin one fact. 404 for unknown names, 409 at the
+  // 10-pin cap — the Memory core owns both rules; this route only validates shape.
+  app.patch('/api/memory/:name',(req,res)=>{
+    const {pinned}=z.object({pinned:z.boolean()}).strict().parse(req.body);
+    res.json({fact:memory.setPinned(memoryWorkspace(req.query.workspace),req.params.name,pinned)});
+  });
+  // 5.7 output styles: enumerate workspace .lite/styles/*.md names for the
+  // picker. Advisory read-only listing; builtins are a client-side constant.
+  app.get('/api/styles',async(req,res)=>res.json({styles:await listWorkspaceStyles(await workspace(req.query.workspace))}));
   app.get('/api/sessions/:id/events',(req,res)=>{
     const id=req.params.id;store.session(id);
     res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.setHeader('X-Accel-Buffering','no');res.flushHeaders();

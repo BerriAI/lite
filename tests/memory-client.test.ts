@@ -10,8 +10,8 @@ import type { SessionDetail, Settings as SettingsType } from '../shared/types';
 const roots: Root[] = [];
 const base: SettingsType = { providers: [{ id: 'fixture', name: 'Fixture', kind: 'openai', baseUrl: 'http://localhost', configured: true, models: ['model'] }], defaultProvider: 'fixture', defaultModel: 'model', workspace: '/workspace', permissionMode: 'ask', maxSteps: 20, theme: 'light', mcpServers: {}, mcpConfigRevision: 'config-a' };
 const facts: MemoryFactSummary[] = [
-  { id: 'fact-1', name: 'build-command', description: 'Use npm run check before shipping.', updatedAt: Date.UTC(2026, 8, 1, 12) },
-  { id: 'fact-2', name: 'style-guide', description: 'Dense single-line JSX is preferred.', updatedAt: Date.UTC(2026, 8, 3, 12) },
+  { id: 'fact-1', name: 'build-command', description: 'Use npm run check before shipping.', pinned: false, updatedAt: Date.UTC(2026, 8, 1, 12) },
+  { id: 'fact-2', name: 'style-guide', description: 'Dense single-line JSX is preferred.', pinned: false, updatedAt: Date.UTC(2026, 8, 3, 12) },
 ];
 function el<T extends Element = HTMLElement>(selector: string): T { const value = document.querySelector<T>(selector); expect(value, selector).not.toBeNull(); return value!; }
 function button(label: string, scope: ParentNode = document) { const value = [...scope.querySelectorAll('button')].find(item => item.textContent?.trim() === label); expect(value, label).toBeDefined(); return value!; }
@@ -34,10 +34,12 @@ function server(initial = base) {
     else if (path === '/api/mcp' && method === 'GET') value = { servers: [], configRevision: 'config-a' };
     else if (path.startsWith('/api/memory?') && method === 'GET') value = { facts: memory };
     else if (path.startsWith('/api/memory/') && method === 'DELETE') { const name = decodeURIComponent(path.slice('/api/memory/'.length).split('?')[0]); const before = memory.length; memory = memory.filter(fact => fact.name !== name); value = { removed: memory.length < before }; }
+    // Pin toggle mirrors the server: flag update + pinned-first, then name ordering.
+    else if (path.startsWith('/api/memory/') && method === 'PATCH') { const name = decodeURIComponent(path.slice('/api/memory/'.length).split('?')[0]); memory = memory.map(fact => fact.name === name ? { ...fact, pinned: Boolean(body.pinned) } : fact).sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.name.localeCompare(b.name)); value = { fact: memory.find(fact => fact.name === name) }; }
     else throw new Error(`Unexpected ${method} ${path}`);
     const json = JSON.stringify(value); return { ok: true, status: 200, json: async () => JSON.parse(json) };
   }));
-  return { calls, patches: () => calls.filter(call => call.method === 'PATCH'), deletes: () => calls.filter(call => call.method === 'DELETE'), memoryReads: () => calls.filter(call => call.path.startsWith('/api/memory?') && call.method === 'GET'), set memory(value: MemoryFactSummary[]) { memory = value; }, set intercept(value: typeof intercept) { intercept = value; } };
+  return { calls, patches: () => calls.filter(call => call.method === 'PATCH'), deletes: () => calls.filter(call => call.method === 'DELETE'), memoryReads: () => calls.filter(call => call.path.startsWith('/api/memory?') && call.method === 'GET'), memoryPatches: () => calls.filter(call => call.path.startsWith('/api/memory/') && call.method === 'PATCH'), set memory(value: MemoryFactSummary[]) { memory = value; }, set intercept(value: typeof intercept) { intercept = value; } };
 }
 async function mount(settings = base) {
   const host = document.createElement('div'); document.body.append(host); const root = createRoot(host); roots.push(root);
@@ -104,12 +106,49 @@ describe('memory settings section', () => {
     const api = server(); const wait = deferred<{ facts: MemoryFactSummary[] }>();
     api.intercept = (path, method) => path.startsWith('/api/memory?') && method === 'GET' && path.includes('%2Fworkspace') && !path.includes('%2Fother') ? wait.promise : undefined;
     await mount(); await press('Workspace');
-    api.memory = [{ id: 'fact-b', name: 'other-fact', description: 'Belongs to the other workspace.', updatedAt: Date.UTC(2026, 8, 5) }];
+    api.memory = [{ id: 'fact-b', name: 'other-fact', description: 'Belongs to the other workspace.', pinned: false, updatedAt: Date.UTC(2026, 8, 5) }];
     await fill('input[placeholder="/absolute/path/to/your/project"]', '/other');
     expect(el('.memory-facts').textContent).toContain('other-fact');
     await act(async () => wait.resolve({ facts }));
     expect(el('.memory-facts').textContent).toContain('other-fact');
     expect(document.body.textContent).not.toContain('build-command');
+  });
+});
+
+describe('memory pin controls', () => {
+  it('renders a pin button per fact with the pin/unpin aria labels and a Pinned tag for pinned facts', async () => {
+    const api = server(); api.memory = [
+      { id: 'fact-1', name: 'build-command', description: 'Use npm run check.', pinned: true, updatedAt: Date.UTC(2026, 8, 1) },
+      { id: 'fact-2', name: 'style-guide', description: 'Dense JSX.', pinned: false, updatedAt: Date.UTC(2026, 8, 3) },
+    ];
+    await mount(); await press('Workspace');
+    expect(document.querySelector('[aria-label="Unpin fact build-command"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label="Pin fact style-guide"]')).not.toBeNull();
+    const pinnedRow = el('.memory-fact.pinned');
+    expect(pinnedRow.textContent).toContain('build-command');
+    expect(pinnedRow.textContent).toContain('Pinned');
+  });
+  it('pins via PATCH against the exact URL and reorders pinned facts first on refresh', async () => {
+    const api = server(); await mount(); await press('Workspace');
+    // Initial order is the fixture order: build-command then style-guide.
+    expect([...document.querySelectorAll('.memory-fact strong')].map(item => item.textContent)).toEqual(['build-command', 'style-guide']);
+    await click('[aria-label="Pin fact style-guide"]');
+    expect(api.memoryPatches()).toEqual([{ path: '/api/memory/style-guide?workspace=%2Fworkspace', method: 'PATCH', body: { pinned: true } }]);
+    // The refetched list puts the pinned fact first and flips its control to Unpin.
+    expect([...document.querySelectorAll('.memory-fact strong')].map(item => item.textContent?.replace('Pinned', ''))).toEqual(['style-guide', 'build-command']);
+    expect(document.querySelector('[aria-label="Unpin fact style-guide"]')).not.toBeNull();
+    await click('[aria-label="Unpin fact style-guide"]');
+    expect(api.memoryPatches().at(-1)).toEqual({ path: '/api/memory/style-guide?workspace=%2Fworkspace', method: 'PATCH', body: { pinned: false } });
+  });
+  it('surfaces a pin failure (e.g. the 10-pin cap) inline without a stray refresh masking it', async () => {
+    const api = server();
+    api.intercept = (path, method) => path.startsWith('/api/memory/') && method === 'PATCH' ? Promise.reject(new Error('At most 10 facts can be pinned per workspace.')) : undefined;
+    await mount(); await press('Workspace');
+    const readsBefore = api.memoryReads().length;
+    await click('[aria-label="Pin fact build-command"]');
+    expect(el('[aria-label="Agent memory"] [role="alert"]').textContent).toContain('At most 10 facts');
+    // No post-failure refetch: a refresh would clear the visible error.
+    expect(api.memoryReads().length).toBe(readsBefore);
   });
 });
 

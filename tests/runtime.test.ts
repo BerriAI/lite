@@ -710,7 +710,7 @@ process.stdin.on('end',()=>process.exit(0));
     expect(researcher).toMatchObject({ readOnly: true, delegation: { id: delegation.id, status: 'completed' } });
     expect(researcher.messages.flatMap((message: { toolCalls?: unknown[] }) => message.toolCalls ?? [])).toMatchObject([{ name: 'read_file', status: 'completed' }]);
     expect(researcher.messages.find((message: { role: string }) => message.role === 'user').content).toBe('runtime delegation child read independently');
-    expect(providerCalls[25].tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'web_fetch']);
+    expect(providerCalls[25].tools?.map(tool => tool.function.name).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'view_image', 'web_fetch', 'web_search']);
     expect(JSON.stringify(providerCalls[26].messages)).toContain('persisted runtime output');
     expect((await api('/sessions')).sessions.some((value: { id: string }) => value.id === delegation.childSessionId)).toBe(false);
     const forbiddenChild = await fetch(`${app.base}/api/sessions/${delegation.childSessionId}/messages`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: 'Bypass readonly child' }) });

@@ -85,7 +85,7 @@ for (const flag of ['FORCE_WRITE', 'FORCE_NESTED', 'FORCE_QUESTION']) test(`auto
   const delegation = await latest(request, session), research = await child(request, session, delegation);
   const childCalls = (await calls(request, session)).filter(call => call.messages.some(message => message.role === 'user' && String(message.content).includes('DELEGATE_CHILD')));
   expect(childCalls.length).toBeGreaterThan(0);
-  for (const call of childCalls) for (const tool of call.tools) expect(['read_file', 'glob', 'grep', 'web_fetch', 'todo_read']).toContain(tool.function.name);
+  for (const call of childCalls) for (const tool of call.tools) expect(['read_file', 'view_image', 'glob', 'grep', 'web_fetch', 'web_search', 'todo_read', 'history_search', 'tool_output_page']).toContain(tool.function.name);
   expect(research.messages.flatMap(message => message.toolCalls ?? []).some(tool => tool.status === 'completed')).toBe(false);
   expect(research.questions ?? []).toEqual([]); expect(research.delegations ?? []).toEqual([]); await expect(permission(page)).toHaveCount(0); await assertUnchanged();
 });

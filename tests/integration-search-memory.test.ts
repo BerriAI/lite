@@ -99,13 +99,13 @@ describe('history_search, memory tools and session-context envelope integration'
     expect(call.output).toContain(worker.id);
   });
 
-  it('extends the child researcher ceiling to six read tools including a working history_search, with zero memory tools even when enabled', async () => {
+  it('advertises the full read-only child researcher ceiling including a working history_search, with zero memory tools even when enabled', async () => {
     await api('/settings', { memoryEnabled: true }, 'PATCH');
     const source = await create(); await run(source.id, 'The QUARKPHASE incident report');
     respond = (body, res) => { if (child(body)) { if (body.messages.at(-1)?.role === 'tool') text(res, 'Child report'); else tools(res, [{ name: 'history_search', args: { operation: 'search', query: 'QUARKPHASE' } }]); } else if (body.messages.at(-1)?.role === 'tool') text(res); else tools(res, [{ name: 'task', args: { description: 'Inspect', prompt: 'CHILD inspect history' } }]); };
     const s = await create({ permissionMode: 'auto' }); await run(s.id);
     const childCall = calls.find(child)!;
-    expect(names(childCall).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'web_fetch']);
+    expect(names(childCall).sort()).toEqual(['glob', 'grep', 'history_search', 'read_file', 'todo_read', 'tool_output_page', 'view_image', 'web_fetch', 'web_search']);
     for (const name of MEMORY_TOOLS) expect(names(childCall)).not.toContain(name);
     const delegation = runner.delegations.list(s.id)[0];
     expect(delegation.status).toBe('completed');
@@ -254,5 +254,50 @@ describe('history_search, memory tools and session-context envelope integration'
     expect((await api('/memory')).status).toBe(400);
     expect((await api(`/memory/unknown-name?workspace=${encodeURIComponent(directory)}`, undefined, 'DELETE')).body).toEqual({ removed: false });
     expect((await api(`/memory?workspace=${encodeURIComponent(directory)}`)).body).toEqual({ facts: [] });
+  });
+
+  it('a pinned fact rides the envelope with the [pinned] label even when the query is irrelevant', async () => {
+    await api('/settings', { memoryEnabled: true }, 'PATCH');
+    const s = await create({ permissionMode: 'auto' });
+    respond = oneCallThenText('memory_remember', { name: 'standing-rule', description: 'Standing rule', body: 'Never touch the production XYLOCORE cluster.' });
+    await run(s.id, 'Remember the rule');
+    expect((await api(`/memory/standing-rule?workspace=${encodeURIComponent(directory)}`, { pinned: true }, 'PATCH')).status).toBe(200);
+    respond = (_body, res) => text(res);
+    await run(s.id, 'Completely unrelated bagel question'); // No token overlap with the fact.
+    const body = calls.at(-1);
+    const envelope = body.messages.find((m: any) => typeof m.content === 'string' && isEnvelope(m.content));
+    expect(envelope.content).toContain('## Background memory');
+    expect(envelope.content).toContain('[pinned] standing-rule');
+    expect(envelope.content).toContain('XYLOCORE');
+  });
+
+  it('memory_remember with an existing subject replaces the older fact and says so in the tool result', async () => {
+    await api('/settings', { memoryEnabled: true }, 'PATCH');
+    const s = await create({ permissionMode: 'auto' });
+    respond = oneCallThenText('memory_remember', { name: 'port-v1', description: 'DB port', body: 'Port is 5433.', subject: 'db-port' });
+    await run(s.id, 'Remember v1');
+    respond = oneCallThenText('memory_remember', { name: 'port-v2', description: 'DB port', body: 'Port moved to 5434.', subject: 'db-port' });
+    await run(s.id, 'Remember v2');
+    const result = toolCalls(s.id).at(-1)!;
+    expect(result.status).toBe('completed');
+    expect(result.output).toContain('replaced "port-v1"');
+    expect((await api(`/memory?workspace=${encodeURIComponent(directory)}`)).body.facts).toMatchObject([{ name: 'port-v2' }]);
+  });
+
+  it('PATCH /api/memory/:name pins and unpins, reorders the list, 404s unknown names and 409s the 11th pin', async () => {
+    const workspaceQuery = `workspace=${encodeURIComponent(directory)}`;
+    const memory = new (await import('../server/memory.js')).Memory(store);
+    for (let i = 0; i < 11; i++) memory.remember(directory, { name: `fact-${String(i).padStart(2, '0')}`, description: `Fact ${i}`, body: `Body ${i}` });
+    const pin = (name: string, pinned: boolean) => api(`/memory/${name}?${workspaceQuery}`, { pinned }, 'PATCH');
+    expect((await pin('fact-05', true)).body.fact).toMatchObject({ name: 'fact-05', pinned: true });
+    // Pinned facts sort first in the listing.
+    expect((await api(`/memory?${workspaceQuery}`)).body.facts[0]).toMatchObject({ name: 'fact-05', pinned: true });
+    expect((await pin('missing', true)).status).toBe(404);
+    for (let i = 0; i < 10; i++) if (i !== 5) expect((await pin(`fact-${String(i).padStart(2, '0')}`, true)).status).toBe(200);
+    // fact-00..fact-09 are the 10 pins; the 11th (fact-10) is refused.
+    expect((await pin('fact-10', true)).status).toBe(409);
+    expect((await api(`/memory?${workspaceQuery}`)).body.facts.filter((fact: any) => fact.pinned)).toHaveLength(10);
+    expect((await pin('fact-05', false)).body.fact.pinned).toBe(false);
+    expect((await api(`/memory/fact-05?${workspaceQuery}`, { pinned: 'yes' }, 'PATCH')).status).toBe(400);
   });
 });

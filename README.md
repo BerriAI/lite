@@ -46,7 +46,9 @@ npm start
 - Turn receipts: every mutating turn records what changed, what commands ran, and whether checks were run — and says so honestly when files changed with no checks, or after the last check passed.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
 - Cross-session history search — a read-only `history_search` tool over every saved local conversation, with honest zero-result reporting. See [history search](docs/search.md).
-- Optional agent memory (off by default) — durable low-authority workspace facts with remember/forget/recall tools, bounded automatic recall, and a Settings fact browser. See [agent memory](docs/memory.md).
+- Optional agent memory (off by default) — durable low-authority workspace facts with remember/forget/recall tools, bounded automatic recall, pinned facts that always ride along, subject keys so a new answer replaces the old, and a Settings fact browser. See [agent memory](docs/memory.md).
+- Output styles — concise, explanatory, or learning built-ins plus your own `.lite/styles/*.md`, applied per session with the same deliberate config semantics as model changes.
+- `view_image` and `web_search` tools — the agent can read workspace images (where the provider route supports them) and run bounded public web searches, both read-only and available to researchers.
 - Composer slash commands — type `/` for project command templates (`.lite/commands`, `.claude/commands`) with `$ARGUMENTS` and positional substitution.
 - A cache-stable request prefix: volatile facts (date, mode, permission posture, recalled memory) travel in a digest-tagged session-context snapshot instead of rewriting the system prompt every turn.
 - Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.

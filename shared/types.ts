@@ -55,7 +55,13 @@ export interface Session { profile?: ActiveProfile; configRevision?: number; id:
   /** Optional planner half of a planner+executor pair. Plan-mode turns run on
    * this pair; Build turns run on the session providerId/model (the executor).
    * A model-routing decision only — workspace, permissions, and profile are shared. */
-  planner?: { providerId: string; model: string }; }
+  planner?: { providerId: string; model: string };
+  /** Output style (5.7): a built-in name (shared/styles.ts OUTPUT_STYLES) or a
+   * workspace .lite/styles/<name>.md file name. Resolved at turn ACCEPTANCE
+   * into the captured policy (like guidance); appended to the system prompt
+   * tail so it stays in the cached prefix. Changing it is an idle-only config
+   * change with a revision bump, exactly like changing the model. */
+  outputStyle?: string; }
 export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
   /** Sidecar interception attribution (design note 4.5): present iff a sidecar
    * modified this call. `args` above are the MODIFIED (executed) arguments;

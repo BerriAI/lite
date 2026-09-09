@@ -254,6 +254,24 @@ describe('provider protocol', () => {
     expect(received.body.tools.at(-1).cache_control).toEqual({ type: 'ephemeral' });
     expect(chunks.at(-1)?.usage).toEqual({ inputTokens: 17, outputTokens: 6, cachedTokens: 4 });
   });
+  it('maps tool messages with image parts into Anthropic tool_result text and image blocks', async () => {
+    let received: any;
+    const base = await mock((_req, res, body) => {
+      received = body;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end([{ type: 'message_start', message: { usage: { input_tokens: 1 } } }, { type: 'message_stop' }].map(frame).join(''));
+    });
+    const dataUrl = 'data:image/png;base64,AAAA';
+    for await (const _ of streamCompletion({ provider: { ...provider(base), kind: 'anthropic' }, model: 'claude-model',
+      messages: [
+        { role: 'assistant', content: null, tool_calls: [{ id: 'img', type: 'function', function: { name: 'view_image', arguments: '{}' } }] },
+        { role: 'tool', content: [{ type: 'text', text: '[Image attached]' }, { type: 'image_url', image_url: { url: dataUrl } }], tool_call_id: 'img' },
+      ], signal: new AbortController().signal })) { /* drain */ }
+    expect(received.messages[1]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'img', content: [
+      { type: 'text', text: '[Image attached]' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+    ] }] });
+  });
   it('marks the openai-route system block cacheable only for anthropic-family models', async () => {
     const bodies: any[] = [];
     const base = await mock((_req, res, body) => {

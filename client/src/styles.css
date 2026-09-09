@@ -760,3 +760,11 @@ summary::-webkit-details-marker { display: none; }
 .goal-banner .button { padding: 4px 10px; font-size: 11px; }
 .rename-form textarea { resize: vertical; font: inherit; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 7px; }
 .goal-hint { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+
+/* 5.4 memory activation tiers: pinned facts sort first with a visible tag. */
+.memory-fact.pinned { border-left-color: var(--accent, #7c6df2); }
+.memory-pinned-tag { margin-left: 6px; padding: 0 5px; border-radius: 4px; background: var(--surface-strong, rgba(124,109,242,0.12)); color: var(--accent, #7c6df2); font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; vertical-align: middle; }
+.memory-pin.active { color: var(--accent, #7c6df2); }
+/* 5.7 output style picker inside the model picker. */
+.style-picker { display: grid; gap: 4px; font-size: 11px; }
+.style-picker select { font: inherit; padding: 5px 8px; border: 1px solid var(--border-strong); border-radius: 7px; background: var(--surface); color: var(--text); }

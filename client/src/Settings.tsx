@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Trash2, Unplug, X } from 'lucide-react';
+import { Activity, ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Star, Trash2, Unplug, X } from 'lucide-react';
 import type { McpServerConfig, Provider, Settings as SettingsType, UsageReport } from '../../shared/types';
 import type { PermissionDecision, PermissionRuleSet } from '../../shared/permissions';
 import { PERMISSION_LIMITS } from '../../shared/permissions';
@@ -192,6 +192,24 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       if (alive.current) { setMemoryBusy(''); if (memoryWorkspaceRef.current === workspace) void refreshMemory(workspace); }
     }
   }
+  // 5.4 activation tier toggle: PATCH the pin flag, then re-fetch so ordering
+  // (pinned first) and any 409 at the 10-pin cap come from the server, never
+  // from an optimistic local guess.
+  async function pinFact(name: string, pinned: boolean) {
+    if (memoryBusy) return;
+    const workspace = memoryWorkspaceRef.current;
+    setMemoryBusy(name); setMemoryError('');
+    try {
+      await patch(`/memory/${encodeURIComponent(name)}?${query({ workspace })}`, { pinned });
+      // Refresh only on success: a refresh clears the inline error, and a
+      // failed pin (404, the 10-pin cap) must stay visible with the list intact.
+      if (alive.current && memoryWorkspaceRef.current === workspace) void refreshMemory(workspace);
+    } catch (e) {
+      if (alive.current && memoryWorkspaceRef.current === workspace) setMemoryError(`Could not ${pinned ? 'pin' : 'unpin'} the fact: ${errorMessage(e)}`);
+    } finally {
+      if (alive.current) setMemoryBusy('');
+    }
+  }
   const mcpDirty = mcp !== initialMcp.current;
   const mcpMismatch = !reviewedRevision.current || Boolean(mcpSnapshot && mcpSnapshot.configRevision !== reviewedRevision.current);
   const anyMcpAction = mcpActions.size > 0;
@@ -359,10 +377,12 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
           {memoryError && <div className="inline-alert" role="alert">{memoryError}</div>}
           {(draft.memoryEnabled || Boolean(memoryFacts?.length)) && !memoryLoading && !memoryError && <>
             {memoryFacts?.length === 0 && <p className="field-hint">No recorded facts for this workspace.</p>}
-            {Boolean(memoryFacts?.length) && <ul className="memory-facts">{memoryFacts!.map(fact => <li className="memory-fact" key={fact.id}>
-              <div><strong>{fact.name}</strong><p>{fact.description}</p><small>Updated {new Date(fact.updatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</small></div>
+            {Boolean(memoryFacts?.length) && <ul className="memory-facts">{memoryFacts!.map(fact => <li className={`memory-fact${fact.pinned ? ' pinned' : ''}`} key={fact.id}>
+              <div><strong>{fact.name}{fact.pinned && <span className="memory-pinned-tag">Pinned</span>}</strong><p>{fact.description}</p><small>Updated {new Date(fact.updatedAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</small></div>
+              <button className={`icon-button memory-pin${fact.pinned ? ' active' : ''}`} type="button" disabled={busy || Boolean(memoryBusy)} aria-label={fact.pinned ? `Unpin fact ${fact.name}` : `Pin fact ${fact.name}`} title={fact.pinned ? 'Unpin fact (stops riding every request)' : 'Pin fact (included in every request, max 10)'} onClick={() => void pinFact(fact.name, !fact.pinned)}><Star size={15} fill={fact.pinned ? 'currentColor' : 'none'} /></button>
               <button className="icon-button danger" type="button" disabled={busy || Boolean(memoryBusy)} aria-label={`Delete fact ${fact.name}`} title="Delete fact" onClick={() => void forgetFact(fact.name)}><Trash2 size={15} /></button>
             </li>)}</ul>}
+            <p className="field-hint">Pinned facts are included with every request for this workspace (up to 10); unpinned facts surface only when relevant.</p>
           </>}
         </section>
         <div className="quiet-callout"><ShieldCheck size={18} /><p>Plan mode is read-only. Switch to Build when you are ready to make changes.</p></div>

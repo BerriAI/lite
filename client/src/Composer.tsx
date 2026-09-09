@@ -5,8 +5,9 @@ import { api, errorMessage, query } from './api';
 import { Modal, SpeedRail } from './ui';
 
 /** planner: the optional planning half of a planner+executor pair (undefined =
- * untouched, null = explicitly cleared in the next PATCH). */
-export interface Selection { providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; }
+ * untouched, null = explicitly cleared in the next PATCH). outputStyle follows
+ * the same tri-state contract: undefined = untouched, null = cleared. */
+export interface Selection { providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; outputStyle?: string | null; }
 interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;
@@ -145,11 +146,23 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, on
     <div className="composer-below"><details className="permission-select"><summary><Shield size={12} />{selection.mode === 'plan' ? 'Read-only plan' : selection.permissionMode === 'ask' ? 'Ask before changes' : 'Auto-approve changes'}<ChevronDown size={10} /></summary><div className="permission-menu"><strong>Permissions</strong><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'ask' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Shield size={16} /><span>Ask before changes<small>Review edits and commands first</small></span>{selection.permissionMode === 'ask' && <Check size={14} />}</button><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'auto' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><ShieldCheck size={16} /><span>Auto-approve<small>Allow edits and shell commands</small></span>{selection.permissionMode === 'auto' && <Check size={14} />}</button></div></details><span className="enter-hint"><CornerDownLeft size={11} />{queueMode ? 'Queue' : 'Send'}<span>·</span>Shift + Enter for a new line</span></div>
     {draftNotice && <div className="draft-notice" role="status">{draftNotice}</div>}
     {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss attachment error" onClick={() => setError('')}><X size={13} /></button></div>}
-    {modelOpen && !configDisabled && <ModelPicker settings={settings} selection={selection} onChange={onSelection} onClose={closeModel} onSettings={onSettings} />}
+    {modelOpen && !configDisabled && <ModelPicker settings={settings} selection={selection} onChange={onSelection} onClose={closeModel} onSettings={onSettings} workspace={workspace} />}
   </>;
 }
 
-function ModelPicker({ settings, selection, onChange, onClose, onSettings }: { settings: Settings; selection: Selection; onChange: (s: Selection) => void; onClose: () => void; onSettings: () => void }) {
+function ModelPicker({ settings, selection, onChange, onClose, onSettings, workspace }: { settings: Settings; selection: Selection; onChange: (s: Selection) => void; onClose: () => void; onSettings: () => void; workspace: string }) {
+  // Output style (5.7) shares this surface with the model/planner pair because
+  // all three are session-constant config PATCHed through one code path.
+  // Workspace .lite/styles/*.md names are appended after the builtins.
+  const [workspaceStyles, setWorkspaceStyles] = useState<string[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api<{ styles: string[] }>(`/styles?${query({ workspace })}`).then(r => { if (alive) setWorkspaceStyles(r.styles); }).catch(() => { /* advisory listing */ });
+    return () => { alive = false; };
+  }, [workspace]);
+  const builtinStyles = ['concise', 'explanatory', 'learning'];
+  const styleOptions = [...builtinStyles, ...workspaceStyles.filter(name => !builtinStyles.includes(name))];
+  const currentStyle = selection.outputStyle ?? '';
   // One picker, two slots: the same list assigns the executor (session model)
   // or the optional planner (runs Plan-mode turns when set). Keeping both in
   // this surface means one code path PATCHes both halves of the pair.
@@ -178,6 +191,11 @@ function ModelPicker({ settings, selection, onChange, onClose, onSettings }: { s
     {loading && <SpeedRail active compact />}{error && <p className="field-hint error-text">{error} You can still enter a model ID manually.</p>}
     <div className="model-list">{filtered.map(m => <button key={m.id} onClick={() => choose(m.id)}><span className="model-dot" /><span><strong>{m.name}</strong>{m.name !== m.id && <small>{m.id}</small>}</span>{m.id === active?.model && providerId === active?.providerId && <Check size={16} />}</button>)}{!loading && !filtered.length && <div className="picker-empty">{search ? 'No matching models.' : 'No models discovered. Enter a model ID above or check your provider settings.'}</div>}{search.trim() && !all.some(m => m.id === search.trim()) && <button className="custom-model" onClick={() => choose(search.trim())}>Use <strong>{search.trim()}</strong><CornerDownLeft size={14} /></button>}</div>
     {slot === 'planner' && selection.planner && <button className="text-button" onClick={() => { onChange({ ...selection, planner: null }); onClose(); }}>Clear planner</button>}
+    <label className="style-picker">Output style<select aria-label="Output style" value={currentStyle} onChange={e => onChange({ ...selection, outputStyle: e.target.value || null })}>
+      <option value="">default</option>
+      {styleOptions.map(name => <option key={name} value={name}>{name}</option>)}
+      {currentStyle && !styleOptions.includes(currentStyle) && <option value={currentStyle}>{currentStyle}</option>}
+    </select><span className="field-hint">Shapes how responses are written. Custom styles come from .lite/styles/*.md in the workspace.</span></label>
     <button className="text-button" onClick={() => { onClose(); onSettings(); }}>Manage providers and API keys</button>
   </div></Modal>;
 }

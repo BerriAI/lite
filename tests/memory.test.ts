@@ -70,7 +70,7 @@ describe('workspace-scoped background memory facts', () => {
   it('lists summaries without bodies', () => {
     memory.remember(A, input('visible', 'SECRET_BODY_TEXT', 'A visible description'));
     const listed = memory.list(A);
-    expect(listed).toEqual([{ id: expect.any(String), name: 'visible', description: 'A visible description', updatedAt: expect.any(Number) }]);
+    expect(listed).toEqual([{ id: expect.any(String), name: 'visible', description: 'A visible description', pinned: false, updatedAt: expect.any(Number) }]);
     expect(JSON.stringify(listed)).not.toContain('SECRET_BODY_TEXT');
   });
   it('ranks name matches above description matches above body matches', () => {
@@ -158,5 +158,115 @@ describe('workspace-scoped background memory facts', () => {
     memory.remember(A, input('durable', 'Survives restart.'));
     store.close(); store = new Store(join(directory, 'data')); memory = new Memory(store);
     expect(memory.get(A, 'durable')?.body).toBe('Survives restart.');
+  });
+});
+
+describe('memory activation tiers (pinning) and subject keys', () => {
+  it('pins and unpins by name, reflected in get, list flag and pinnedFacts', () => {
+    memory.remember(A, input('anchor', 'The anchor body.'));
+    expect(memory.get(A, 'anchor')?.pinned).toBe(false);
+    const pinned = memory.setPinned(A, 'anchor', true);
+    expect(pinned.pinned).toBe(true);
+    expect(memory.get(A, 'anchor')?.pinned).toBe(true);
+    expect(memory.list(A)[0]).toMatchObject({ name: 'anchor', pinned: true });
+    expect(memory.pinnedFacts(A).map(fact => fact.name)).toEqual(['anchor']);
+    expect(memory.setPinned(A, 'anchor', false).pinned).toBe(false);
+    expect(memory.pinnedFacts(A)).toEqual([]);
+  });
+  it('404s pinning an unknown fact and rejects the 11th pin per workspace, not other workspaces', () => {
+    expect(() => memory.setPinned(A, 'ghost', true)).toThrow(/No memory fact/);
+    for (let i = 0; i < MEMORY_LIMITS.pinnedFacts; i++) { memory.remember(A, input(`pin-${i}`)); memory.setPinned(A, `pin-${i}`, true); }
+    memory.remember(A, input('one-more'));
+    expect(() => memory.setPinned(A, 'one-more', true)).toThrow(/At most 10/);
+    // Re-pinning an already pinned fact is idempotent, not an 11th pin.
+    expect(memory.setPinned(A, 'pin-0', true).pinned).toBe(true);
+    // The cap is per workspace: B still accepts pins.
+    memory.remember(B, input('b-pin'));
+    expect(memory.setPinned(B, 'b-pin', true).pinned).toBe(true);
+  });
+  it('lists pinned facts first, then names alphabetically', () => {
+    memory.remember(A, input('aardvark')); memory.remember(A, input('zebra')); memory.remember(A, input('middle'));
+    memory.setPinned(A, 'zebra', true);
+    expect(memory.list(A).map(fact => fact.name)).toEqual(['zebra', 'aardvark', 'middle']);
+  });
+  it('autoRecall carries pinned facts first with the [pinned] label even for an irrelevant query', () => {
+    memory.remember(A, input('always-on', 'Use the staging cluster only.', 'Standing rule'));
+    memory.setPinned(A, 'always-on', true);
+    memory.remember(A, input('gateway-note', 'The gateway listens on 8080.'));
+    const { block, recalls } = memory.autoRecall(A, 'zebra quantum unrelated');
+    expect(recalls.map(recall => recall.name)).toEqual(['always-on']);
+    expect(recalls[0].pinned).toBe(true);
+    expect(block.split('\n')[0]).toBe(MEMORY_HEADER);
+    expect(block).toContain('- [pinned] always-on: Use the staging cluster only.');
+    expect(block).not.toContain('gateway-note');
+  });
+  it('pinned facts precede recalled ones, are never duplicated, and pre-spend the shared byte budget', () => {
+    memory.remember(A, input('pinned-gateway', 'The gateway needs mTLS.'));
+    memory.setPinned(A, 'pinned-gateway', true);
+    memory.remember(A, input('recalled-gateway', 'The gateway health check is /status.'));
+    const { block, recalls } = memory.autoRecall(A, 'gateway');
+    // Pinned first (despite the recalled fact also matching), each fact once.
+    expect(recalls.map(recall => recall.name)).toEqual(['pinned-gateway', 'recalled-gateway']);
+    expect(recalls.filter(recall => recall.name === 'pinned-gateway')).toHaveLength(1);
+    expect(block.indexOf('[pinned] pinned-gateway')).toBeLessThan(block.indexOf('recalled-gateway'));
+    // Budget precedence: a huge pinned body squeezes recalled snippets out.
+    memory.remember(A, input('pinned-huge', `gateway ${'x'.repeat(5000)}`));
+    memory.setPinned(A, 'pinned-huge', true);
+    const squeezed = memory.autoRecall(A, 'gateway');
+    const bytes = squeezed.recalls.reduce((sum, recall) => sum + Buffer.byteLength(recall.snippet), 0);
+    expect(bytes).toBeLessThanOrEqual(MEMORY_LIMITS.autoRecallBytes);
+    expect(squeezed.recalls.every(recall => recall.pinned)).toBe(true);
+  });
+  it('truncates an over-budget pinned fact at a boundary with an honest note', () => {
+    memory.remember(A, input('giant', '界'.repeat(1900))); // ~5700 bytes > 2400 budget
+    memory.setPinned(A, 'giant', true);
+    const { recalls } = memory.autoRecall(A, 'anything at all');
+    expect(recalls).toHaveLength(1);
+    expect(recalls[0].snippet).toContain('[pinned fact truncated to fit the memory budget]');
+    expect(Buffer.byteLength(recalls[0].snippet)).toBeLessThanOrEqual(MEMORY_LIMITS.autoRecallBytes);
+    expect(recalls[0].snippet).not.toContain('�');
+  });
+  it('remember with a subject replaces the previous holder across names and reports it', () => {
+    memory.remember(A, { ...input('old-port', 'Postgres is on 5433.'), subject: 'db-port' });
+    const replacement = memory.remember(A, { ...input('new-port', 'Postgres moved to 5434.'), subject: 'db-port' });
+    expect(replacement.replaced).toBe('old-port');
+    expect(memory.get(A, 'old-port')).toBeUndefined(); // Deleted, not shadowed.
+    expect(memory.get(A, 'new-port')?.subject).toBe('db-port');
+    expect(memory.list(A).map(fact => fact.name)).toEqual(['new-port']);
+  });
+  it('keeps at most one active fact per (workspace,subject) without touching other workspaces', () => {
+    memory.remember(A, { ...input('a-fact'), subject: 'topic' });
+    memory.remember(B, { ...input('b-fact'), subject: 'topic' });
+    memory.remember(A, { ...input('a-newer'), subject: 'topic' });
+    expect(memory.list(A).map(fact => fact.name)).toEqual(['a-newer']);
+    expect(memory.list(B).map(fact => fact.name)).toEqual(['b-fact']); // B untouched.
+  });
+  it('re-remembering the same name under the same subject updates in place with no replacement note', () => {
+    memory.remember(A, { ...input('stable', 'v1'), subject: 'topic' });
+    const updated = memory.remember(A, { ...input('stable', 'v2'), subject: 'topic' });
+    expect(updated.replaced).toBeUndefined();
+    expect(updated.body).toBe('v2');
+    expect(memory.list(A)).toHaveLength(1);
+  });
+  it('re-remembering without a subject clears the key; invalid subjects are rejected', () => {
+    memory.remember(A, { ...input('keyed'), subject: 'topic' });
+    expect(memory.remember(A, input('keyed')).subject).toBeUndefined();
+    expect(memory.get(A, 'keyed')?.subject).toBeUndefined();
+    // The subject slot is now free: a new subject-keyed fact does not replace 'keyed'.
+    memory.remember(A, { ...input('other'), subject: 'topic' });
+    expect(memory.list(A)).toHaveLength(2);
+    for (const subject of ['', 'Bad Subject', 'UPPER', 'x'.repeat(65)]) expect(() => memory.remember(A, { ...input('nope'), subject })).toThrow(/subject/);
+  });
+  it('migrates a pre-5.4 table in place: rows created without the columns pin and key correctly', () => {
+    // Simulate an old database: drop the new columns, seed a legacy row, reopen.
+    store.db.exec('DROP TABLE memory_facts');
+    store.db.exec(`CREATE TABLE memory_facts (id TEXT PRIMARY KEY, workspace TEXT NOT NULL, name TEXT NOT NULL, description TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, UNIQUE(workspace,name))`);
+    store.db.prepare('INSERT INTO memory_facts(id,workspace,name,description,body,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run('legacy-id', A, 'legacy', 'Old fact', 'Old body', 1, 1);
+    memory = new Memory(store); // Constructor runs the guarded ALTERs.
+    expect(memory.get(A, 'legacy')).toMatchObject({ name: 'legacy', pinned: false });
+    expect(memory.setPinned(A, 'legacy', true).pinned).toBe(true);
+    expect(memory.remember(A, { ...input('successor'), subject: 'thing' }).subject).toBe('thing');
+    // Idempotent: constructing again over the migrated table must not throw.
+    expect(() => new Memory(store)).not.toThrow();
   });
 });
