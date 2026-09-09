@@ -12,16 +12,18 @@ import { modelCatalog } from './budget.js';
 import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
 import { validateRuleSet } from './permissions.js';
 import { validateHooks } from './hooks.js';
+import { validateSidecars } from './sidecars.js';
 import { planInstall, applyInstall, uninstall, publicPlan } from './plugins.js';
 import { PLUGIN_LIMITS } from '../shared/plugins.js';
 import { HOOK_LIMITS } from '../shared/hooks.js';
 import type { ProfileDetail } from '../shared/profiles.js';
 import { listFiles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
-import type { Message, Session, Settings } from '../shared/types.js';
+import { collectDiagnostics } from './doctor.js';
+import type { Message, Session, Settings, UsageReport, UsageTotals } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional(),advertise:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
-const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),hooks:z.unknown().optional(),trustedWorkspaces:z.array(z.string().min(1).max(4096)).max(HOOK_LIMITS.trustedWorkspaces).optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
+const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),hooks:z.unknown().optional(),sidecars:z.unknown().optional(),trustedWorkspaces:z.array(z.string().min(1).max(4096)).max(HOOK_LIMITS.trustedWorkspaces).optional(),notifications:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 // planner: the optional planning half of a planner+executor pair; null clears it.
 const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
@@ -66,6 +68,32 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/profiles',async(req,res)=>{const signal=requestSignal(res),root=await workspace(req.query.workspace);signal.throwIfAborted();res.json({...await readProfileCatalog(root,signal),workspace:root});});
   app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
   app.get('/api/health',(_req,res)=>res.json({ok:true,version:'0.1.0'}));
+  // 5.1 usage report. days is zod-clamped 1..90 (coerced from the query
+  // string); the store clamps again so no other caller can widen the scan.
+  // Token counts are provider-reported; no cost is computed (no rate card in v1).
+  app.get('/api/usage',(req,res)=>{
+    const days=z.coerce.number().catch(30).transform(value=>Math.min(Math.max(Math.trunc(value),1),90)).parse(req.query.days??30);
+    const rows=store.usageSummary({days});
+    const add=(totals:UsageTotals,row:{inputTokens:number;outputTokens:number;cachedTokens?:number;requests:number}):UsageTotals=>({inputTokens:totals.inputTokens+row.inputTokens,outputTokens:totals.outputTokens+row.outputTokens,requests:totals.requests+row.requests,
+      // cachedTokens stays absent until SOME entry reported one: an honest
+      // "providers did not say", never a fabricated 0.
+      ...(totals.cachedTokens!==undefined||row.cachedTokens!==undefined?{cachedTokens:(totals.cachedTokens??0)+(row.cachedTokens??0)}:{})});
+    const empty=():UsageTotals=>({inputTokens:0,outputTokens:0,requests:0});
+    const byDay=new Map<string,{day:string;entries:UsageReport['days'][number]['entries'];totals:UsageTotals}>();
+    let totals=empty();
+    for(const row of rows){
+      const bucket=byDay.get(row.day)??byDay.set(row.day,{day:row.day,entries:[],totals:empty()}).get(row.day)!;
+      bucket.entries.push({providerId:row.providerId,model:row.model,inputTokens:row.inputTokens,outputTokens:row.outputTokens,...(row.cachedTokens!==undefined?{cachedTokens:row.cachedTokens}:{}),requests:row.requests});
+      bucket.totals=add(bucket.totals,row);totals=add(totals,row);
+    }
+    res.json({days:[...byDay.values()],totals} satisfies UsageReport);
+  });
+  // 5.2 redacted diagnostics: hosts only, hasKey booleans, counts — never
+  // secrets, env values, full URLs, or message content (see server/doctor.ts).
+  app.get('/api/doctor',(_req,res)=>res.json(collectDiagnostics(store)));
+  // 5.2 repair v1: rebuild the derived search index. The only repair offered —
+  // it is safe because the index is fully derived; other repairs need design.
+  app.post('/api/doctor/reindex',(_req,res)=>res.json(runner.reindexSearch()));
   app.get('/api/settings',(_req,res)=>res.json(publicSettings()));
   app.patch('/api/settings',async(req,res)=>{
     const {expectedMcpConfigRevision,...parsed}=settingsSchema.parse(req.body);
@@ -74,6 +102,10 @@ export function createApp(options:AppOptions = {}) {
     // Hooks validate like permission rules (zod, strict, bounded): invalid
     // configuration is a 400, never partially persisted.
     if(patch.hooks!==undefined)patch.hooks=validateHooks(patch.hooks);
+    // Sidecars (design note 4.5) validate the same way: zod, strict, bounded,
+    // 400 on any violation, never partially persisted. Settings PATCH is the
+    // whole v1 surface — no dedicated routes.
+    if(patch.sidecars!==undefined)patch.sidecars=validateSidecars(patch.sidecars);
     if(patch.workspace)patch.workspace=await workspace(patch.workspace);
     if(patch.mcpServers&&expectedMcpConfigRevision!==undefined&&expectedMcpConfigRevision!==mcpConfigRevision())throw httpError(409,'Saved MCP configuration changed. Review it before saving your changes.');
     const current=store.settings(),providers=patch.providers||current.providers;

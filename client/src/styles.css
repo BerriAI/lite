@@ -409,6 +409,8 @@ summary::-webkit-details-marker { display: none; }
 .tool-card.working { border-color: color-mix(in srgb, var(--blue) 25%, var(--border)); }
 .tool-name { font-weight: 520; white-space: nowrap; }
 .tool-summary { color: var(--muted); font-size: 10px; min-width: 0; flex: 1; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; font-family: 'SFMono-Regular', Consolas, monospace; }
+/* Sidecar interception attribution (design note 4.5): interception is visible. */
+.tool-intercepted-tag { flex-shrink: 0; color: var(--muted); font-size: 9px; border: 1px solid var(--border); border-radius: 8px; padding: 1px 6px; white-space: nowrap; }
 .disclosure-chevron { color: var(--muted); transition: transform .15s; }
 .tool-card[open] .disclosure-chevron { transform: rotate(90deg); }
 .tool-body { padding: 10px 13px; border-top: 1px solid var(--border); background: var(--subtle); }
@@ -650,8 +652,8 @@ summary::-webkit-details-marker { display: none; }
 .mcp-config-review > .button { margin-top: 12px; font-size: 11px; }
 @media (max-width: 600px) { .mcp-cache-heading { flex-direction: column; }.mcp-cache-heading .button, .mcp-server-actions .button, .mcp-config-review .button { min-height: 38px; }.mcp-server { padding: 12px; }.mcp-server-status { flex-basis: 100%; margin-left: 24px; } }
 .memory-section { display: flex; flex-direction: column; gap: 11px; border: 1px solid var(--border); border-radius: 7px; padding: 12px; min-width: 0; }
-.form-stack label.memory-toggle { flex-direction: row; align-items: center; cursor: pointer; }
-.form-stack .memory-toggle input[type='checkbox'] { width: auto; accent-color: var(--blue); margin: 0; }
+.form-stack label.memory-toggle, .form-stack label.notifications-toggle { flex-direction: row; align-items: center; cursor: pointer; }
+.form-stack .memory-toggle input[type='checkbox'], .form-stack .notifications-toggle input[type='checkbox'] { width: auto; accent-color: var(--blue); margin: 0; }
 .memory-facts { list-style: none; padding: 0; margin: 0; display: grid; gap: 9px; min-width: 0; }
 .memory-fact { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; padding-left: 10px; border-left: 2px solid var(--border); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
 .memory-fact strong { font-size: 11px; font-weight: 600; color: var(--text); }

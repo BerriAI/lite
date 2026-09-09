@@ -13,14 +13,16 @@ const command = help ? 'help' : !raw.length || raw[0].startsWith('--') ? 'serve'
 const options = new Map();
 const positional = [];
 let base;
-const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills']);
-const booleanOptions = new Set(['--plan', '--build', '--auto', '--json']);
+const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills', '--days']);
+const booleanOptions = new Set(['--plan', '--build', '--auto', '--json', '--reindex']);
 const supported = {
   serve: new Set(['--port', '--workspace']),
   run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
   profiles: new Set(['--url', '--workspace', '--json']),
   sessions: new Set(['--url']), models: new Set(['--url', '--provider']), export: new Set(['--url']),
   plugin: new Set(['--url', '--workspace', '--json']),
+  usage: new Set(['--url', '--days', '--json']),
+  doctor: new Set(['--url', '--json', '--reindex']),
 };
 const pluginSubcommands = new Set(['plan', 'install', 'list', 'remove']);
 const option = (name, fallback) => options.get(name) ?? fallback;
@@ -52,6 +54,7 @@ function parse() {
     if (positional.length !== (wantsArgument ? 2 : 1) || (wantsArgument && !positional[1].trim())) throw new Error(usage);
   }
   if (!['run', 'export', 'plugin'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use lite --help.`);
+  if (command === 'usage' && options.has('--days') && (!/^\d+$/.test(option('--days')) || Number(option('--days')) < 1 || Number(option('--days')) > 90)) throw new Error('--days must be an integer between 1 and 90.');
   if (command === 'run' && options.has('--session')) {
     const override = ['--model', '--provider', '--profile', '--skills', '--plan', '--build', '--auto'].find(name => options.has(name));
     if (override) throw new Error(`${override} cannot be combined with --session. Change the existing session settings in Lite, or start a new session.`);
@@ -337,6 +340,52 @@ async function pluginCommand(subcommand, argument) {
   }
 }
 
+// Usage report (5.1): renders the server's day/provider/model aggregates.
+// Token counts are provider-reported; costs are NOT computed (no rate card in
+// v1), which the footer states plainly rather than guessing at prices.
+async function usageCommand() {
+  const days = option('--days', '30');
+  const data = await api(`/usage?days=${encodeURIComponent(days)}`);
+  if (options.has('--json')) { console.log(JSON.stringify(data)); return; }
+  if (!data.days?.length) { console.log(`No recorded usage in the last ${days} day${days === '1' ? '' : 's'}.`); return; }
+  const number = value => Number(value ?? 0).toLocaleString('en-US');
+  const anyCached = data.days.some(day => day.entries.some(entry => entry.cachedTokens !== undefined));
+  for (const day of data.days) {
+    console.log(`${terminalText(day.day)}`);
+    for (const entry of day.entries) console.log(`  ${terminalText(entry.providerId)}/${terminalText(entry.model)}  in ${number(entry.inputTokens)}  out ${number(entry.outputTokens)}${anyCached ? `  cached ${entry.cachedTokens !== undefined ? number(entry.cachedTokens) : '—'}` : ''}  req ${number(entry.requests)}`);
+    console.log(`  day total  in ${number(day.totals.inputTokens)}  out ${number(day.totals.outputTokens)}${anyCached ? `  cached ${day.totals.cachedTokens !== undefined ? number(day.totals.cachedTokens) : '—'}` : ''}  req ${number(day.totals.requests)}`);
+  }
+  console.log(`Total (${days} day${days === '1' ? '' : 's'}): in ${number(data.totals.inputTokens)}  out ${number(data.totals.outputTokens)}${data.totals.cachedTokens !== undefined ? `  cached ${number(data.totals.cachedTokens)}` : ''}  req ${number(data.totals.requests)}`);
+  console.log('Token counts are provider-reported. Costs are not computed (no rate card).');
+}
+
+// Doctor (5.2): prints the server's REDACTED diagnostics (hosts only, hasKey
+// booleans, counts). --reindex additionally rebuilds the derived search index.
+async function doctorCommand() {
+  const data = await api('/doctor');
+  if (options.has('--json') && !options.has('--reindex')) { console.log(JSON.stringify(data)); }
+  else if (!options.has('--json')) {
+    console.log(`Lite ${terminalText(data.version)}  node ${terminalText(data.node)}  ${terminalText(data.platform)}`);
+    const database = data.database;
+    console.log(`Database: ${terminalText(database.path)}${database.exists ? '' : '  (missing)'}`);
+    console.log(`  size ${Number(database.sizeBytes).toLocaleString('en-US')} bytes  sessions ${database.sessions}  messages ${database.messages}  integrity ${terminalText(database.integrity)}`);
+    console.log('Providers:');
+    if (!data.settings.providers.length) console.log('  None configured.');
+    for (const provider of data.settings.providers) console.log(`  ${terminalText(provider.id)}  ${terminalText(provider.kind)}  host ${terminalText(provider.host)}  key ${provider.hasKey ? 'configured' : 'none'}`);
+    console.log('MCP servers:');
+    if (!data.settings.mcpServers.length) console.log('  None configured.');
+    for (const server of data.settings.mcpServers) console.log(`  ${terminalText(server.name)}  (${terminalText(server.transport)})`);
+    console.log(`Settings: memory ${data.settings.memoryEnabled ? 'on' : 'off'}  hooks ${data.settings.hookCount}  sidecars ${data.settings.sidecarCount}  plugins ${data.settings.pluginCount}  permission rules ${data.settings.permissionRuleCount}`);
+    console.log(`Workspace: ${terminalText(data.workspace.path)}  ${data.workspace.exists ? 'exists' : 'MISSING'}${data.workspace.isGit ? '  git' : ''}`);
+    console.log('This report is redacted by construction: no keys, no env values, no full URLs, no message content.');
+  }
+  if (options.has('--reindex')) {
+    const result = await api('/doctor/reindex', {});
+    if (options.has('--json')) console.log(JSON.stringify({ doctor: data, reindex: result }));
+    else console.log(`Search index rebuilt: ${result.sessions} session${result.sessions === 1 ? '' : 's'}, ${result.parts} indexed part${result.parts === 1 ? '' : 's'}.`);
+  }
+}
+
 try {
   parse();
   if (command === 'help') console.log(`
@@ -352,6 +401,9 @@ try {
   lite plugin install <dir>    Install a local plugin package (plan + apply)
   lite plugin list             List installed plugins
   lite plugin remove <name>    Uninstall exactly the plugin's recorded items
+  lite usage               Provider-reported token usage by day and model
+  lite doctor              Redacted diagnostics report (add --reindex to
+                           rebuild the derived search index)
 
 Server: --port 3210, --workspace PATH
 Client: --url URL (or LITE_URL)
@@ -359,6 +411,9 @@ Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
         --profile ID, --skills ID,ID (or none)
 Models: --provider ID
 Profiles: --workspace PATH (default current directory), --json
+Usage:   --days N (1-90, default 30), --json. Token counts are provider-
+         reported; costs are not computed (no rate card).
+Doctor:  --json, --reindex (rebuild the search index; the only repair in v1)
 Plugin:  --workspace PATH (default current directory), --json
          Local directories only; clone git packages first. MCP servers install
          DISABLED; hooks stay behind workspace trust; conflicts are skipped.
@@ -395,6 +450,8 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     for (const model of data.models) console.log(`${model.id}  (${model.providerId})`);
   } else if (command === 'export') console.log(JSON.stringify(await api(`/sessions/${encodeURIComponent(positional[0])}/export`), null, 2));
   else if (command === 'plugin') await pluginCommand(positional[0], positional[1]);
+  else if (command === 'usage') await usageCommand();
+  else if (command === 'doctor') await doctorCommand();
 } catch (error) {
   console.error(`Lite: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with lite serve first.' : terminalText(error.message)}`);
   process.exitCode = process.exitCode || 1;

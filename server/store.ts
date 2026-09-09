@@ -6,7 +6,7 @@ import { completeToolBoundary } from './context.js';
 import type { ApplyProfileRequest } from '../shared/profiles.js';
 import type { ProfileSnapshot, ResolvedProfile } from './profiles.js';
 import { validateProfileSnapshot } from './profiles.js';
-import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider, QueueState, QueuedMessage, Attachment } from '../shared/types.js';
+import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider, QueueState, QueuedMessage, Attachment, UsageLogEntry, UsageSummaryRow } from '../shared/types.js';
 
 export class Store {
   readonly db: DatabaseSync;
@@ -38,7 +38,12 @@ export class Store {
         UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
       CREATE INDEX IF NOT EXISTS delegations_parent ON delegations(parent_session_id);
       CREATE TABLE IF NOT EXISTS tool_outputs (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, content BLOB NOT NULL, sha256 TEXT NOT NULL, created_at INTEGER NOT NULL);
-      CREATE INDEX IF NOT EXISTS tool_outputs_session ON tool_outputs(session_id, created_at);`);
+      CREATE INDEX IF NOT EXISTS tool_outputs_session ON tool_outputs(session_id, created_at);
+      -- Usage accounting (5.1). Deliberately NO foreign key to sessions: the
+      -- spend already happened, so deleting a session (or a researcher child
+      -- riding the cascade) must never erase its usage record.
+      CREATE TABLE IF NOT EXISTS usage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, day TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cached_tokens INTEGER, created_at INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS usage_log_day ON usage_log(day);`);
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
@@ -255,6 +260,31 @@ export class Store {
   event(event: RunEvent): RunEvent {
     const result = this.db.prepare('INSERT INTO events(session_id,data) VALUES(?,?)').run(event.sessionId, JSON.stringify(event));
     return { ...event, id: Number(result.lastInsertRowid) };
+  }
+  /** Append one provider-reported usage record (5.1). Day is UTC (YYYY-MM-DD)
+   * so the ledger is timezone-stable; cachedTokens stays NULL when the
+   * provider did not report it — never invented as 0. No session FK on
+   * purpose: spend outlives session deletion. Token counts are validated as
+   * non-negative integers so a malformed provider chunk cannot corrupt sums. */
+  logUsage(entry: UsageLogEntry): void {
+    const whole = (value: number) => { if (!Number.isSafeInteger(value) || value < 0) throw new Error('Usage token counts must be non-negative integers.'); return value; };
+    if (!entry.sessionId || !entry.providerId || !entry.model) throw new Error('Usage entries require sessionId, providerId, and model.');
+    const now = Date.now();
+    this.db.prepare('INSERT INTO usage_log(session_id,provider_id,model,day,input_tokens,output_tokens,cached_tokens,created_at) VALUES(?,?,?,?,?,?,?,?)')
+      .run(entry.sessionId, entry.providerId, entry.model, new Date(now).toISOString().slice(0, 10), whole(entry.inputTokens), whole(entry.outputTokens), entry.cachedTokens === undefined ? null : whole(entry.cachedTokens), now);
+  }
+  /** Day+provider+model aggregates for the last `days` UTC days (inclusive of
+   * today), newest day first. days is clamped to 1..90 here as well as at the
+   * API edge so no caller can request an unbounded scan. cachedTokens sums
+   * only reported values and is omitted when every request in a group lacked
+   * one — an honest "provider did not say", not a zero. */
+  usageSummary({ days = 30 }: { days?: number } = {}): UsageSummaryRow[] {
+    const window = Math.min(Math.max(Math.trunc(days) || 1, 1), 90);
+    const since = new Date(Date.now() - (window - 1) * 86_400_000).toISOString().slice(0, 10);
+    const rows = this.db.prepare(`SELECT day, provider_id, model, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+        SUM(cached_tokens) AS cached, COUNT(*) AS requests
+      FROM usage_log WHERE day>=? GROUP BY day, provider_id, model ORDER BY day DESC, provider_id, model`).all(since) as { day: string; provider_id: string; model: string; input: number; output: number; cached: number | null; requests: number }[];
+    return rows.map(row => ({ day: row.day, providerId: row.provider_id, model: row.model, inputTokens: Number(row.input), outputTokens: Number(row.output), ...(row.cached === null ? {} : { cachedTokens: Number(row.cached) }), requests: Number(row.requests) }));
   }
   queue(id: string): QueueState {
     this.session(id);

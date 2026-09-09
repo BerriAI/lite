@@ -23,6 +23,8 @@ import { History } from './history.js';
 import { Questions, questionTool } from './questions.js';
 import { Hooks, type CapturedHooks, type HookPayload } from './hooks.js';
 import { HOOK_LIMITS, type HookEvent } from '../shared/hooks.js';
+import { Sidecars, sidecarsArraySchema } from './sidecars.js';
+import { notify, type Spawner } from './notify.js';
 import type { ProfileSnapshot } from './profiles.js';
 import type { ExternalToolLease, ExternalTools } from './external.js';
 export type { ExternalTools } from './external.js';
@@ -81,6 +83,15 @@ export class Runner {
   // Lifecycle hook engine (design note 4.3). Public so tests can shorten the
   // timeout; configuration is read per-turn via captureHooks, never live.
   readonly hooks = new Hooks();
+  // Sidecar engine (design note 4.5). Public so tests can shorten the timeout.
+  // V1 DIVERGENCE from hooks, documented honestly: the sidecar SET resolves
+  // from CURRENT settings at each interception (not captured at acceptance)
+  // because sidecar processes are process-level and their respawn cadence
+  // crosses turns — pinning configs per turn while sharing one process pool
+  // would let a stale captured command respawn a process the user just
+  // reconfigured away. A mid-turn settings change therefore affects the NEXT
+  // interception; noted as a v1 limitation.
+  readonly sidecars = new Sidecars();
   constructor(readonly store: Store, readonly bus: EventBus, private external?: ExternalTools) { this.history=new History(store);this.delegations=new Delegations(store,this.history);this.questions=new Questions(store,bus); }
   private assertRoot(id:string) { if(this.delegations.isChild(id))throw conflict('Research transcripts are read-only. Use their parent task controls.'); }
   active(id: string) { return this.runs.has(id); }
@@ -182,6 +193,8 @@ export class Runner {
     // Background jobs are process-local and must not outlive the server; SIGTERM
     // them all without waiting (graceful shutdown has its own overall timeout).
     try {this.jobs.killAll();} catch {console.error('Could not signal background jobs during shutdown.');}
+    // Sidecar processes are equally process-local: kill without waiting.
+    try {this.sidecars.stopAll();} catch {console.error('Could not signal sidecar processes during shutdown.');}
     for(const controller of this.configurationPreparations.values())controller.abort();
     for(const controller of this.externalOperations)controller.abort();
     for (const id of new Set([...this.runs.keys(),...this.preparations.keys(),...this.queuePreparations.keys()])) {
@@ -489,6 +502,52 @@ export class Runner {
   }
   /** Best-effort removal of a deleted session's derived search rows. */
   removeFromSearchIndex(id: string) { try {this.searchIndex.remove(id);} catch {/* derived data; deletion already succeeded */} }
+  /** 5.2 repair: rebuild the derived search index by walking EVERY session row
+   * (root, archived, and researcher children alike) and force-reindexing each
+   * (delete+reinsert, so even a corrupt-but-fresh-looking FTS row set is
+   * replaced — indexAll's fingerprint skip would miss that case). Then one
+   * bounded indexAll sweep clears orphaned index rows whose session was
+   * deleted. Synchronous SQLite; counts are honest actuals. */
+  reindexSearch(): { sessions: number; parts: number } {
+    let sessions = 0, parts = 0;
+    for (const row of this.store.db.prepare('SELECT id FROM sessions ORDER BY rowid').all() as { id: string }[]) { const result = this.searchIndex.index(row.id); sessions++; parts += result.parts; }
+    for (let pass = 0; pass < 50 && !this.searchIndex.indexAll().done; pass++);
+    return { sessions, parts };
+  }
+  /** 5.3 OS notifications. Settings.notifications is read LIVE at each firing
+   * moment — a user preference about their desktop, deliberately NOT captured
+   * into the turn policy like rules/hooks, so flipping it mid-response applies
+   * immediately. Children never notify (their seals are internal machinery);
+   * failures never surface (notify itself is also best-effort). */
+  notifySpawner?: Spawner; // Injectable for tests; undefined = real execFile.
+  notifyMinTurnMs = 10_000; // Public so tests can shorten the slow-turn gate.
+  private notifyFinished(id: string, run: ActiveRun) {
+    try {
+      if (run.child || run.compacting || !run.turnId) return;
+      if (!this.store.settings().notifications) return;
+      // >10s gate: short turns are noise. Duration measured from the accepted
+      // user message (turn acceptance), not merely the last provider call.
+      const accepted = this.store.messages(id).find(message => message.id === run.turnId)?.createdAt;
+      if (accepted === undefined || Date.now() - accepted <= this.notifyMinTurnMs) return;
+      notify('Lite', `${this.store.session(id).title}: response finished`, this.notifySpawner);
+    } catch { /* advisory */ }
+  }
+  /** Deferred one microtask: both waiting sites set status FIRST and register
+   * the pending approval/question synchronously afterwards in the same tick,
+   * so by microtask time we can name what the user is being asked for. */
+  private notifyWaiting(id: string) {
+    queueMicrotask(() => {
+      try {
+        const run = this.runs.get(id);
+        if (!run || run.child || run.compacting) return;
+        if (this.store.session(id).status !== 'waiting') return; // already resolved
+        if (!this.store.settings().notifications) return;
+        const question = this.questions.pending(id).length > 0;
+        if (!question && !run.approvals.size) return;
+        notify('Lite', `${this.store.session(id).title}: ${question ? 'needs an answer' : 'needs your approval'}`, this.notifySpawner);
+      } catch { /* advisory */ }
+    });
+  }
   private finishRun(id: string, run: ActiveRun) {
     let succeeded=false;
     for(const pending of run.approvals.values())pending.resolve(false);
@@ -503,6 +562,10 @@ export class Runner {
       this.bus.emit(id,'history',history);
       const current=this.store.session(id);
       this.setSession(id,{status:current.status==='error'?'error':'idle'});
+      // 5.3(a): the seal-to-idle transition. Not on error (the error banner is
+      // the signal), not on cancel/shutdown (the user caused those). The >10s
+      // and live-settings gates live in notifyFinished.
+      if(current.status!=='error'&&!run.controller.signal.aborted&&!this.stopping)this.notifyFinished(id,run);
       succeeded=Boolean(run.completed&&!run.blocked&&!run.controller.signal.aborted&&current.status!=='error'&&!this.stopping);
       if(!succeeded)this.holdQueue(id,run.controller.signal.aborted?'Cancelled. Review and resume queued messages explicitly.':'Response stopped or encountered an error. Review before resuming queued messages.',false);
       this.bus.emit(id,'done',{status:this.store.session(id).status});
@@ -782,6 +845,56 @@ export class Runner {
     }
     return null;
   }
+  /** Sidecar interception gate (design note 4.5), the layer BETWEEN PreToolUse
+   * hooks and execution. Order: approval → PreToolUse hooks → sidecars →
+   * execute. WHY this order: hooks are cheap one-shot gates that port from
+   * other harnesses, so they keep first refusal; sidecars are the heavier
+   * long-lived layer and see only calls that survived every cheaper gate — and
+   * a sidecar must never see (or modify) a call the user or a hook already
+   * stopped.
+   *
+   * WHITELIST (v1): only read_file, write_file, edit_file, bash, glob, grep,
+   * web_fetch, todo_write are interceptable. Sidecars never see capability or
+   * mcp_ calls (lease identity complexities), task, ask_user, update_goal, or
+   * memory_* — and children never run sidecars (same hermetic posture as
+   * hooks). CRITICAL, documented deliberately: a 'modify' does NOT re-run
+   * approval — the user approved the tool + ORIGINAL args. v1 accepts this
+   * because the user installed the interceptor (install-time trust, like
+   * plugin packages), and the ToolCall.intercepted attribution keeps every
+   * modification auditable on the card and in the transcript. Modified args
+   * re-validate naturally: execution runs the same arg validation it always
+   * does and throws on bad args — an ordinary tool error, not a crash.
+   * First non-pass sidecar wins; the rest are not consulted (one attribution,
+   * no modify chains — deliberately small). Never throws; sidecar failures
+   * warn (via the deferred notice sink) and pass. Returns the denial output
+   * when blocked, else null (the call may have been modified in place). */
+  private static readonly SIDECAR_TOOLS = new Set(['read_file', 'write_file', 'edit_file', 'bash', 'glob', 'grep', 'web_fetch', 'todo_write']);
+  private async interceptToolCall(id: string, run: ActiveRun, call: ToolCall, sink: (content: string) => void): Promise<string | null> {
+    if (run.child || !Runner.SIDECAR_TOOLS.has(call.name)) return null;
+    // Live settings, not the turn capture — see the sidecars field note. The
+    // settings row is durable state, so revalidate defensively like hooks do.
+    const raw = this.store.settings().sidecars;
+    const parsed = sidecarsArraySchema.safeParse(raw ?? []);
+    if (!parsed.success) { if (raw !== undefined) sink('[Sidecar] Sidecars in Settings are invalid and were ignored for this call.'); return null; }
+    for (const config of parsed.data) {
+      if (!config.events.includes('tool_call')) continue;
+      try {
+        const decision = await this.sidecars.intercept(config, { sessionId: id, tool: call.name, args: call.args });
+        if (decision.action === 'pass') { if (decision.warn) sink(`[Sidecar ${config.name}] ${decision.warn}`); continue; }
+        if (decision.action === 'block') return `Blocked by sidecar ${config.name}: ${decision.reason}`;
+        // modify: execute the modified args, preserve the unmodified original
+        // in transcript metadata, attribute visibly on the activity card.
+        call.intercepted = { by: config.name, originalArgs: call.args, reason: decision.reason };
+        call.args = decision.args;
+        return null;
+      } catch (error) {
+        // Belt and braces: intercept() should never throw, but a sidecar
+        // failure must never fail the turn regardless.
+        try { sink(`[Sidecar ${config.name}] Sidecar failed: ${this.safeError(error, run)}`); } catch { console.error('Could not persist a sidecar failure notice.'); }
+      }
+    }
+    return null;
+  }
   /** Resolves a capability-gateway invocation to its underlying connected tool.
    * Shared by approve() and dispatch so the permission subject and the executed
    * call can never diverge. Returns null for list/inspect (no underlying call).
@@ -848,6 +961,10 @@ export class Runner {
     // identity (decide() grants pending.request.tool), never under 'capability'.
     const request: PermissionRequest = { id:randomUUID(),sessionId:session.id,toolCallId:call.id,tool:subject,args:subjectArgs,description:base+notes };
     this.setSession(session.id,{status:'waiting'});
+    // 5.3(b): the approval is registered synchronously in the Promise executor
+    // below, so the microtask-deferred check sees it (or sees the request
+    // already resolved and stays silent).
+    this.notifyWaiting(session.id);
     const approved = await new Promise<boolean>(resolve => {
       const abort = () => resolve(false);
       const cleanupResolve = (value: boolean) => { run.controller.signal.removeEventListener('abort',abort); resolve(value); };
@@ -1023,6 +1140,13 @@ export class Runner {
           else if (chunk.type === 'usage' && chunk.usage) {
             message.usage = {...chunk.usage,durationMs:Date.now()-startedAt};
             if(message.context?.cache)message.context.cache={...message.context.cache,inputTokens:chunk.usage.inputTokens,...(chunk.usage.cachedTokens!==undefined?{cachedTokens:chunk.usage.cachedTokens}:{})};
+            // 5.1 usage ledger: one row per provider-reported usage chunk,
+            // attributed to the RESOLVED turn pair (policy.provider +
+            // policy.session.model — the planner pair on plan turns).
+            // Children log too (their spend is real) under their own child
+            // session id, since `id` here IS the child session for child runs.
+            // Best-effort: accounting must never break a live stream.
+            try {this.store.logUsage({sessionId:id,providerId:provider.id,model:session.model,inputTokens:chunk.usage.inputTokens,outputTokens:chunk.usage.outputTokens,...(chunk.usage.cachedTokens!==undefined?{cachedTokens:chunk.usage.cachedTokens}:{})});} catch {/* advisory ledger */}
           }
           else if (chunk.type === 'metadata' && chunk.metadata) message.providerMetadata = {...message.providerMetadata,...chunk.metadata};
           else if (chunk.type === 'tool' && chunk.tool) {
@@ -1117,6 +1241,9 @@ export class Runner {
           else if (call.name === 'ask_user') {
             this.setSession(id,{status:'waiting'});
             const waiting=this.questions.ask(id,run.turnId!,message.id,call.id,call.args,signal);
+            // 5.3(b): questions.ask registered the durable pending row
+            // synchronously above, so the deferred check finds it.
+            this.notifyWaiting(id);
             questionStarted=true;
             const settlement=await waiting;
             // Settlement already persisted this assistant and exactly one result.
@@ -1144,6 +1271,18 @@ export class Runner {
           }
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else if (!(await preToolVeto())) {
+            // Sidecar interception (design note 4.5): AFTER approval and AFTER
+            // PreToolUse hooks — cheap one-shot gates decide first; the heavier
+            // long-lived layer only sees calls every cheaper gate allowed. A
+            // 'modify' rewrites call.args in place (original preserved in
+            // call.intercepted) and does NOT re-run approval: the user approved
+            // the tool + original args, and v1 accepts the gap because the user
+            // installed the interceptor (install-time trust) and the
+            // attribution keeps it auditable. Modified args re-validate on the
+            // normal execution path below (bad args throw an ordinary error).
+            const sidecarBlock = await this.interceptToolCall(id, run, call, content => hookNotices.push(content));
+            if (sidecarBlock !== null) { call.status = 'denied'; output = sidecarBlock; }
+            else {
             call.status='running';call.startedAt=Date.now();executed=true;this.bus.emit(id,'tool',{messageId:message.id,tool:call});this.persist(message);
             output = call.name==='update_goal' ? this.executeUpdateGoal(id,run,call.args) : call.name==='history_search' ? this.executeHistorySearch(id,call.args) : call.name==='tool_output_page' ? executeToolOutputPage(this.store,id,call.args) : call.name==='bash_output' ? await executeBashOutput(this.jobs,id,call.args) : call.name==='kill_shell' ? await executeKillShell(this.jobs,id,call.args) : call.name==='wait' ? await executeWait(this.jobs,id,call.args) : call.name==='bash'&&call.args.run_in_background===true ? await this.startBackgroundJob(session.workspace,id,call.args) : call.name.startsWith('memory_') ? this.executeMemory(session.workspace,call.name,call.args) : call.name==='capability' ? await this.executeCapability(run,call.args,signal) : call.name.startsWith('mcp_') ? await run.external!.execute(call.name,call.args,signal) : await executeTool(call.name,call.args,{
               workspace:session.workspace,sessionId:id,signal,
@@ -1155,6 +1294,7 @@ export class Runner {
               callId:call.id,
             });
             call.status='completed';
+            }
           }
         } catch (error) {
           // A durable question may be unresolved after cancellation storage failure,

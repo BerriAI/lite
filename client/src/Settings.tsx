@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Trash2, Unplug, X } from 'lucide-react';
-import type { McpServerConfig, Provider, Settings as SettingsType } from '../../shared/types';
+import { Activity, ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Trash2, Unplug, X } from 'lucide-react';
+import type { McpServerConfig, Provider, Settings as SettingsType, UsageReport } from '../../shared/types';
 import type { PermissionDecision, PermissionRuleSet } from '../../shared/permissions';
 import { PERMISSION_LIMITS } from '../../shared/permissions';
 import { api, errorMessage, patch, post, query } from './api';
@@ -56,7 +56,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
   const [ruleRows, setRuleRows] = useState(() => ruleRowsFor(settings.permissionRules));
   const rulesTouched = useRef(false);
   const saving = useRef(false);
-  const [tab, setTab] = useState<'providers' | 'general' | 'permissions' | 'integrations'>('providers');
+  const [tab, setTab] = useState<'providers' | 'general' | 'permissions' | 'integrations' | 'usage'>('providers');
   const [selected, setSelected] = useState(settings.defaultProvider || settings.providers[0]?.id || '');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -88,6 +88,16 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
   const [memoryBusy, setMemoryBusy] = useState('');
   const memoryTouched = useRef(false);
   const memoryRead = useRef(0);
+  // Notifications mirror the memory-toggle contract: only sent on save when
+  // the user actually touched the checkbox, so an unrelated save never
+  // overwrites a concurrent change.
+  const notificationsTouched = useRef(false);
+  // Usage tab: read-only report fetched when the tab opens (5.1).
+  const [usage, setUsage] = useState<UsageReport | null>(null);
+  const [usageDays, setUsageDays] = useState(30);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageError, setUsageError] = useState('');
+  const usageRead = useRef(0);
   const memoryWorkspace = draft.workspace.trim();
   const memoryWorkspaceRef = useRef(memoryWorkspace); memoryWorkspaceRef.current = memoryWorkspace;
   const initialMcp = useRef(JSON.stringify(settings.mcpServers, null, 2));
@@ -153,6 +163,23 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
     void refreshMemory(memoryWorkspace);
     return () => { memoryRead.current++; };
   }, [tab, memoryWorkspace, refreshMemory]);
+  useEffect(() => {
+    usageRead.current++;
+    if (tab !== 'usage') return;
+    const request = ++usageRead.current;
+    setUsageLoading(true); setUsageError('');
+    void (async () => {
+      try {
+        const value = await api<UsageReport>(`/usage?${query({ days: String(usageDays) })}`);
+        if (alive.current && usageRead.current === request) setUsage(value);
+      } catch (e) {
+        if (alive.current && usageRead.current === request) { setUsage(null); setUsageError(`Could not read recorded usage: ${errorMessage(e)}`); }
+      } finally {
+        if (alive.current && usageRead.current === request) setUsageLoading(false);
+      }
+    })();
+    return () => { usageRead.current++; };
+  }, [tab, usageDays]);
   async function forgetFact(name: string) {
     if (memoryBusy) return;
     const workspace = memoryWorkspaceRef.current;
@@ -231,7 +258,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       if (!draft.providers.some(p => p.id === draft.defaultProvider)) throw new Error('Choose a default provider.');
       const mcpChanged = mcp !== initialMcp.current;
       if (mcpChanged && !reviewedRevision.current) throw new Error('Review the saved MCP configuration before saving MCP changes.');
-      const { mcpServers: _mcp, mcpConfigRevision: _revision, permissionRules: _rules, memoryEnabled: _memory, ...values } = draft;
+      const { mcpServers: _mcp, mcpConfigRevision: _revision, permissionRules: _rules, memoryEnabled: _memory, notifications: _notifications, ...values } = draft;
       let permissionRules: PermissionRuleSet | undefined;
       if (rulesTouched.current) {
         try { permissionRules = parseRuleRows(ruleRows); } catch (error) { setTab('permissions'); throw error; }
@@ -242,7 +269,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         catch (error) { setSelected(p.id); setTab('providers'); throw error; }
         return { ...p, models: p.models?.filter(Boolean), ...(contextRows[p.id] !== undefined || p.contextWindows !== undefined ? { contextWindows } : {}) };
       });
-      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(memoryTouched.current ? { memoryEnabled: Boolean(draft.memoryEnabled) } : {}), ...(permissionRules !== undefined ? { permissionRules } : {}), ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
+      const saved = await patch<SettingsType>('/settings', { ...values, providers, ...(memoryTouched.current ? { memoryEnabled: Boolean(draft.memoryEnabled) } : {}), ...(notificationsTouched.current ? { notifications: Boolean(draft.notifications) } : {}), ...(permissionRules !== undefined ? { permissionRules } : {}), ...(mcpChanged ? { mcpServers, expectedMcpConfigRevision: reviewedRevision.current } : {}) });
       if (!alive.current) return saved;
       onSave(saved);
       if (mcpChanged) {
@@ -252,7 +279,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       // An unrelated save is not consent to adopt unseen changes to saved executable configuration.
       setDraft({ ...saved, mcpServers: savedMcp.current, mcpConfigRevision: reviewedRevision.current, providers: saved.providers.map(({ apiKey: _key, ...p }) => p) });
       setContextRows(contextRowsFor(saved.providers));
-      setRuleRows(ruleRowsFor(saved.permissionRules)); rulesTouched.current = false; memoryTouched.current = false;
+      setRuleRows(ruleRowsFor(saved.permissionRules)); rulesTouched.current = false; memoryTouched.current = false; notificationsTouched.current = false;
       if (close) onClose(); else { setNotice('Settings saved.'); void refreshMcp(true); }
       return saved;
     } catch (e) { if (alive.current) { setError(errorMessage(e)); void refreshMcp(true); } return null; }
@@ -290,6 +317,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
       <button className={tab === 'general' ? 'selected' : ''} onClick={() => setTab('general')}><Settings2 size={16} />Workspace</button>
       <button className={tab === 'permissions' ? 'selected' : ''} onClick={() => setTab('permissions')}><Shield size={16} />Permissions</button>
       <button className={tab === 'integrations' ? 'selected' : ''} onClick={() => setTab('integrations')}><Unplug size={16} />Integrations</button>
+      <button className={tab === 'usage' ? 'selected' : ''} onClick={() => setTab('usage')}><Activity size={16} />Usage</button>
       <div className="settings-note"><ShieldCheck size={17} /><p>Your keys stay on this local server. They are never returned to the browser.</p></div>
     </nav><div className="settings-content">
       {tab === 'providers' && <>
@@ -321,6 +349,8 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         <div className="form-columns"><label>Default provider<select value={draft.defaultProvider} onChange={e => setDraft(s => ({ ...s, defaultProvider: e.target.value }))}>{draft.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><label>Default model<input value={draft.defaultModel} onChange={e => setDraft(s => ({ ...s, defaultModel: e.target.value }))} /></label></div>
         <label>Permissions<select value={draft.permissionMode} onChange={e => setDraft(s => ({ ...s, permissionMode: e.target.value as SettingsType['permissionMode'] }))}><option value="ask">Ask before changes and commands</option><option value="auto">Allow changes and commands automatically</option></select><span className="field-hint">Automatic mode lets the agent modify files and execute shell commands without asking.</span></label>
         <div className="form-columns"><label>Maximum steps<input type="number" min="1" max="100" value={draft.maxSteps} onChange={e => setDraft(s => ({ ...s, maxSteps: Number(e.target.value) }))} /></label><label>Appearance<select value={draft.theme} onChange={e => setDraft(s => ({ ...s, theme: e.target.value as SettingsType['theme'] }))}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+        <label className="notifications-toggle"><input type="checkbox" checked={Boolean(draft.notifications)} disabled={busy} onChange={e => { notificationsTouched.current = true; setNotice(''); const notifications = e.target.checked; setDraft(s => ({ ...s, notifications })); }} />Notify when a response finishes or needs approval</label>
+        <p className="field-hint">Off by default. Uses your operating system’s notifications (macOS and Linux); only responses longer than 10 seconds notify on finish. Changes apply immediately, even to a running response.</p>
         <section className="memory-section" aria-label="Agent memory">
           <div className="mcp-cache-heading"><div><strong>Memory</strong><p>Recorded facts for the workspace above.</p></div><button className="button secondary" disabled={memoryLoading || busy || !memoryWorkspace} onClick={() => void refreshMemory(memoryWorkspace)}>Refresh facts</button></div>
           <label className="memory-toggle"><input type="checkbox" checked={Boolean(draft.memoryEnabled)} disabled={busy} onChange={e => { memoryTouched.current = true; setNotice(''); const memoryEnabled = e.target.checked; setDraft(s => ({ ...s, memoryEnabled })); }} />Enable agent memory</label>
@@ -380,6 +410,32 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
         <section className="mcp-config-review" aria-label="Review saved MCP configuration"><button className="text-button" disabled={busy || anyMcpAction || reviewLoading} onClick={() => void reviewMcp()}>{reviewLoading ? 'Loading saved configuration…' : 'Review saved MCP configuration'}</button>{mcpReview && <><p>Review the saved commands and endpoints below. Environment values stay masked; using this configuration accepts its saved environment too. This does not connect or retry a server.</p><pre aria-label="Saved MCP configuration preview">{JSON.stringify(mcpReview.servers, null, 2)}</pre>{mcpDirty && <p className="mcp-warning">Your MCP editor has unsaved changes. Copy them somewhere safe, then return the editor to its original content before using the reviewed configuration. Nothing will be discarded automatically.</p>}<button className="button secondary" disabled={busy || anyMcpAction || reviewLoading || mcpDirty} onClick={adoptMcpReview}>Use reviewed configuration</button></>}</section>
         <div className="quiet-callout"><ShieldCheck size={18} /><p>MCP commands are trusted executable code, not sandboxed configuration. Only connect servers you trust: tools can access resources outside this workspace. Cancelling a request does not guarantee a remote mutation stopped. This integration supports tools only, not OAuth, resources, or prompts; it never automatically retries a connection.</p></div>
       </div>}
+      {tab === 'usage' && (() => {
+        // cached column only when SOME entry reported one: absence is a
+        // provider that did not say, never a fabricated zero.
+        const anyCached = Boolean(usage?.days.some(day => day.entries.some(entry => entry.cachedTokens !== undefined)));
+        const format = (value?: number) => value === undefined ? '—' : value.toLocaleString('en-US');
+        return <div className="form-stack"><div className="section-heading"><div><h3>Where the tokens went.</h3><p>Provider-reported usage, grouped by day and model.</p></div></div>
+          <label>Window<select value={usageDays} disabled={usageLoading} onChange={e => setUsageDays(Number(e.target.value))}>{[7, 30, 90].map(value => <option key={value} value={value}>Last {value} days</option>)}</select></label>
+          {usageLoading && <p className="field-hint" role="status">Loading recorded usage…</p>}
+          {usageError && <div className="inline-alert" role="alert">{usageError}</div>}
+          {!usageLoading && !usageError && usage && usage.days.length === 0 && <div className="empty-state"><Activity size={25} /><strong>No recorded usage</strong><p>Usage is recorded from provider-reported token counts as responses stream. Send a message and check back.</p></div>}
+          {!usageLoading && !usageError && usage && usage.days.length > 0 && <>
+            {usage.days.map(day => <section key={day.day} aria-label={`Usage on ${day.day}`}>
+              <div className="mcp-cache-heading"><div><strong>{day.day}</strong></div></div>
+              <div className="markdown-table"><table>
+                <thead><tr><th>Provider / model</th><th>Input</th><th>Output</th>{anyCached && <th>Cached</th>}<th>Requests</th></tr></thead>
+                <tbody>
+                  {day.entries.map(entry => <tr key={`${entry.providerId}/${entry.model}`}><td><code>{entry.providerId}/{entry.model}</code></td><td>{format(entry.inputTokens)}</td><td>{format(entry.outputTokens)}</td>{anyCached && <td>{format(entry.cachedTokens)}</td>}<td>{format(entry.requests)}</td></tr>)}
+                  <tr><td><strong>Day total</strong></td><td><strong>{format(day.totals.inputTokens)}</strong></td><td><strong>{format(day.totals.outputTokens)}</strong></td>{anyCached && <td><strong>{format(day.totals.cachedTokens)}</strong></td>}<td><strong>{format(day.totals.requests)}</strong></td></tr>
+                </tbody>
+              </table></div>
+            </section>)}
+            <p className="field-hint"><strong>Total ({usageDays} days):</strong> {format(usage.totals.inputTokens)} in · {format(usage.totals.outputTokens)} out{usage.totals.cachedTokens !== undefined ? ` · ${format(usage.totals.cachedTokens)} cached` : ''} · {format(usage.totals.requests)} requests</p>
+          </>}
+          <div className="quiet-callout"><ShieldCheck size={18} /><p>Token counts are provider-reported, exactly as streamed back. Costs are not computed — there is no rate card in this version, and guessing prices would be dishonest. Researcher (child) usage is included; deleting a session keeps its usage record.</p></div>
+        </div>;
+      })()}
       {(busy || testing) && <SpeedRail compact active />}
       {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={14} /></button></div>}
       {notice && <p className="success-note" role="status"><Check size={15} />{notice}</p>}

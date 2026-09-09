@@ -1,6 +1,6 @@
 # Design note: lifecycle hooks, plugin packages, and sidecar extensions
 
-Status: proposed → implementing (4.3 → 4.4 → 4.5 in that order).
+Status: implemented (4.3, 4.4, 4.5).
 
 ## 4.3 Lifecycle hooks
 
@@ -14,6 +14,16 @@ Ordering with existing layers: permission rules and approval decide first; PreTo
 
 `lite plugin install <git-url|path>` (CLI) and Settings → Plugins (UI): a package is a directory with `lite-plugin.json` (`{name, version, description, skills?, commands?, mcpServers?, hooks?}`) whose entries are relative paths/config fragments. Install = **dry-run plan first** (exact list: which files land in `.lite/skills/`, `.lite/commands/`, which MCP servers and hooks would be added to settings with their commands visible), then explicit confirm. Provenance recorded per installed item (`installedBy: <plugin>@<version>`) so uninstall is exact. MCP servers from a plugin land **disabled** — connecting stays the explicit act it is today. Hooks from a plugin land under the same workspace-trust gate. Compatible manifests (`.claude-plugin/plugin.json`) are read where the shapes map.
 
-## 4.5 Sidecar extensions (deferred to after 4.4 ships)
+## 4.5 Sidecar extensions
 
-Out-of-process sidecars with tool-call interception get designed against the hook substrate: a sidecar is a long-lived hook with a JSON-RPC stream instead of one-shot exec. v1 of this note commits only to the constraint already agreed: interception must be **visible** — a modified call renders "modified by <plugin>" on the activity card, and the unmodified original is preserved in the transcript metadata. Full protocol design happens after hooks + packages prove the trust flow.
+Out-of-process sidecars with tool-call interception, designed against the hook substrate: a sidecar is a long-lived hook with a JSON-RPC stream instead of one-shot exec. The agreed constraint holds: interception must be **visible** — a modified call renders "modified by <name>" on the activity card, and the unmodified original is preserved in the transcript metadata (`ToolCall.intercepted = {by, originalArgs, reason}`). v1 is deliberately small — this is the last extensibility surface, not a platform.
+
+**Configuration** (`Settings.sidecars`, max 3): `{name: slug, command: <=1000 chars, events: ['tool_call']}`. App-level ONLY — a project-level sidecar would need the workspace-trust gate project hooks use; deferred. Settings PATCH is the whole surface (zod validated, 400 on violation); no dedicated routes. Installing a sidecar in Settings IS the authorization (install-time trust, like plugin packages).
+
+**Protocol**: per-config lazy spawn (`/bin/bash -c`, harness-credential-stripped environment, killed on shutdown), newline-delimited JSON-RPC 2.0 over stdio. On each intercepted call the host sends `{method:'tool_call', params:{sessionId, tool, args}}` and expects within 3s: `{result:{action:'pass'}}`, `{result:{action:'modify', args, reason<=200}}`, or `{result:{action:'block', reason<=200}}`. Timeout, malformed output, or a crash all resolve to **pass with a warn notice** — a broken sidecar never breaks the loop. A crashed sidecar respawns on next use, at most 3 times per server process, then is disabled with one notice for the process lifetime.
+
+**Interception point and order**: approval → PreToolUse hooks → sidecars → execute. Hooks are cheap one-shot gates that keep first refusal; sidecars are the heavier long-lived layer and only see calls every cheaper gate allowed. `block` → the call is denied with `Blocked by sidecar <name>: <reason>`. `modify` → the modified args execute (re-validated by the normal execution path — bad args throw an ordinary tool error) and the original is preserved. A `modify` does **not** re-run approval: the user approved the tool + original args; v1 accepts this because the user installed the interceptor, and the attribution keeps every modification auditable. First non-pass sidecar wins; no modify chains.
+
+**Whitelist (v1)**: only `read_file, write_file, edit_file, bash, glob, grep, web_fetch, todo_write` are interceptable. Sidecars never see `capability`/`mcp_*` calls (lease identity complexities), `task`, `ask_user`, `update_goal`, or `memory_*`. Children never run sidecars (same hermetic posture as hooks).
+
+**Capture divergence from hooks, documented honestly**: hooks are captured at turn acceptance; the sidecar set resolves from CURRENT settings at each interception, because sidecar processes are process-level and their respawn cadence crosses turns — pinning configs per turn over one shared process pool would let a stale captured command respawn a process the user just reconfigured away. A mid-turn settings change therefore affects the next interception; a v1 limitation.

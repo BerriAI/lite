@@ -17,6 +17,8 @@ import type { HookConfig } from './hooks.js';
 export type { HookConfig, HookEvent } from './hooks.js';
 import type { PluginRegistryEntry } from './plugins.js';
 export type { PluginRegistryEntry, PluginItem, InstallAction, InstallPlan, UninstallResult } from './plugins.js';
+import type { SidecarConfig } from './sidecars.js';
+export type { SidecarConfig, SidecarEvent } from './sidecars.js';
 
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
@@ -32,7 +34,15 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
   trustedWorkspaces?: string[];
   /** Installed plugin registry (design note 4.4): per-plugin provenance so
    * uninstall removes exactly the items an install recorded. */
-  plugins?: Record<string, PluginRegistryEntry>; }
+  plugins?: Record<string, PluginRegistryEntry>;
+  /** Sidecar extensions (design note 4.5): app-level ONLY in v1 — a project
+   * sidecar would need the workspace-trust gate project hooks use (deferred). */
+  sidecars?: SidecarConfig[];
+  /** OS notifications on turn seal / waiting-for-input. Default false (opt-in).
+   * Read LIVE at each notification moment, never captured into a turn policy:
+   * it is a preference about the user's desktop, not a property of the accepted
+   * turn, so flipping it mid-response takes effect immediately. */
+  notifications?: boolean; }
 /** advertise: true opts this server's tools back into DIRECT tool-array
  * advertisement (decode-time schemas, prefix churn on catalog change). Default
  * false routes them through the fixed-schema capability gateway so connect/
@@ -46,7 +56,12 @@ export interface Session { profile?: ActiveProfile; configRevision?: number; id:
    * this pair; Build turns run on the session providerId/model (the executor).
    * A model-routing decision only — workspace, permissions, and profile are shared. */
   planner?: { providerId: string; model: string }; }
-export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number; }
+export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
+  /** Sidecar interception attribution (design note 4.5): present iff a sidecar
+   * modified this call. `args` above are the MODIFIED (executed) arguments;
+   * the unmodified original is preserved here so the interception is auditable
+   * in the transcript and visibly attributed on the activity card. */
+  intercepted?: { by: string; originalArgs: Record<string,unknown>; reason: string }; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
 export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
   /** Host-computed end-of-turn evidence account. Only on the FINAL assistant message of a completed root turn; observation only, never persisted for children. */
@@ -63,3 +78,13 @@ export interface SessionDetail { delegations?: DelegationSummary[]; lastEventId?
 export interface RunEvent { id?: number; type: 'session' | 'delegation' | 'message' | 'delta' | 'reasoning' | 'tool' | 'permission' | 'permission_resolved' | 'question' | 'question_resolved' | 'todos' | 'reset' | 'queue' | 'history' | 'done' | 'error'; sessionId: string; data: any; }
 export interface ToolDefinition { type: 'function'; function: { name: string; description: string; parameters: Record<string,unknown> }; }
 export interface StreamChunk { type: 'text' | 'reasoning' | 'tool' | 'usage' | 'metadata'; metadata?: Record<string,unknown>; text?: string; tool?: { index: number; id?: string; name?: string; arguments?: string }; usage?: Usage; }
+/** One provider-reported usage record (5.1). Token counts are whatever the
+ * provider stream reported — Lite never estimates here, and no cost is
+ * computed (there is no rate card in v1; document, don't guess). cachedTokens
+ * is absent when the provider did not report it, never invented as 0. */
+export interface UsageLogEntry { sessionId: string; providerId: string; model: string; inputTokens: number; outputTokens: number; cachedTokens?: number; }
+/** One day+provider+model aggregate from usageSummary. */
+export interface UsageSummaryRow { day: string; providerId: string; model: string; inputTokens: number; outputTokens: number; cachedTokens?: number; requests: number; }
+export interface UsageTotals { inputTokens: number; outputTokens: number; cachedTokens?: number; requests: number; }
+/** GET /api/usage response: newest day first, entries grouped per provider+model. */
+export interface UsageReport { days: { day: string; entries: { providerId: string; model: string; inputTokens: number; outputTokens: number; cachedTokens?: number; requests: number }[]; totals: UsageTotals }[]; totals: UsageTotals; }
