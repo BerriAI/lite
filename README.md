@@ -34,6 +34,7 @@ npm start
 - Free context pruning before paid summarization: stale tool outputs shrink in the outbound request only, while the saved conversation stays complete; truncated tool results keep a hash receipt and can be read back losslessly with `tool_output_page`.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
+- Background shell jobs: the agent can start a command with `run_in_background`, keep working, poll or stop it, and it learns of finished jobs automatically on your next message — with the same approval rules as any foreground command.
 - Persistent sessions, search, rename/archive/delete, conversation forks, JSON import/export, and manual context compaction with archived original history.
 - Cross-session history search — a read-only `history_search` tool over every saved local conversation, with honest zero-result reporting. See [history search](docs/search.md).
 - Optional agent memory (off by default) — durable low-authority workspace facts with remember/forget/recall tools, bounded automatic recall, and a Settings fact browser. See [agent memory](docs/memory.md).

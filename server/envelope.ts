@@ -12,6 +12,9 @@ export interface EnvelopeSections {
   posture: string;
   /** Rendered low-authority background memory block, or ''. */
   memory: string;
+  /** One-line notice of background jobs that finished since the last turn, or
+   * omitted/''. Rendered last so it never disturbs the stable prefix. */
+  jobs?: string;
 }
 
 const OPEN = '<session-context version="1">';
@@ -26,6 +29,7 @@ export function renderEnvelope(sections: EnvelopeSections): string {
     sections.posture.trim() && `## Posture\n${sections.posture.trim()}`,
     sections.runtime.trim() && `## Runtime\n${sections.runtime.trim()}`,
     sections.memory.trim() && `## Background memory\n${sections.memory.trim()}`,
+    sections.jobs?.trim() && `## Background jobs\n${sections.jobs.trim()}`,
   ].filter(Boolean);
   if (!parts.length) return '';
   const body = `${PREAMBLE}\n\n${parts.join('\n\n')}`;

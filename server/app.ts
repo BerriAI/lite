@@ -112,7 +112,7 @@ export function createApp(options:AppOptions = {}) {
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
-  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),delegations:runner.delegations.list(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
+  app.get('/api/sessions/:id',(req,res)=>res.json({session:store.session(req.params.id),messages:runner.messages(req.params.id),todos:store.todos(req.params.id),permissions:runner.permissions(req.params.id),questions:runner.questions.pending(req.params.id),queue:store.queue(req.params.id),history:runner.history.state(req.params.id),delegations:runner.delegations.list(req.params.id),jobs:runner.jobs.list(req.params.id),lastEventId:store.latestEventId(req.params.id)}));
   app.get('/api/sessions/:id/delegations',(req,res)=>res.json({delegations:runner.delegations.list(req.params.id)}));
   app.get('/api/sessions/:id/delegations/:delegationId',(req,res)=>{
     const detail=runner.delegations.transcript(req.params.id,req.params.delegationId);
@@ -148,7 +148,7 @@ export function createApp(options:AppOptions = {}) {
     checkProvider(patch.providerId);const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
     if(configChange)publishConfiguration(req.params.id);res.json(session);
   });
-  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
+  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);runner.jobs.killSession(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
   const memory=new Memory(store);
   const memoryWorkspace=(value:unknown)=>{const workspace=queryString(value);if(!workspace.trim())throw httpError(400,'workspace is required.');return workspace;};
   app.get('/api/memory',(req,res)=>res.json({facts:memory.list(memoryWorkspace(req.query.workspace))}));

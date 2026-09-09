@@ -29,7 +29,8 @@ export interface FileEntry { name: string; path: string; type: 'file' | 'directo
 export interface FileChange { path: string; before: string | null; after: string | null; }
 export interface QueuedMessage { id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }
 export interface QueueState { items: QueuedMessage[]; paused: boolean; reason?: string; manualPause?: boolean; }
-export interface SessionDetail { delegations?: DelegationSummary[]; lastEventId?: number; session: Session; messages: Message[]; todos: Todo[]; permissions: PermissionRequest[]; questions?: QuestionRequest[]; queue?: QueueState; history?: HistoryState; }
+export interface BackgroundJob { id: string; command: string; status: 'running' | 'exited' | 'killed' | 'failed'; pid?: number; startedAt: number; endedAt?: number; exitCode?: number; signal?: string; timedOut: boolean; truncated: boolean; }
+export interface SessionDetail { delegations?: DelegationSummary[]; lastEventId?: number; session: Session; messages: Message[]; todos: Todo[]; permissions: PermissionRequest[]; questions?: QuestionRequest[]; queue?: QueueState; history?: HistoryState; jobs?: BackgroundJob[]; }
 export interface RunEvent { id?: number; type: 'session' | 'delegation' | 'message' | 'delta' | 'reasoning' | 'tool' | 'permission' | 'permission_resolved' | 'question' | 'question_resolved' | 'todos' | 'reset' | 'queue' | 'history' | 'done' | 'error'; sessionId: string; data: any; }
 export interface ToolDefinition { type: 'function'; function: { name: string; description: string; parameters: Record<string,unknown> }; }
 export interface StreamChunk { type: 'text' | 'reasoning' | 'tool' | 'usage' | 'metadata'; metadata?: Record<string,unknown>; text?: string; tool?: { index: number; id?: string; name?: string; arguments?: string }; usage?: Usage; }

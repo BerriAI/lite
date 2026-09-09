@@ -30,4 +30,12 @@ describe('session-context envelope', () => {
     const stablePrefixLength = without.indexOf('\n\nDigest:');
     expect(withMemory.startsWith(without.slice(0, stablePrefixLength))).toBe(true);
   });
+  it('renders an optional background-jobs section last and omits it when absent', () => {
+    expect(renderEnvelope(sections)).not.toContain('## Background jobs');
+    const withJobs = renderEnvelope({ ...sections, jobs: 'Background jobs finished since the last turn: job-1 (exit 0, 3s).' });
+    expect(withJobs).toContain('## Background jobs');
+    expect(withJobs).toContain('job-1 (exit 0, 3s)');
+    // Jobs render after runtime so the stable prefix is undisturbed.
+    expect(withJobs.indexOf('## Background jobs')).toBeGreaterThan(withJobs.indexOf('## Runtime'));
+  });
 });
