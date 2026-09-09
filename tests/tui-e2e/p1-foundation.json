@@ -1,0 +1,54 @@
+[
+  {
+    "note": "Phase 1 renderer foundation: open a session, stream a reply live, quit cleanly."
+  },
+  {
+    "wait": "fixture/test-model",
+    "note": "status line shows the session provider/model"
+  },
+  {
+    "wait": "Type a message",
+    "note": "composer placeholder rendered"
+  },
+  {
+    "send": "hi there",
+    "note": "type a prompt"
+  },
+  {
+    "sleep": 300
+  },
+  {
+    "send": "\r",
+    "note": "submit with Enter"
+  },
+  {
+    "wait": "working",
+    "note": "status flips to working while the run streams"
+  },
+  {
+    "wait": "Hello from Lite",
+    "note": "assistant reply streamed into the transcript"
+  },
+  {
+    "wait": "const answer = 42",
+    "note": "full fenced code block arrived"
+  },
+  {
+    "wait": "idle",
+    "note": "status returns to idle after the run"
+  },
+  {
+    "send": "/quit",
+    "note": "quit command"
+  },
+  {
+    "sleep": 200
+  },
+  {
+    "send": "\r"
+  },
+  {
+    "expectExit": 0,
+    "note": "clean shutdown"
+  }
+]

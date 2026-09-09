@@ -6,5 +6,5 @@
     "resolveJsonModule": true, "allowImportingTsExtensions": true, "noEmit": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["server", "client", "shared", "tests", "scripts", "tui", "*.ts"]
+  "include": ["server", "client", "shared", "tests", "scripts", "tui", "tui2", "*.ts"]
 }
