@@ -215,10 +215,14 @@ describe('provider protocol', () => {
       { id: 'duplicate', context_window: 32768 }, { id: 'duplicate', context_window: 65536 },
       { id: 12, name: {} }, { id: ' leading' }, { id: 'bad' + String.fromCharCode(27) + '[2J' },
       { slug: 'slug-model', display_name: 'bad' + String.fromCharCode(0x202e) + 'label', context_window: 1024 },
+      { id: 'input-cap', max_input_tokens: 200000, max_output_tokens: 64000 },
+      { id: 'bad-input-cap', max_input_tokens: '200000' },
+      { id: 'dup-input', max_input_tokens: 200000 }, { id: 'dup-input', max_input_tokens: 100000 },
     ] })); });
     const models = await listModels({ ...provider(base), models: ['explicit', ' invalid'] });
-    expect(models.map(model => model.id)).toEqual(['duplicate', 'explicit', 'fraction', 'negative', 'slug-model', 'string', 'tiny', 'too-large', 'valid']);
-    expect(models.filter(model => model.contextWindow !== undefined)).toEqual([
+    expect(models.map(model => model.id)).toEqual(['bad-input-cap', 'dup-input', 'duplicate', 'explicit', 'fraction', 'input-cap', 'negative', 'slug-model', 'string', 'tiny', 'too-large', 'valid']);
+    expect(models.filter(model => model.contextWindow !== undefined || model.maxInputTokens !== undefined)).toEqual([
+      { id: 'input-cap', name: 'input-cap', providerId: 'test', maxInputTokens: 200000 },
       { id: 'slug-model', name: 'slug-model', providerId: 'test', contextWindow: 1024 },
       { id: 'valid', name: 'valid', providerId: 'test', contextWindow: 32768 },
     ]);

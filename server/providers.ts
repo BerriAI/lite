@@ -526,12 +526,15 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
     if (seen.has(id)) {
       // Ambiguous duplicate metadata is not authoritative for budgeting.
       const previous = models.find(model => model.id === id);
-      if (previous) delete previous.contextWindow;
+      if (previous) { delete previous.contextWindow; delete previous.maxInputTokens; }
       continue;
     }
     seen.add(id);
     models.push({ id, name: validName(value.display_name) ? value.display_name : validName(value.name) ? value.name : id, providerId: provider.id,
       ...(validContextWindow(value.context_window) ? { contextWindow: value.context_window } : {}),
+      // LiteLLM gateways publish max_input_tokens rather than context_window.
+      // Kept as a separate field: an input cap is not a total context window.
+      ...(validContextWindow(value.max_input_tokens) ? { maxInputTokens: value.max_input_tokens } : {}),
     });
   }
   for (const id of provider.models || []) if (validName(id) && !models.some(m => m.id === id)) models.push({ id, name: id, providerId: provider.id });

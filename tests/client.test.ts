@@ -587,6 +587,14 @@ describe('saved context estimate', () => {
     expect(indicator.querySelector('meter,progress,[role="progressbar"]')).toBeNull();
   });
 
+  it('labels an input-only catalog cap distinctly instead of claiming a total window', async () => {
+    await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot({ contextWindow: 200_000, limitSource: 'catalog-input' }) })));
+    const indicator = element('.context-estimate');
+    expect(indicator.textContent).toContain('200,000 tokens · input limit');
+    expect(indicator.textContent).toContain('Model catalog · input limit (max_input_tokens)');
+    expect(indicator.querySelector('summary')?.textContent).not.toContain('limit unknown');
+  });
+
   it.each([undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY])('reports unknown limit honestly for %s', async contextWindow => {
     await act(async () => root().render(createElement(ContextIndicator, { context: contextSnapshot({ contextWindow, limitSource: 'catalog' }) })));
     expect(element('.context-estimate > summary').textContent).toContain('limit unknown');

@@ -7,7 +7,7 @@ export interface ContextSnapshot {
   contextWindow?: number;
   /** Native Anthropic request cap; an advisory reservation for other adapters. */
   outputReserve: number;
-  limitSource: 'override' | 'catalog' | 'unknown';
+  limitSource: 'override' | 'catalog' | 'catalog-input' | 'unknown';
   /** Images, opaque replay state, unsupported data, or bounded estimation omitted input. */
   uncertain: boolean;
   action: 'continue' | 'compact';

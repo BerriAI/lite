@@ -35,31 +35,37 @@ function providerIdentity(provider: Provider): string {
 }
 /** A bounded in-memory observation cache. Only successful explicit model discovery
  * populates it; get never fetches, falls back by model name, or refreshes its TTL. */
+export interface CatalogLimit { contextWindow?: number; maxInputTokens?: number; }
 export class ModelCatalogCache {
-  private entries = new Map<string, { identity: string; createdAt: number; windows: Map<string, number> }>();
+  private entries = new Map<string, { identity: string; createdAt: number; limits: Map<string, CatalogLimit> }>();
   constructor(private now: () => number = () => Date.now()) {}
   remember(provider: Provider, models: readonly Model[]): void {
-    const windows = new Map<string, number>();
+    const limits = new Map<string, CatalogLimit>();
     const seen = new Set<string>();
     for (const model of models.slice(0, BUDGET_LIMITS.catalogModels)) {
       if (model.providerId !== provider.id || typeof model.id !== 'string' || !model.id || model.id.length > 250) continue;
       // Conflicting duplicate catalog rows are not an authoritative limit.
-      if (seen.has(model.id)) { windows.delete(model.id); continue; }
+      if (seen.has(model.id)) { limits.delete(model.id); continue; }
       seen.add(model.id);
-      if (validContextWindow(model.contextWindow)) windows.set(model.id, model.contextWindow);
+      const limit: CatalogLimit = {
+        ...(validContextWindow(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
+        ...(validContextWindow(model.maxInputTokens) ? { maxInputTokens: model.maxInputTokens } : {}),
+      };
+      if (limit.contextWindow !== undefined || limit.maxInputTokens !== undefined) limits.set(model.id, limit);
     }
     this.entries.delete(provider.id);
-    this.entries.set(provider.id, { identity: providerIdentity(provider), createdAt: this.now(), windows });
+    this.entries.set(provider.id, { identity: providerIdentity(provider), createdAt: this.now(), limits });
     while (this.entries.size > BUDGET_LIMITS.catalogProviders) this.entries.delete(this.entries.keys().next().value!);
   }
-  get(provider: Provider, model: string): number | undefined {
+  get(provider: Provider, model: string): number | undefined { return this.getLimit(provider, model)?.contextWindow; }
+  getLimit(provider: Provider, model: string): CatalogLimit | undefined {
     const entry = this.entries.get(provider.id);
     if (!entry) return undefined;
     const age = this.now() - entry.createdAt;
     if (entry.identity !== providerIdentity(provider) || age < 0 || age >= BUDGET_LIMITS.catalogTtlMs) {
       this.entries.delete(provider.id); return undefined;
     }
-    return entry.windows.get(model);
+    return entry.limits.get(model);
   }
   clear(providerId?: string): void { if (providerId === undefined) this.entries.clear(); else this.entries.delete(providerId); }
 }
@@ -67,9 +73,14 @@ export const modelCatalog = new ModelCatalogCache();
 
 export function resolveContextBudget(provider: Provider, model: string, cache = modelCatalog): ContextBudget {
   const override = provider.contextWindows && Object.hasOwn(provider.contextWindows, model) ? provider.contextWindows[model] : undefined;
-  const catalog = validContextWindow(override) ? undefined : cache.get(provider, model);
+  const limit = validContextWindow(override) ? undefined : cache.getLimit(provider, model);
+  // An input-only cap (LiteLLM max_input_tokens) is a valid comparand for this
+  // budget — the estimate measures input tokens — but it is never presented as
+  // a total context window: the distinct limitSource keeps the label honest,
+  // and the shared reserve arithmetic below stays conservative against it.
+  const catalog = limit?.contextWindow ?? limit?.maxInputTokens;
   const contextWindow = validContextWindow(override) ? override : catalog;
-  const limitSource = validContextWindow(override) ? 'override' : catalog !== undefined ? 'catalog' : 'unknown';
+  const limitSource = validContextWindow(override) ? 'override' : limit?.contextWindow !== undefined ? 'catalog' : limit?.maxInputTokens !== undefined ? 'catalog-input' : 'unknown';
   // Anthropic currently sends max_tokens:8192. Other adapters have no enforced
   // output cap; this is only a bounded advisory reserve, never a request rejection.
   const outputReserve = provider.kind === 'anthropic' ? 8192 : contextWindow === undefined ? 4096 : Math.min(4096, Math.floor(contextWindow / 4));

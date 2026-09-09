@@ -26,6 +26,20 @@ describe('scoped context window limits', () => {
     const inherited = Object.create({ model: 99_000 });
     expect(resolveContextBudget({ ...provider, contextWindows: inherited }, 'model', new ModelCatalogCache()).limitSource).toBe('unknown');
   });
+  it('budgets against an input-only catalog cap with a distinct honest source', () => {
+    const cache = new ModelCatalogCache();
+    cache.remember(provider, [
+      { id: 'input-only', name: 'Input only', providerId: provider.id, maxInputTokens: 200_000 },
+      { id: 'both', name: 'Both', providerId: provider.id, contextWindow: 128_000, maxInputTokens: 100_000 },
+      { id: 'invalid-input', name: 'Invalid', providerId: provider.id, maxInputTokens: 1023 },
+    ]);
+    expect(resolveContextBudget(provider, 'input-only', cache)).toEqual({ contextWindow: 200_000, outputReserve: 4096, limitSource: 'catalog-input' });
+    // A real total window outranks the input cap for the same model.
+    expect(resolveContextBudget(provider, 'both', cache)).toEqual({ contextWindow: 128_000, outputReserve: 4096, limitSource: 'catalog' });
+    expect(resolveContextBudget(provider, 'invalid-input', cache).limitSource).toBe('unknown');
+    // Explicit override still wins over any catalog metadata.
+    expect(resolveContextBudget({ ...provider, contextWindows: { 'input-only': 64_000 } }, 'input-only', cache)).toEqual({ contextWindow: 64_000, outputReserve: 4096, limitSource: 'override' });
+  });
   it.each([
     { name: 'Renamed' }, { kind: 'codex' as const }, { baseUrl: 'https://other.example/v1' }, { apiKey: 'synthetic-changed' }, { models: ['model'] }, { contextWindows: { other: 32_000 } },
   ])('invalidates catalog on exact provider configuration change %j', patch => {
