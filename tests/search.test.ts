@@ -57,6 +57,14 @@ describe('cross-session history search', () => {
     expect(scoped.length).toBeGreaterThan(0); expect(scoped.every(hit => hit.sessionId === b.session.id)).toBe(true);
     expect(search.search({ query: 'flumoxide', toolName: 'nonexistent' }).hits).toEqual([]);
   });
+  it('excludes the searching session so a query never matches its own request, unless session_id names it', () => {
+    const a = fixture(), b = fixture(); search.index(a.session.id); search.index(b.session.id);
+    const excluded = search.search({ query: 'flumoxide', excludeSessionId: a.session.id }).hits;
+    expect(excluded.length).toBeGreaterThan(0); expect(excluded.every(hit => hit.sessionId === b.session.id)).toBe(true);
+    // Explicitly scoping to the excluded session overrides the exclusion.
+    const self = search.search({ query: 'flumoxide', sessionId: a.session.id, excludeSessionId: a.session.id }).hits;
+    expect(self.length).toBeGreaterThan(0); expect(self.every(hit => hit.sessionId === a.session.id)).toBe(true);
+  });
   it('drops stale hits after a compaction-style rewrite, immediately and after reindex', () => {
     const { session } = fixture(); search.index(session.id);
     expect(search.search({ query: 'flumoxide' }).hits.length).toBeGreaterThan(0);

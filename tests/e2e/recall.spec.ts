@@ -101,6 +101,11 @@ test('the memory settings toggle and fact browser manage facts end to end', asyn
   await done(request, session);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const dialog = page.getByRole('dialog');
+  // The fact browser lives on the Workspace tab and lists facts for the
+  // workspace typed in the form ("the workspace above"), so open that tab and
+  // point it at this test's temp workspace first.
+  await dialog.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await dialog.getByLabel('Workspace path').fill(workspace);
   await expect(dialog.getByText('browser-fact')).toBeVisible();
   await dialog.getByRole('button', { name: 'Delete fact browser-fact', exact: true }).click();
   await expect(dialog.getByText('browser-fact')).toHaveCount(0);

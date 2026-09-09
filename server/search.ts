@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Message } from '../shared/types.js';
 
 export type SearchKind = 'user_text' | 'assistant_text' | 'tool_input' | 'tool_error' | 'tool_output';
-export interface SearchQuery { query: string; kinds?: SearchKind[]; toolName?: string; sessionId?: string; limit?: number }
+export interface SearchQuery { query: string; kinds?: SearchKind[]; toolName?: string; sessionId?: string; excludeSessionId?: string; limit?: number }
 export interface SearchHit { sessionId: string; messageId: string; messageIndex: number; kind: SearchKind; toolName?: string; snippet: string; score: number }
 export interface SearchResult { hits: SearchHit[]; indexed: { sessions: number; messages: number } }
 export interface AroundQuery { sessionId: string; messageIndex: number; before?: number; after?: number }
@@ -122,6 +122,9 @@ export class SearchIndex {
     const conditions = [`kind IN (${kinds.map(() => '?').join(',')})`], params: (string | number)[] = [...kinds];
     if (input.toolName) { conditions.push('tool_name=?'); params.push(input.toolName); }
     if (input.sessionId) { conditions.push('history_fts.session_id=?'); params.push(input.sessionId); }
+    // Searching a session from within itself only ever finds the request that
+    // asked for the search; callers exclude the searching session by default.
+    if (input.excludeSessionId && input.excludeSessionId !== input.sessionId) { conditions.push('history_fts.session_id!=?'); params.push(input.excludeSessionId); }
     // The join is the staleness guard: a hit must still exist as that message in
     // that session right now, so a lagging index never yields a wrong-session result.
     const sql = `SELECT history_fts.session_id, message_id, message_index, kind, tool_name,
