@@ -17,7 +17,7 @@ Team and Expert drivers cannot invoke arbitrary Bash or connected tools to bypas
 
 ```json
 {"kind":"sidekick-fusion","sidekick":{"providerId":"gateway","model":"fast-model"}}
-{"kind":"team-fusion","worker":{"providerId":"gateway","model":"fast-model"},"concurrency":2}
+{"kind":"team-fusion","worker":{"providerId":"gateway","model":"fast-model"}}
 {"kind":"expert-fusion","expert":{"providerId":"gateway","model":"strong-model"}}
 ```
 
@@ -45,15 +45,15 @@ Stop aborts active child requests and approvals and waits for owned background j
 
 All Fusion workers share a per-root-turn budget: eight invocations, 120 model steps, and 30 cumulative active minutes. Each invocation is limited to 50 steps, ten active minutes, 16 MiB of transcript, and a 64 KiB report; the configured max-step ceiling may be lower. These limits bound repair and fallback activity. Read-only research has its separate, smaller budget.
 
-## Isolated Team execution
+## Isolated worker execution
 
-Team defaults to one worker. The optional concurrency setting permits two to four independent `delegate` calls in the same model tool batch to run together. Other batches remain sequential. Each worker starts in a private copy of the current workspace, including dirty source files, with its own Git baseline and a 256 MiB copy limit. Existing installed `node_modules` may be linked for execution; generated/dependency directories are outside source history and this is not a hostile-code sandbox.
+Team and Expert run all independent `delegate` calls requested together in parallel by default, within the turn budget. An optional concurrency limit of one to four caps simultaneous workers; remaining calls run in subsequent groups. Driver tool calls retain their original order. Each worker starts in a private copy of the current workspace, including dirty source files, with its own Git baseline and a 256 MiB copy limit. Existing installed `node_modules` may be linked for execution; generated/dependency directories are outside source history and this is not a hostile-code sandbox.
 
 New steering invalidates pending publication. After all workers stop, Lite compares each candidate patch with the captured baseline and current root files. Overlapping worker paths and external root edits are conflicts, so those assignments do not overwrite root files. Unsupported binary/large changes are retained for review. Successful text patches are applied through root history intents. A partial integration interrupted by cancellation or a crash uses ordinary file-history recovery. Only integrated changes and checks in the root workspace count as root verification evidence; tests inside a copy do not establish combined correctness. Failed/conflicting workspaces remain available at their reported local paths.
 
 ## Evidence and accounting
 
-One response-level work log contains invocation rows and on-demand briefs, models, reports, and tool transcripts. Runtime activity comes from the executing worker. Verification receipts are based on recorded tools and observed file effects, not a worker's prose. A later successful identical check supersedes the earlier failure without removing its historical record. Unresolved checks, assignments, and missing driver verification remain visible.
+Each uninterrupted stretch of tool calls appears live, then collapses into one work log when the assistant adds text or finishes. Requested workers and experts have separate numbered cards, including while queued, with their own briefs, models, status, reports, and tool transcripts. Runtime activity comes from the executing worker. Verification receipts are based on recorded tools and observed file effects, not a worker's prose. A later successful identical check supersedes the earlier failure without removing its historical record. Unresolved checks, assignments, and missing driver verification remain visible.
 
 A durable request ledger attributes usage to the root turn, actor, model, and phase, including worker calls, retries, compaction, and goal review. Repeated cumulative usage chunks update one request. The footer appears once after the root response and expands into a role/model breakdown. Missing usage stays unreported; a partly priced task has no fabricated total cost. No architecture promises a quality, latency, quota, or cost improvement without measurement.
 

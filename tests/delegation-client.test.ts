@@ -51,7 +51,7 @@ function server() {
 }
 async function mountApp() { await act(async () => root().render(createElement(App))); }
 async function mountTranscript(value = task()) { const mounted = root(); await act(async () => mounted.render(createElement(TaskTranscript, { task: value }))); return { root: mounted, render: async (next: DelegationSummary) => { await act(async () => mounted.render(createElement(TaskTranscript, { task: next }))); } }; }
-async function expandSteps(open = true) { await act(async () => { const log = el<HTMLDetailsElement>('.work-log'); log.open = open; log.dispatchEvent(new Event('toggle', { bubbles: false })); }); }
+async function expandSteps(open = true) { await act(async () => { const log = el<HTMLDetailsElement>('.work-log'); if (log.open !== open) log.querySelector('summary')!.click(); }); }
 const region = () => el('[aria-label="Research task"]');
 const transcriptSource = () => Source.instances.find(source => source.url.startsWith(bound + '/events'))!;
 beforeEach(() => {
@@ -62,10 +62,10 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => roots.splice(0).forEach(root => root.unmount())); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('bound research task cards', () => {
-  it('loads the inline transcript on the first expansion without launching anything', async () => {
+  it('shows live transcripts automatically without launching anything', async () => {
     const api = server(); await mountApp(); expect(region().querySelector('strong')?.title).toBe('Read-only research'); expect(region().textContent).not.toContain('parent response is waiting'); expect(region().textContent).toContain('Researching');
-    expect(api.calls.every(call => call.method === 'GET')).toBe(true); expect(api.calls.some(call => call.path === bound)).toBe(false);
-    await expandSteps(); expect(el('[aria-label="Research transcript"]').textContent).toContain('Reading research.txt.'); expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0); expect(window.location.hash).toBe('#session/a');
+    expect(api.calls.every(call => call.method === 'GET')).toBe(true); expect(api.calls.some(call => call.path === bound)).toBe(true);
+    expect(el<HTMLDetailsElement>('.work-log').open).toBe(true); expect(el('[aria-label="Research transcript"]').textContent).toContain('Reading research.txt.'); expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0); expect(window.location.hash).toBe('#session/a');
   });
   it.each(['no-summary', 'wrong-parent', 'wrong-message', 'wrong-tool', 'copied-id'] as const)('keeps %s task references inert', async variant => {
     const api = server(), value = api.parents.get('a')!;
@@ -81,7 +81,8 @@ describe('bound research task cards', () => {
     await mountApp(); await expandSteps();
     await act(async () => transcriptSource().emit({ id: 21, sessionId: 'child-a', type: 'delta', data: { messageId: 'child-message', delta: ' Child progress.' } }));
     expect(el('[aria-label="Research transcript"]').textContent).toContain('Child progress.'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Next parent thought');
-    await expandSteps(false); expect(transcriptSource().closed).toBe(true); expect(document.body.textContent).toContain('notes.txt'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0);
+    await act(async () => Source.instances[0].emit({ id: 11, sessionId: 'a', type: 'message', data: { id: 'driver-update', sessionId: 'a', role: 'assistant', content: 'Reviewing the findings.', createdAt: 2 } }));
+    expect(el<HTMLDetailsElement>('.work-log').open).toBe(false); expect(transcriptSource().closed).toBe(true); expect(document.body.textContent).toContain('notes.txt'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0);
   });
   it('cancels once against parent-bound identity and refreshes root status without clearing its draft', async () => {
     const api = server(), wait = deferred<object>(); api.intercept = (path, method) => path === bound + '/cancel' && method === 'POST' ? wait.promise : undefined;

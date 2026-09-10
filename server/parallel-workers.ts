@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import { cp, mkdir, rm, symlink, lstat, readdir } from 'node:fs/promises';
+import { cp, mkdir, rm, symlink, lstat, readdir, realpath } from 'node:fs/promises';
 import { join, relative, resolve, sep } from 'node:path';
 import type { FileChange } from '../shared/types.js';
 import { snapshotWorkspace, snapshotChanges, SNAPSHOT_IGNORES, type WorkspaceSnapshot } from './workspace-snapshot.js';
@@ -24,7 +24,8 @@ export class ParallelWorkers {
     this.ready=new Promise(resolve=>{this.resolveReady=resolve;});
   }
   static async create(root:string,parentId:string,keys:string[],history:History,signal:AbortSignal,isCurrent:()=>boolean=()=>true):Promise<ParallelWorkers> {
-    const data=resolve(history.store.directory), baseline=await snapshotWorkspace(root,[data]);
+    root=await realpath(root);
+    const data=await realpath(history.store.directory), baseline=await snapshotWorkspace(root,[data]);
     if(baseline.truncated)throw new Error('This workspace exceeds the parallel snapshot limit. Use one worker or a smaller workspace.');
     const directory=join(data,'workers',randomUUID()),batch=new ParallelWorkers(root,parentId,keys,baseline,history,signal,directory,isCurrent);
     await mkdir(directory,{recursive:true});

@@ -25,14 +25,14 @@ test('asks before changing files and records an approved tool result',async({pag
   await fresh(page);await send(page,'create fixture');await expect(page.getByRole('region',{name:'Permission requested'})).toBeVisible();
   await page.getByRole('button',{name:'Allow once'}).click();await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
   await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('The file operation is complete.');
-  await page.locator('.work-log > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText(/(?:Created|Updated|Wrote) result\.txt/)).toBeVisible();
+  await page.locator('.work-log').filter({ has: page.locator('.tool-card') }).locator(':scope > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText(/(?:Created|Updated|Wrote) result\.txt/)).toBeVisible();
   await page.screenshot({path:'test-results/tool-approved.png',fullPage:true,animations:'disabled'});
 });
 
 test('can deny a tool without leaving an approval spinner',async({page})=>{
   await fresh(page);await send(page,'create fixture denied');await expect(page.getByRole('button',{name:'Deny',exact:true})).toBeVisible();await page.getByRole('button',{name:'Deny',exact:true}).click();
   await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);await expect(page.getByRole('region',{name:'Permission requested'})).toHaveCount(0);
-  await page.locator('.work-log > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText('The user denied or cancelled this action.',{exact:false})).toBeVisible();
+  await page.locator('.work-log').filter({ has: page.locator('.tool-card') }).locator(':scope > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText('The user denied or cancelled this action.',{exact:false})).toBeVisible();
 });
 
 test('stops a live stream and sends a follow-up',async({page})=>{
@@ -67,6 +67,7 @@ test('terminal executes real commands, persists on hide and reload, and ends exp
   await command('printf "%s" "$LITE_BROWSER_VALUE" > terminal-browser.txt');await expect.poll(content).toBe('kept');
   await command("printf '\\nTerminal is ready. State survived reconnection.\\n'");
   await page.screenshot({path:'test-results/terminal-desktop.png',fullPage:true,animations:'disabled'});
+  await page.getByRole('button',{name:'Close workspace',exact:true}).click();
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'test-results/terminal-mobile.png',fullPage:true,animations:'disabled'});
   await pane.getByRole('button',{name:'End shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Shell ended.');
   await pane.getByRole('button',{name:'Reconnect / new shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Connected');

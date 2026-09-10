@@ -5,7 +5,7 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import type { Session, SessionDetail } from '../../shared/types';
 import type { DelegationSummary } from '../../shared/delegation';
 
-async function expandSteps(page: Page) { const log = page.locator('.conversation-content > article .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
+async function expandSteps(page: Page) { const log = page.locator('.conversation-shell').first().locator(':scope > .conversation-scroll > .conversation-content > article > .message-body > .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
 const sidekickCard = (page: Page) => page.getByRole('region', { name: 'Sidekick task', exact: true, includeHidden: true });
 const transcript = (page: Page) => page.getByRole('region', { name: 'Sidekick transcript', exact: true });

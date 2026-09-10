@@ -52,6 +52,33 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('WORKERS_CHILD')){
+    const name=prompt.includes('alpha')?'alpha':'beta';
+    if(data.messages.at(-1)?.role!=='tool'){
+      emit({content:`${name} is inspecting its assignment.`});
+      toolCall=true;emit({tool_calls:[{index:0,id:`${name}-read`,type:'function',function:{name:'read_file',arguments:JSON.stringify({path:'README.md'})}}]});
+    }else{
+      emit({content:`${name} progress: reviewed the project.`});
+      await new Promise<void>(resolve=>{const release=()=>{pendingDelegations.delete(release);res.off('close',release);resolve();};pendingDelegations.add(release);res.once('close',release);});
+      if(res.destroyed)return;
+      emit({content:` ${name} final report: inspection complete.`});
+    }
+  }else if(prompt.includes('WORKERS_BROWSER')){
+    if(data.messages.at(-1)?.role==='tool')emit({content:'Driver report: both assignments are complete.'});
+    else{
+      emit({content:'I’m assigning two independent reviews.'});
+      toolCall=true;emit({tool_calls:['alpha','beta'].map((name,index)=>({index,id:`worker-${name}`,type:'function',function:{name:'delegate',arguments:JSON.stringify({description:`Review ${name}`,prompt:`WORKERS_CHILD ${name}`})}}))});
+    }
+  }else if(prompt.includes('LIVE_STEPS_BROWSER')){
+    const count=data.messages.filter((message:any)=>message.role==='tool').length;
+    if(count<5){
+      if(!count)emit({content:'I’ll inspect the project files.'});
+      toolCall=true;emit({tool_calls:Array.from({length:count?3:2},(_,index)=>({index,id:`live-read-${count+index}`,type:'function',function:{name:'read_file',arguments:JSON.stringify({path:(count+index)%2?'src/hello.ts':'README.md'})}}))});
+    }else{
+      await new Promise<void>(resolve=>{const release=()=>{pendingDelegations.delete(release);res.off('close',release);resolve();};pendingDelegations.add(release);res.once('close',release);});
+      if(res.destroyed)return;
+      emit({content:'The five file reads are complete.'});
+    }
   }else if(prompt.includes('FUSION_CHILD')){
     if(data.messages.at(-1)?.role==='tool')emit({content:'Implementation complete. The driver must verify the root workspace.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'fusion-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'answer.txt',content:'42\n'})}}]});}

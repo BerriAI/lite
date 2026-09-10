@@ -15,7 +15,7 @@ export interface ModelRoute { providerId: string; model: string }
 export type ArchitectureSelection =
   | { kind: 'sidekick-fusion'; sidekick: ModelRoute }
   | { kind: 'team-fusion'; worker: ModelRoute; concurrency?: 1 | 2 | 3 | 4 }
-  | { kind: 'expert-fusion'; expert: ModelRoute };
+  | { kind: 'expert-fusion'; expert: ModelRoute; concurrency?: 1 | 2 | 3 | 4 };
 export type ArchitectureKind = ArchitectureSelection['kind'];
 
 /** One selectable model slot an architecture asks the user to fill. */

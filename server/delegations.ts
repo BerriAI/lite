@@ -205,7 +205,7 @@ export class Delegations {
       const existing = this.rows('WHERE parent_session_id=? AND parent_turn_id=?', parent.id, input.parentTurnId).filter(sameRole);
       const running = this.rows("WHERE parent_session_id=? AND status='running'", parent.id).filter(sameRole);
       if (input.role) {
-        if (running.length && !(input.role==='worker'&&input.isolated&&running.length<4)) throw conflict('The worker is already running.');
+        if (running.length && !(input.role !== 'sidekick' && input.isolated && running.every(row => this.data(row).summary.isolated))) throw conflict('The worker is already running.');
       } else if (existing.length >= DELEGATION_LIMITS.perTurn || running.length) throw conflict('The parent researcher limit has been reached.');
       const selected = input.childSession;
       if (!selected || ['workspace', 'providerId', 'model'].some(key => typeof selected[key as keyof typeof selected] !== 'string' || !selected[key as keyof typeof selected]) || !['plan', 'build'].includes(selected.mode) || !['ask', 'auto'].includes(selected.permissionMode)) throw invalid('Researcher configuration is incomplete.');

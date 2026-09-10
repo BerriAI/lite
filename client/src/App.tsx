@@ -1,3 +1,4 @@
+import { workerLabels } from './worker-presentation';
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Target, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
@@ -75,7 +76,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(() => { try { const saved = localStorage.getItem('lite.workspace-panel-open'); return saved === null ? window.innerWidth >= 960 : saved === 'true'; } catch { return window.innerWidth >= 960; } });
+  useEffect(() => { try { localStorage.setItem('lite.workspace-panel-open', String(workspaceOpen)); } catch { /* Keep the current layout if storage is unavailable. */ } }, [workspaceOpen]);
   const [terminalOpen, setTerminalOpen] = useState(false);
   useEffect(() => setTerminalOpen(false), [activeId]);
   const [sessionMenu, setSessionMenu] = useState(false);
@@ -100,6 +102,7 @@ export default function App() {
   const detailRef = useRef(detail); detailRef.current = detail;
   const running = detail?.session.status === 'running' || detail?.session.status === 'waiting';
   const delegations = detail ? visibleDelegations(detail) : [];
+  const actors = detail ? workerLabels(detail) : new Map<string, string>();
   const history = detail?.history;
   const historyDisabled = running || busy || queueBusy || submissionBusy || historyBusy || configBusy || sessionLoading;
   const legacyUndo = history?.hasCheckpoints === false && !history.pendingRecovery;
@@ -606,7 +609,7 @@ export default function App() {
           {goalVisible && detail && <div className={`goal-banner ${goal.status}`} role="status"><Target size={14} /><div className="goal-banner-body"><strong>{goal.status === 'blocked' ? 'Goal paused' : 'Session goal'}</strong><span title={goal.text}>{goal.text}</span></div><span className="goal-banner-turns">Turn {goal.turns} of {goal.maxTurns}</span><button className="button secondary" disabled={busy || running} onClick={() => void clearSessionGoal()}>Clear goal</button></div>}
           {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} renderTask={(tool, message, expanded) => {
             const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
-            return task ? <TaskCard task={task} expanded={expanded} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
+            return task || actors.has(`${message.id}:${tool.id}`) ? <TaskCard task={task} tool={tool} label={actors.get(`${message.id}:${tool.id}`)} awaitingApproval={detail.permissions.some(request => request.toolCallId === tool.id)} expanded={expanded} onCancel={() => { if (task) void cancelTask(task); }} cancelling={Boolean(task && cancellingTasks.has(task.id))} error={task && taskErrors.get(task.id)} /> : null;
           }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
           {detail && <div className="chat-composer">{history?.pendingRecovery && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} onSteer={content => steerMessage(content)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}

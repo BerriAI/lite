@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BookOpen, Check, RotateCw, X, Zap } from 'lucide-react';
 import type { DelegationDetail, DelegationSummary } from '../../shared/delegation';
-import type { RunEvent } from '../../shared/types';
+import type { RunEvent, ToolCall } from '../../shared/types';
 import { api, applyEvent, errorMessage } from './api';
-import { Conversation } from './Conversation';
+import { Conversation, Markdown } from './Conversation';
 import { SpeedRail } from './ui';
 
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
@@ -11,20 +11,26 @@ const sidekick = (task: DelegationSummary) => Boolean(task.role);
 const actor = (task: DelegationSummary) => task.role === 'expert' ? 'Expert' : task.role === 'worker' ? 'Worker' : 'Sidekick';
 const statusLabel = (task: DelegationSummary) => task.status === 'running' && sidekick(task) ? 'Working' : statusLabels[task.status];
 export const delegationPath = (task: DelegationSummary) => `/sessions/${encodeURIComponent(task.parentSessionId)}/delegations/${encodeURIComponent(task.id)}`;
-export function TaskCard({ task, expanded, onCancel, cancelling, error }: { task: DelegationSummary; expanded: boolean; onCancel: () => void; cancelling: boolean; error?: string }) {
-  const running = task.status === 'running';
-  const fusion = sidekick(task);
-  return <section className="research-task" role="region" aria-label={fusion ? `${actor(task)} task` : 'Research task'}>
-    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions">{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
-    {task.error && <p className="error-text" role="status">{task.error}</p>}
-
+export function TaskCard({ task, tool, label, awaitingApproval, expanded, onCancel, cancelling, error }: { task?: DelegationSummary; tool?: ToolCall; label?: string; awaitingApproval?: boolean; expanded: boolean; onCancel: () => void; cancelling: boolean; error?: string }) {
+  const running = task?.status === 'running';
+  const fusion = Boolean(task?.role || tool?.name === 'delegate' || tool?.name === 'sidekick');
+  const identity = label ?? (task && fusion ? actor(task) : 'Research');
+  const worker = tool?.name === 'delegate' || task?.role === 'worker' || task?.role === 'expert';
+  const description = task?.description || String(tool?.args.description || `${identity} task`);
+  const state = cancelling ? 'Cancelling…' : task ? running ? task.activity || statusLabel(task) : statusLabel(task) : awaitingApproval ? 'Needs approval' : tool?.status === 'pending' ? 'Queued' : tool?.status === 'running' ? 'Starting' : tool?.status === 'error' ? 'Failed' : tool?.status === 'denied' ? 'Not started' : 'Completed';
+  return <section className={`research-task${worker ? ' worker-task' : ''}`} role="region" aria-label={`${identity} task`}>
+    {fusion && <div className="task-identity"><span className="task-actor"><Zap size={13} />{identity}</span><span className={`task-state${running ? ' active' : ''}`} role="status">{running && <span className="working-dot" />}{state}</span></div>}
+    <div className="research-task-heading">{!fusion && <BookOpen size={16} />}<strong title={fusion ? `${identity} · edits and commands use this session’s permissions` : "Read-only research"}>{description}</strong>{!fusion && <span className="task-state" role="status">{!running && (task?.status === 'completed' ? <Check size={12} /> : <X size={12} />)}{state}</span>}<div className="research-task-actions">{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
+    {task?.error && <p className="error-text" role="status">{task.error}</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
-    {expanded && <TaskTranscript task={task} />}
-
+    {expanded && (task ? <TaskTranscript task={task} label={identity} /> : <div className="task-pending">
+      <p>{awaitingApproval ? 'Waiting for permission to start.' : tool?.status === 'pending' ? 'Waiting to start. Its transcript will appear here.' : tool?.status === 'running' ? 'Starting this task…' : tool?.output || 'No live transcript is available for this task.'}</p>
+      {typeof tool?.args.prompt === 'string' && <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={tool.args.prompt} /></div></details>}
+    </div>)}
   </section>;
 }
 
-export function TaskTranscript({ task }: { task: DelegationSummary }) {
+export function TaskTranscript({ task, label }: { task: DelegationSummary; label?: string }) {
   const [detail, setDetail] = useState<DelegationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -35,7 +41,11 @@ export function TaskTranscript({ task }: { task: DelegationSummary }) {
   const previousStatus = useRef(task.status);
   const path = delegationPath(task);
   const fusion = sidekick(task);
-  const noun = fusion ? actor(task).toLowerCase() : 'research';
+  const identity = label ?? (fusion ? actor(task) : 'Research');
+  const noun = identity.toLowerCase();
+  const viewport = useRef<HTMLDivElement>(null);
+  const [following, setFollowing] = useState(true);
+  useLayoutEffect(() => { if (following && viewport.current) viewport.current.scrollTop = viewport.current.scrollHeight; }, [detail?.messages, following]);
   useEffect(() => {
     let live = true, source: EventSource | undefined, journal: RunEvent[] = [], latestRead = 0, journalFloor = 0;
     current.current = null; setDetail(null); setLoading(true); setError(''); setConnection('connecting');
@@ -86,10 +96,14 @@ export function TaskTranscript({ task }: { task: DelegationSummary }) {
   useEffect(() => {
     if (previousStatus.current !== task.status) { previousStatus.current = task.status; void refresh.current(); }
   }, [task.status]);
-  return <div className="research-transcript inline-transcript" role="region" aria-label={`${fusion ? actor(task) : 'Research'} transcript`}>
+  return <div className="research-transcript inline-transcript" role="region" aria-label={`${identity} transcript`}>
     <button className="icon-button transcript-refresh" title="Refresh transcript" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}><RotateCw size={12} /><span className="sr-only">Refresh transcript</span></button>
     {error && <div className="inline-alert" role="alert">{error}</div>}
     {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}
+    {detail && <div className="transcript-model">{detail.session.model}</div>}
+    <div className="task-transcript-content" ref={viewport} onScroll={event => { const el = event.currentTarget; setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 60); }}>
     {detail && <Conversation detail={detail} connection={connection} busy={false} readOnly inline onDecide={() => {}} onFork={() => {}} renderQuestion={() => null} />}
+    </div>
+    {!following && <button className="text-button transcript-latest" onClick={() => setFollowing(true)}>Latest {identity.toLowerCase()} activity ↓</button>}
   </div>;
 }

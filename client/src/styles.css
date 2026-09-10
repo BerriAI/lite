@@ -985,3 +985,38 @@ fieldset.model-picker { padding: 22px 24px; gap: 22px; overflow: visible; }
 
 .inline-transcript { position: relative; padding-right: 24px; }
 .transcript-refresh { position: absolute; top: 0; right: 0; color: var(--muted); }
+
+
+/* Delegated tasks keep separate identities and bounded reading surfaces. */
+.driver-identity { color: var(--secondary); font-size: 11px; font-weight: 600; margin-bottom: 7px; }
+.worker-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 290px), 1fr)); gap: 12px; margin: 8px 0 12px; align-items: start; }
+.worker-grid > div { min-width: 0; }
+.work-log .worker-task { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface); }
+.task-identity { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 7px; margin: 2px 0 8px; }
+.task-actor { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-size: 12px; font-weight: 600; }
+.task-state { gap: 5px; color: var(--muted); font-size: 10px; }
+.task-state.active { color: var(--secondary); }
+.work-log .worker-task .research-task-heading { align-items: start; }
+.work-log .worker-task .research-task-heading > strong { flex-basis: 100%; font-size: 12px; color: var(--secondary); line-height: 1.55; }
+.work-log .worker-task .research-task-actions { padding: 0; }
+.worker-task .inline-transcript { margin: 8px 0 0; padding: 0; }
+.transcript-model { color: var(--muted); font-size: 10px; font-style: normal; padding: 0 25px 6px 0; overflow-wrap: anywhere; }
+.worker-task .task-transcript-content { max-height: min(48dvh, 400px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; padding-right: 8px; }
+.worker-task .inline-transcript .markdown { font-size: 12px; line-height: 1.65; }
+.task-assignment { margin: 6px 0 10px; color: var(--muted); }
+.task-assignment > summary { cursor: pointer; font-size: 10px; font-style: normal; }
+.task-assignment > .markdown { margin-top: 8px; }
+.task-pending { font-size: 11px; color: var(--muted); }
+.transcript-latest { margin-top: 6px; font-size: 10px; align-self: flex-start; }
+@media (max-width: 600px) { .worker-grid { grid-template-columns: minmax(0, 1fr); }.worker-task .task-transcript-content { max-height: 320px; } }
+
+/* A provider tool round is not a new paragraph. */
+.work-log-body > div:empty { display: none; }
+.work-log .tool-card { margin: 0; }
+.work-log .tool-card > summary { padding: 4px 0; min-height: 26px; line-height: 1.4; }
+.work-log-body { margin-top: 3px; padding-left: 10px; }
+.inline-transcript .message { margin: 8px 0; }
+.inline-transcript .message:has(> .message-body > .work-log):not(:has(> .message-body > .markdown)) { margin: 2px 0; }
+.inline-transcript .work-log { margin-bottom: 6px; font-size: 11px; }
+.inline-transcript .work-log-body { margin-bottom: 4px; }
+.inline-transcript .tool-card > summary { padding: 3px 0; min-height: 24px; }

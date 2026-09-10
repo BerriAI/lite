@@ -60,10 +60,10 @@ test('delegation has one status and usage appears only after the turn finishes',
     await expect(approval).toBeVisible();
     await approval.getByRole('button', { name: 'Allow once', exact: true }).click();
     await expect(approval).toBeVisible();
-    await expect(page.locator('.work-log > summary')).toContainText('step');
+    await expect(page.locator('.work-log > summary').first()).toContainText('step');
     await expect(approval).toContainText(/sidekick/i);
     await expect(page.locator('.message-live, .run-status, .session-state, .context-estimate, .usage')).toHaveCount(0);
-    await expect(page.locator('.research-task')).toBeHidden();
+    await expect(page.locator('.research-task')).toBeVisible();
     await approval.getByRole('button', { name: 'Allow once', exact: true }).click();
     await expect(page.locator('.usage')).toHaveCount(1);
     await expect(page.locator('.context-estimate')).toHaveCount(0);
