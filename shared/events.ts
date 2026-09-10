@@ -1,18 +1,18 @@
 import type { RunEvent, Session, SessionDetail } from './types.js';
 import type { DelegationSummary } from './delegation.js';
 
-/** Only private summaries bound to an exact current task call expose child transcripts. */
+/** Only private summaries bound to an exact current task/sidekick call expose child transcripts. */
 export function visibleDelegations(detail: SessionDetail): DelegationSummary[] {
   return (detail.delegations ?? []).filter(task => task.parentSessionId === detail.session.id && detail.messages.some(message =>
     message.role === 'assistant' && message.id === task.parentMessageId && message.sessionId === detail.session.id && message.toolCalls?.some(tool =>
-      tool.name === 'task' && tool.id === task.toolCallId && tool.delegationId === task.id)));
+      (tool.name === 'task' || tool.name === 'sidekick') && tool.id === task.toolCallId && tool.delegationId === task.id)));
 }
 
 /** Session configuration is monotonic even when an older snapshot overlaps a newer mutation. */
 export function reconcileSession(current: Session, incoming: Session): Session {
   if ((incoming.configRevision ?? 0) >= (current.configRevision ?? 0)) return incoming;
-  return { ...incoming, providerId: current.providerId, model: current.model, mode: current.mode, planner: current.planner, outputStyle: current.outputStyle,
-    permissionMode: current.permissionMode, profile: current.profile, configRevision: current.configRevision };
+  return { ...incoming, providerId: current.providerId, model: current.model, mode: current.mode, planner: current.planner, architecture: current.architecture,
+    outputStyle: current.outputStyle, permissionMode: current.permissionMode, profile: current.profile, configRevision: current.configRevision };
 }
 
 /** Idempotent for snapshot messages and tool updates; SSE replay is deduplicated by event ID by the caller. */

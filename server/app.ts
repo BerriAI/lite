@@ -25,7 +25,9 @@ const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),na
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional(),advertise:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),hooks:z.unknown().optional(),sidecars:z.unknown().optional(),trustedWorkspaces:z.array(z.string().min(1).max(4096)).max(HOOK_LIMITS.trustedWorkspaces).optional(),notifications:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 // planner: the optional planning half of a planner+executor pair; null clears it.
-const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
+// architecture: the optional multi-model arrangement (shared/architectures.ts); null clears it.
+const architectureSchema = z.object({kind:z.literal('sidekick-fusion'),sidekick:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)})});
+const sessionSchema = z.object({title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),architecture:architectureSchema.nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
@@ -164,6 +166,8 @@ export function createApp(options:AppOptions = {}) {
       if(selection.mode===undefined)delete selection.mode;
       // planner:null means "no planner" on create; a set planner needs a real provider.
       if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
+      // architecture:null means "single model" on create; each role needs a real provider.
+      if(!selection.architecture)delete selection.architecture;else checkProvider(selection.architecture.sidekick.providerId);
       // outputStyle:null means "no style" on create, mirroring planner.
       if(!selection.outputStyle)delete selection.outputStyle;
       checkProvider(selection.providerId);
@@ -175,8 +179,8 @@ export function createApp(options:AppOptions = {}) {
     const imported=z.object({session:sessionSchema,messages:z.array(z.object({id:z.string(),role:z.enum(['user','assistant','tool','system']),content:z.string().max(500000),createdAt:z.number(),providerMetadata:z.record(z.string(),z.unknown()).optional(),reasoning:z.string().max(500000).optional(),toolCallId:z.string().optional(),toolCalls:z.array(z.object({id:z.string(),name:z.string(),args:z.record(z.string(),z.unknown()),status:z.enum(['pending','running','completed','error','denied']),output:z.string().optional()})).optional(),attachments:z.array(attachmentSchema).max(10).optional()})).max(10000)}).parse(req.body);
     // Imports are inert history: no tools execute and no imported path is opened.
     const settings=store.settings();
-    // An imported planner may name a provider this install does not have; drop it.
-    const session=store.createSession({...imported.session,planner:undefined,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'} as Partial<Session>);
+    // An imported planner or architecture may name a provider this install does not have; drop both.
+    const session=store.createSession({...imported.session,planner:undefined,architecture:undefined,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'} as Partial<Session>);
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
@@ -216,9 +220,9 @@ export function createApp(options:AppOptions = {}) {
     // outputStyle rewrites the system prompt of future turns (session-constant
     // cached-prefix config), so it follows the same contract: idle-only PATCH,
     // revision bump in the store, queue held.
-    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.outputStyle!==undefined;
+    const configChange=patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.architecture!==undefined||patch.outputStyle!==undefined;
     if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
-    checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);
+    checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);if(patch.architecture)checkProvider(patch.architecture.sidekick.providerId);
     const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
     if(configChange)publishConfiguration(req.params.id);res.json(session);
   });

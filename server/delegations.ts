@@ -7,6 +7,10 @@ import { validateProfileSnapshot } from './profiles.js';
 import { Store } from './store.js';
 
 export const DELEGATION_LIMITS = { perTurn: 4, promptBytes: 16 * 1024, outputBytes: 32 * 1024, description: 200, transcriptBytes: 4 * 1024 * 1024 } as const;
+/** The persistent sidekick is a long-lived executor, not a bounded probe, so
+ * its durable caps are wider than the one-shot researcher's. Runtime step and
+ * time budgets live beside these in server/runner.ts SIDEKICK_LIMITS. */
+export const SIDEKICK_DURABLE_LIMITS = { outputBytes: 64 * 1024, transcriptBytes: 16 * 1024 * 1024 } as const;
 type TerminalStatus = Exclude<DelegationStatus, 'running'>;
 type Terminal = { assistant: Message; result: Message; session: Session; messages: Message[] };
 type RecordData = { summary: DelegationSummary; userId: string; profileRevision: string | null; terminal?: Terminal };
@@ -20,6 +24,17 @@ export interface CreateDelegation {
   prompt: string;
   childSession: Pick<Session, 'workspace' | 'providerId' | 'model' | 'mode' | 'permissionMode'>;
   profile: ProfileSnapshot | null;
+  role?: 'sidekick';
+}
+/** A sidekick call re-points the child's single durable row to a new origin. */
+export interface ReuseDelegation {
+  delegationId: string;
+  parentSessionId: string;
+  parentTurnId: string;
+  parentMessageId: string;
+  toolCallId: string;
+  description: string;
+  prompt: string;
 }
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 const missing = () => Object.assign(new Error('Researcher delegation not found in the current parent transcript.'), { status: 404 });
@@ -63,11 +78,23 @@ export class Delegations {
     let data: RecordData;
     try { data = JSON.parse(row.data); } catch { throw conflict('The private researcher record is invalid.'); }
     const summary = data?.summary;
-    if (!summary || summary.id !== row.id || summary.parentSessionId !== row.parent_session_id || summary.parentTurnId !== row.parent_turn_id || summary.parentMessageId !== row.parent_message_id || summary.toolCallId !== row.tool_call_id || summary.childSessionId !== row.child_session_id || summary.status !== row.status || !statuses.has(row.status) || typeof summary.description !== 'string' || summary.description.length > DELEGATION_LIMITS.description || typeof data.userId !== 'string') throw conflict('The private researcher binding is invalid.');
+    if (!summary || summary.id !== row.id || summary.parentSessionId !== row.parent_session_id || summary.parentTurnId !== row.parent_turn_id || summary.parentMessageId !== row.parent_message_id || summary.toolCallId !== row.tool_call_id || summary.childSessionId !== row.child_session_id || summary.status !== row.status || !statuses.has(row.status) || typeof summary.description !== 'string' || summary.description.length > DELEGATION_LIMITS.description || typeof data.userId !== 'string' || (summary.role !== undefined && summary.role !== 'sidekick')) throw conflict('The private researcher binding is invalid.');
     return data;
   }
   private save(row: Row, data: RecordData): void {
     this.store.db.prepare('UPDATE delegations SET status=?,data=? WHERE id=?').run(data.summary.status, JSON.stringify(data), row.id);
+  }
+  /** Role lives inside the private JSON record; guard counting parses it leniently. */
+  private roleOf(row: Row): 'sidekick' | undefined {
+    try { return JSON.parse(row.data)?.summary?.role === 'sidekick' ? 'sidekick' : undefined; } catch { return undefined; }
+  }
+  /** Latest durable sidekick record for a parent, if any. Reuse-first: the
+   * newest row is the persistent child; older ones are frozen transcripts left
+   * behind when an interrupted child could not be safely resumed. */
+  sidekickRecord(parentId: string): DelegationSummary | null {
+    const rows = this.rows('WHERE parent_session_id=? ORDER BY rowid', parentId).filter(row => this.roleOf(row) === 'sidekick');
+    const last = rows[rows.length - 1];
+    return last ? clone(this.data(last).summary) : null;
   }
   isChild(id: string): boolean { return this.store.isChild(id); }
   private origin(summary: DelegationSummary, linked: boolean): { assistant: Message; call: ToolCall; results: Message[] } {
@@ -77,7 +104,7 @@ export class Delegations {
     const assistantIndex = messages.findIndex(message => message.id === summary.parentMessageId && message.role === 'assistant');
     if (userIndex < 0 || assistantIndex <= userIndex || messages.slice(userIndex + 1, assistantIndex).some(message => message.role === 'user')) throw missing();
     const assistant = messages[assistantIndex], matches = assistant.toolCalls?.filter(call => call.id === summary.toolCallId) ?? [];
-    if (matches.length !== 1 || matches[0].name !== 'task' || (linked && matches[0].delegationId !== summary.id)) throw missing();
+    if (matches.length !== 1 || matches[0].name !== (summary.role === 'sidekick' ? 'sidekick' : 'task') || (linked && matches[0].delegationId !== summary.id)) throw missing();
     let end = assistantIndex + 1;
     while (end < messages.length && messages[end].role !== 'assistant' && messages[end].role !== 'user') end++;
     const results = messages.slice(assistantIndex + 1, end).filter(message => message.role === 'tool' && message.toolCallId === summary.toolCallId);
@@ -122,6 +149,7 @@ export class Delegations {
     const summary: DelegationSummary = {
       id, parentSessionId: input.parentSessionId, parentTurnId: input.parentTurnId, parentMessageId: input.parentMessageId,
       toolCallId: input.toolCallId, childSessionId: childId, description: input.description, status: 'running', createdAt: now,
+      ...(input.role ? { role: input.role } : {}),
     };
     let child!: Session;
     this.history.acceptPrepared(childId, user, () => {
@@ -131,8 +159,16 @@ export class Delegations {
       const { assistant, call, results } = this.origin(summary, false);
       if (call.delegationId || results.length || !['pending', 'running'].includes(call.status)) throw conflict('This task call was already settled or delegated.');
       if (this.rows('WHERE parent_session_id=? AND parent_turn_id=? AND parent_message_id=? AND tool_call_id=?', parent.id, input.parentTurnId, input.parentMessageId, input.toolCallId).length) throw conflict('This task call already has a durable researcher.');
-      const existing = this.rows('WHERE parent_session_id=? AND parent_turn_id=?', parent.id, input.parentTurnId);
-      if (existing.length >= DELEGATION_LIMITS.perTurn || this.rows("WHERE parent_session_id=? AND status='running'", parent.id).length) throw conflict('The parent researcher limit has been reached.');
+      // Researchers and the sidekick budget independently: four bounded probes
+      // per turn versus one persistent executor per parent, never intermixed.
+      const sameRole = (row: Row) => this.roleOf(row) === input.role;
+      const existing = this.rows('WHERE parent_session_id=? AND parent_turn_id=?', parent.id, input.parentTurnId).filter(sameRole);
+      const running = this.rows("WHERE parent_session_id=? AND status='running'", parent.id).filter(sameRole);
+      if (input.role === 'sidekick') {
+        if (running.length) throw conflict('The sidekick is already running.');
+        const record = this.sidekickRecord(parent.id);
+        if (record && record.status !== 'interrupted') throw conflict('This session already has a durable sidekick. Reuse it instead of creating another.');
+      } else if (existing.length >= DELEGATION_LIMITS.perTurn || running.length) throw conflict('The parent researcher limit has been reached.');
       const selected = input.childSession;
       if (!selected || ['workspace', 'providerId', 'model'].some(key => typeof selected[key as keyof typeof selected] !== 'string' || !selected[key as keyof typeof selected]) || !['plan', 'build'].includes(selected.mode) || !['ask', 'auto'].includes(selected.permissionMode)) throw invalid('Researcher configuration is incomplete.');
       // Explicitly select persisted fields; never spread provider credentials or
@@ -142,6 +178,49 @@ export class Delegations {
       this.store.db.prepare('INSERT INTO delegations(id,parent_session_id,parent_turn_id,parent_message_id,tool_call_id,child_session_id,status,data) VALUES(?,?,?,?,?,?,?,?)').run(id, parent.id, input.parentTurnId, input.parentMessageId, input.toolCallId, childId, 'running', JSON.stringify(data));
       call.delegationId = id; call.status = 'running'; call.startedAt ??= now;
       this.store.saveMessage(assistant);
+    });
+    return { delegation: clone(summary), child, user };
+  }
+  /** Re-point the persistent sidekick's single durable row to a new originating
+   * call and resume the same child transcript. The schema allows exactly one
+   * delegation row per child session, so continuity IS this row: within one
+   * transaction the origin columns and JSON summary move to the new call and
+   * status returns to 'running' — which is what makes the frozen child mutable
+   * again — before the new user message is accepted into the child. */
+  reuse(input: ReuseDelegation): { delegation: DelegationSummary; child: Session; user: Message } {
+    const now = Date.now();
+    if (typeof input.prompt !== 'string' || !input.prompt.trim() || Buffer.byteLength(input.prompt) > DELEGATION_LIMITS.promptBytes || input.prompt.includes('\0')) throw invalid('Researcher prompt must be nonempty and at most 16 KiB.');
+    if (typeof input.description !== 'string' || !input.description.trim() || input.description.length > DELEGATION_LIMITS.description || /[\p{Cc}\p{Cf}]/u.test(input.description)) throw invalid('Researcher description must be a short single-line label.');
+    const row = this.row(input.delegationId);
+    const user: Message = { id: randomUUID(), sessionId: row.child_session_id, role: 'user', content: input.prompt, createdAt: now };
+    let child!: Session, summary!: DelegationSummary;
+    this.history.acceptPrepared(row.child_session_id, user, () => {
+      const data = this.data(this.row(input.delegationId));
+      if (data.summary.role !== 'sidekick') throw conflict('Only the persistent sidekick can be reused.');
+      if (data.summary.parentSessionId !== input.parentSessionId) throw missing();
+      if (data.summary.status === 'running') throw conflict('The sidekick is already running.');
+      if (data.summary.status === 'interrupted' || !data.terminal) throw conflict('An interrupted sidekick cannot be resumed.');
+      const parent = this.store.session(input.parentSessionId);
+      if (this.isChild(parent.id) || parent.archived || parent.profile?.profileId) throw conflict('This session cannot delegate research.');
+      this.history.assertAcceptedTurn(parent.id, input.parentTurnId);
+      this.assertPin(row, data);
+      summary = {
+        ...data.summary, parentTurnId: input.parentTurnId, parentMessageId: input.parentMessageId,
+        toolCallId: input.toolCallId, description: input.description, status: 'running',
+      };
+      delete summary.finishedAt; delete summary.error;
+      const { assistant, call, results } = this.origin(summary, false);
+      if (call.delegationId || results.length || !['pending', 'running'].includes(call.status)) throw conflict('This task call was already settled or delegated.');
+      if (this.rows('WHERE parent_session_id=? AND parent_turn_id=? AND parent_message_id=? AND tool_call_id=?', parent.id, input.parentTurnId, input.parentMessageId, input.toolCallId).length) throw conflict('This task call already has a durable researcher.');
+      // The re-pointed row, its summary, and the freed mutability commit as one:
+      // store.assertChildMutable requires status 'running' before the child's
+      // new user message can be saved by the enclosing acceptPrepared.
+      const next: RecordData = { summary, userId: user.id, profileRevision: data.profileRevision };
+      this.store.db.prepare('UPDATE delegations SET parent_turn_id=?,parent_message_id=?,tool_call_id=?,status=?,data=? WHERE id=?')
+        .run(input.parentTurnId, input.parentMessageId, input.toolCallId, 'running', JSON.stringify(next), row.id);
+      call.delegationId = row.id; call.status = 'running'; call.startedAt ??= now;
+      this.store.saveMessage(assistant);
+      child = this.store.session(row.child_session_id);
     });
     return { delegation: clone(summary), child, user };
   }
@@ -161,12 +240,15 @@ export class Delegations {
     const child = this.store.session(row.child_session_id), messages = this.store.messages(child.id);
     if (child.status === 'running' || child.status === 'waiting') throw conflict('Wait for researcher cleanup before settling its result.');
     if (this.store.db.prepare("SELECT 1 FROM history_checkpoints WHERE session_id=? AND status='open'").get(child.id)) throw conflict('Seal the researcher checkpoint before settling its result.');
-    if (Buffer.byteLength(JSON.stringify(messages)) > DELEGATION_LIMITS.transcriptBytes) throw conflict('The researcher transcript exceeds its 4 MiB limit.');
+    const sidekick = data.summary.role === 'sidekick';
+    const transcriptCap = sidekick ? SIDEKICK_DURABLE_LIMITS.transcriptBytes : DELEGATION_LIMITS.transcriptBytes;
+    const outputCap = sidekick ? SIDEKICK_DURABLE_LIMITS.outputBytes : DELEGATION_LIMITS.outputBytes;
+    if (Buffer.byteLength(JSON.stringify(messages)) > transcriptCap) throw conflict(`The researcher transcript exceeds its ${sidekick ? '16' : '4'} MiB limit.`);
     const prefix = failures[status];
     let content = status === 'completed' ? output : `${prefix}${output ? '\n\n' + output : ''}`;
-    if (Buffer.byteLength(content) > DELEGATION_LIMITS.outputBytes) {
+    if (Buffer.byteLength(content) > outputCap) {
       const note = '\n[Researcher report truncated.]';
-      content = bounded(content, DELEGATION_LIMITS.outputBytes - Buffer.byteLength(note)) + note;
+      content = bounded(content, outputCap - Buffer.byteLength(note)) + note;
     }
     const now = Date.now(), result: Message = { id: randomUUID(), sessionId: row.parent_session_id, role: 'tool', toolCallId: row.tool_call_id, content, createdAt: now };
     const call = origin.call; call.status = status === 'completed' ? 'completed' : 'error'; call.output = content; call.endedAt = now;

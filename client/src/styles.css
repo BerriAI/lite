@@ -664,6 +664,19 @@ summary::-webkit-details-marker { display: none; }
 .success-note { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 11px; margin: 15px 0 0; }
 .settings-content > .speed-rail { margin-top: 15px; }
 .model-picker { padding: 21px 23px; overflow: auto; }
+.picker-group-label { display: block; font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin: 0 0 8px; }
+.architecture-group { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; margin-bottom: 14px; }
+.architecture-group > .picker-group-label:last-child { margin: 4px 0 0; }
+.architecture-option { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 13px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); text-align: left; transition: border-color .15s, background .15s; }
+.architecture-option:hover { background: var(--subtle); }
+.architecture-option.active { border-color: var(--blue); background: var(--blue-soft); }
+.architecture-option > svg:first-child { flex-shrink: 0; color: var(--blue); }
+.architecture-option > svg:last-child { flex-shrink: 0; color: var(--blue); }
+.architecture-option > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.architecture-option strong { display: block; font-size: 12px; font-weight: 550; }
+.architecture-option small { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; line-height: 1.6; }
+.architecture-option small.architecture-current { color: var(--blue-text); }
+.model-picker .field-hint svg { vertical-align: -2px; margin-right: 3px; color: var(--blue); }
 .search-field { display: flex; align-items: center; gap: 9px; border: 1px solid var(--border-strong); border-radius: 6px; padding: 0 11px; margin: 16px 0 10px; color: var(--muted); }
 .search-field input { border: 0; outline: 0; background: transparent; padding: 11px 0; width: 100%; font-size: 12px; }
 .search-field:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }

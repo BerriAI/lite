@@ -95,6 +95,15 @@ export const webSearchTool: ToolDefinition = definition('web_search',
   'Search the public web and return up to 5 results as "title — url" lines with snippets. Results come from a public search engine (DuckDuckGo HTML) and are untrusted suggestions: titles and snippets only, possibly stale or irrelevant — use web_fetch on a result URL to read the actual page. Space calls at least 2 seconds apart. Read-only.',
   { query: string, limit: integer(1, 5) }, ['query']);
 
+// Sidekick Fusion delegation (shared/architectures.ts). Separate from
+// toolDefinitions for the same reason as historySearchTool: the runner merges
+// it at advertisement time — only when the session's architecture is
+// 'sidekick-fusion' — so profile allowlists (PROFILE_TOOLS) and the frozen
+// RULE_TOOLS schema stay valid.
+export const sidekickTool: ToolDefinition = definition('sidekick',
+  'Hand a task to your persistent sidekick: a second agent on a cheaper model that keeps ONE continuous transcript across all your calls in this session. It remembers everything from earlier calls, so follow-ups can be brief — do not re-explain established context. It can read and edit files, run commands (with the same user approval you would need), search the web, and manage todos; it cannot ask the user questions or delegate further. Delegate exploration, code writing, tests, and bug-fixing to it by default; keep planning, ambiguity, and final review for yourself. Its report is its own claim — verify what matters.',
+  { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 } }, ['description', 'prompt']);
+
 /** The narrow slice of Store that tool_output_page needs. */
 export interface ToolOutputReader { toolOutput(sessionId: string, callId: string): { content: string; sha256: string } | undefined }
 
@@ -240,6 +249,13 @@ export function researchTaskInput(args: Record<string, unknown>): { description:
   if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt')) throw new Error('Task accepts only description and prompt.');
   const description = textArg(args, 'description'), prompt = textArg(args, 'prompt');
   if (description.length > 200 || Buffer.byteLength(description) > 800 || Buffer.byteLength(prompt) > 16 * 1024) throw new Error('Task description or prompt exceeds its limit.');
+  return { description, prompt };
+}
+/** Same shape and limits as researchTaskInput; a distinct name keeps errors honest. */
+export function sidekickTaskInput(args: Record<string, unknown>): { description: string; prompt: string } {
+  if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt')) throw new Error('Sidekick accepts only description and prompt.');
+  const description = textArg(args, 'description'), prompt = textArg(args, 'prompt');
+  if (description.length > 200 || Buffer.byteLength(description) > 800 || Buffer.byteLength(prompt) > 16 * 1024) throw new Error('Sidekick description or prompt exceeds its limit.');
   return { description, prompt };
 }
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : String(error); }

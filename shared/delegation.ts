@@ -16,6 +16,10 @@ export interface DelegationSummary {
   createdAt: number;
   finishedAt?: number;
   error?: string;
+  /** Absent for one-shot read-only researchers ('task'). 'sidekick' marks the
+   * persistent write-capable child of a Sidekick Fusion session: one durable
+   * row per child, re-pointed to each new originating tool call. */
+  role?: 'sidekick';
 }
 
 export type DelegationDetail = SessionDetail & {

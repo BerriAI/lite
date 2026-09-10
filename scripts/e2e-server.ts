@@ -23,7 +23,7 @@ const mock=createServer(async(req,res)=>{
   const lastUser=data.messages.filter((m:any)=>m.role==='user').at(-1)?.content||'';
   const prompt=typeof lastUser==='string'?lastUser:JSON.stringify(lastUser);
   if(prompt.includes('PROFILE_BROWSER')){profileRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(profileRequests.length>30)profileRequests.shift();}
-  if(prompt.includes('DELEGATE_BROWSER')||prompt.includes('DELEGATE_CHILD')){delegationRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(delegationRequests.length>100)delegationRequests.shift();}
+  if(prompt.includes('DELEGATE_BROWSER')||prompt.includes('DELEGATE_CHILD')||prompt.includes('SIDEKICK_BROWSER')||prompt.includes('SIDEKICK_CHILD')){delegationRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(delegationRequests.length>100)delegationRequests.shift();}
   if(prompt.includes('provider failure')||(prompt.includes('DELEGATE_CHILD')&&prompt.includes('CHILD_FAILURE'))){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
@@ -52,6 +52,15 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('SIDEKICK_CHILD')){
+    // The persistent sidekick: writes a per-turn marker file, then reports.
+    const turn=data.messages.filter((m:any)=>m.role==='user').length;
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Sidekick report for turn ${turn}: ${data.messages.at(-1).content}`});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:`sidekick-write-${turn}`,type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'sidekick-note.txt',content:`sidekick turn ${turn}`})}}]});}
+  }else if(prompt.includes('SIDEKICK_BROWSER')){
+    if(data.messages.at(-1)?.role==='tool')emit({content:`Sidekick outcome: ${data.messages.at(-1).content}`});
+    else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='sidekick')?'Sidekick tool is available.':'Sidekick tool is unavailable in this session.'});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-sidekick-task',type:'function',function:{name:'sidekick',arguments:JSON.stringify({description:'Write the fixture note',prompt:prompt.replace('SIDEKICK_BROWSER','SIDEKICK_CHILD')})}}]});}
   }else if(prompt.includes('RECEIPTS_BROWSER')){
     // A real write with no check: the sealed turn must carry a receipts notice.
     if(data.messages.at(-1)?.role==='tool')emit({content:'The write is complete.'});

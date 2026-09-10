@@ -19,6 +19,8 @@ import type { PluginRegistryEntry } from './plugins.js';
 export type { PluginRegistryEntry, PluginItem, InstallAction, InstallPlan, UninstallResult } from './plugins.js';
 import type { SidecarConfig } from './sidecars.js';
 export type { SidecarConfig, SidecarEvent } from './sidecars.js';
+import type { ArchitectureSelection } from './architectures.js';
+export type { ArchitectureSelection, ArchitectureKind, ArchitectureInfo, ArchitectureRole } from './architectures.js';
 
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
@@ -56,6 +58,12 @@ export interface Session { profile?: ActiveProfile; configRevision?: number; id:
    * this pair; Build turns run on the session providerId/model (the executor).
    * A model-routing decision only — workspace, permissions, and profile are shared. */
   planner?: { providerId: string; model: string };
+  /** Multi-model architecture selection (shared/architectures.ts). When set,
+   * the session runs as that arrangement of models — e.g. Sidekick Fusion pairs
+   * the session providerId/model (the main agent) with a cheaper persistent
+   * sidekick. Changing it is an idle-only config change with a revision bump,
+   * exactly like changing the model. */
+  architecture?: ArchitectureSelection;
   /** Output style (5.7): a built-in name (shared/styles.ts OUTPUT_STYLES) or a
    * workspace .lite/styles/<name>.md file name. Resolved at turn ACCEPTANCE
    * into the captured policy (like guidance); appended to the system prompt
