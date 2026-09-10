@@ -90,3 +90,23 @@ test('workspace panel opens by default on desktop and remembers being closed', a
   await expect(page.getByRole('button', { name: 'Show workspace panel', exact: true })).toBeVisible();
   await expect(panel).toHaveCount(0);
 });
+
+test('narrowing the window closes the workspace overlay without changing the desktop preference', async ({ page, request }) => {
+  const session = await (await request.post('/api/sessions', { data: {} })).json();
+  await page.goto(`/#session/${session.id}`);
+  const panel = page.locator('.workspace-panel');
+  await expect(panel).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(panel).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show workspace panel', exact: true }).click();
+  await expect(panel).toBeVisible();
+  await page.reload();
+  await expect(panel).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('lite.workspace-panel-open'))).toBe('true');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(panel).toBeVisible();
+  await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(panel).toHaveCount(0);
+});

@@ -76,8 +76,18 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [workspaceOpen, setWorkspaceOpen] = useState(() => { try { const saved = localStorage.getItem('lite.workspace-panel-open'); return saved === null ? window.innerWidth >= 960 : saved === 'true'; } catch { return window.innerWidth >= 960; } });
-  useEffect(() => { try { localStorage.setItem('lite.workspace-panel-open', String(workspaceOpen)); } catch { /* Keep the current layout if storage is unavailable. */ } }, [workspaceOpen]);
+  const [desktopWorkspaceOpen, setDesktopWorkspaceOpen] = useState(() => { try { return localStorage.getItem('lite.workspace-panel-open') !== 'false'; } catch { return true; } });
+  const [compactWorkspace, setCompactWorkspace] = useState(() => window.innerWidth <= 1000);
+  const [mobileWorkspaceOpen, setMobileWorkspaceOpen] = useState(false);
+  const workspaceOpen = compactWorkspace ? mobileWorkspaceOpen : desktopWorkspaceOpen;
+  const setWorkspaceOpen = compactWorkspace ? setMobileWorkspaceOpen : setDesktopWorkspaceOpen;
+  useEffect(() => { try { localStorage.setItem('lite.workspace-panel-open', String(desktopWorkspaceOpen)); } catch { /* Keep the current layout if storage is unavailable. */ } }, [desktopWorkspaceOpen]);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1000px)');
+    const update = () => { setCompactWorkspace(media.matches); setMobileWorkspaceOpen(false); };
+    update(); media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
   const [terminalOpen, setTerminalOpen] = useState(false);
   useEffect(() => setTerminalOpen(false), [activeId]);
   const [sessionMenu, setSessionMenu] = useState(false);
