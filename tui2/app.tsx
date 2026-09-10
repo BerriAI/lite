@@ -6,12 +6,16 @@
  * here — loading gate, crash screen, sticky-scroll transcript, prompt at the
  * bottom — is the durable skeleton they build on. */
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useKeyboard, useRenderer } from '@opentui/react';
+import { useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/react';
 import type { TextareaRenderable } from '@opentui/core';
-import type { Message, SessionDetail } from '../shared/types.js';
+import type { SessionDetail } from '../shared/types.js';
 import type { SessionSync } from './sync.js';
 import { toHex, type Theme } from './theme.js';
 import type { KeymapRouter } from './keymap.js';
+import {
+  DEFAULT_TRANSCRIPT_SETTINGS, InterruptHint, Transcript, TranscriptSettingsProvider,
+  WorkingScanner, type TranscriptSettings,
+} from './transcript.js';
 
 const ThemeContext = createContext<Theme | null>(null);
 
@@ -55,35 +59,7 @@ function CrashScreen({ message, onQuit }: { message: string; onQuit: () => void 
   );
 }
 
-function MessageRow({ message }: { message: Message }) {
-  const theme = useTheme();
-  const label = message.role === 'user' ? '❯' : '≋';
-  const body = [
-    message.reasoning ? `Thought: ${message.reasoning}` : '',
-    message.content ?? '',
-    ...(message.toolCalls ?? []).map(tool =>
-      `${tool.status === 'completed' ? '✓' : tool.status === 'error' ? '✗' : tool.status === 'denied' ? '⊘' : '…'} ${tool.name}`),
-    message.error ? `error: ${message.error}` : '',
-  ].filter(Boolean).join('\n');
-  return (
-    <box flexDirection="row" marginBottom={1}>
-      <text fg={toHex(message.role === 'user' ? theme.primary : theme.textMuted)}>{`${label} `}</text>
-      <box flexGrow={1} flexShrink={1}>
-        <text fg={toHex(message.role === 'user' ? theme.primary : theme.text)} wrapMode="word">{body || ' '}</text>
-      </box>
-    </box>
-  );
-}
-
-function Transcript({ detail }: { detail: SessionDetail }) {
-  return (
-    <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={1} paddingRight={1}>
-      {detail.messages.map(message => <MessageRow key={message.id} message={message} />)}
-    </scrollbox>
-  );
-}
-
-function StatusLine({ detail }: { detail: SessionDetail }) {
+function StatusLine({ detail, escPressed }: { detail: SessionDetail; escPressed: boolean }) {
   const theme = useTheme();
   const session = detail.session;
   const busy = session.status === 'running' || session.status === 'waiting';
@@ -91,7 +67,12 @@ function StatusLine({ detail }: { detail: SessionDetail }) {
     <box height={1} flexDirection="row" paddingLeft={1} paddingRight={1}>
       <text fg={toHex(theme.textMuted)}>{`${session.title || 'Session'} · ${session.providerId}/${session.model} · ${session.mode}`}</text>
       <box flexGrow={1} />
-      <text fg={toHex(busy ? theme.warning : theme.textMuted)}>{busy ? 'working…' : 'idle'}</text>
+      {busy ? (
+        <box flexDirection="row" gap={2}>
+          <WorkingScanner color={toHex(theme.primary)} />
+          <InterruptHint pressed={escPressed} />
+        </box>
+      ) : <text fg={toHex(theme.textMuted)}>idle</text>}
     </box>
   );
 }
@@ -126,9 +107,19 @@ export interface AppProps {
 
 export function App({ sync, theme, router, onQuit }: AppProps) {
   const renderer = useRenderer();
+  const { width } = useTerminalDimensions();
   const state = useSyncExternalStore(listener => sync.subscribe(listener), () => sync.getState());
   const lastCtrlC = useRef(0);
   const [notice, setNotice] = useState('');
+  const [escPressed, setEscPressed] = useState(false);
+  const [settings, setSettings] = useState<TranscriptSettings>(DEFAULT_TRANSCRIPT_SETTINGS);
+  const toggle = (key: keyof TranscriptSettings, label: string) => {
+    setSettings(current => {
+      const next = { ...current, [key]: !current[key] };
+      setNotice(`${label} ${next[key] ? 'shown' : 'hidden'}`);
+      return next;
+    });
+  };
   const pendingLeader = useSyncExternalStore(
     listener => router.subscribe(listener),
     () => router.pending.length > 0,
@@ -150,11 +141,22 @@ export function App({ sync, theme, router, onQuit }: AppProps) {
       }
       return onQuit();
     }
+    if (result.command === 'session.toggle.thinking') return toggle('showThinking', 'thinking');
+    if (result.command === 'session.toggle.actions') return toggle('toolDetails', 'tool details');
+    if (result.command === 'session.toggle.timestamps') return toggle('timestamps', 'timestamps');
+    if (result.command === 'session.toggle.generic_tool_output') return toggle('genericToolOutput', 'tool output');
+    if (result.command === 'app.toggle.animations') return toggle('animations', 'animations');
     if (result.command === 'session.interrupt') {
       const detail = sync.getState().detail;
       if (!detail) return;
       const busy = detail.session.status === 'running' || detail.session.status === 'waiting';
       if (!busy) return;
+      if (!escPressed) {
+        setEscPressed(true);
+        setTimeout(() => setEscPressed(false), 2000);
+        return;
+      }
+      setEscPressed(false);
       void sync.client.api(`/sessions/${encodeURIComponent(detail.session.id)}/interrupt`, {}).catch(() => {});
     }
   });
@@ -183,8 +185,8 @@ export function App({ sync, theme, router, onQuit }: AppProps) {
   else {
     body = (
       <box flexGrow={1} flexDirection="column">
-        <StatusLine detail={state.detail} />
-        <Transcript detail={state.detail} />
+        <StatusLine detail={state.detail} escPressed={escPressed} />
+        <Transcript detail={state.detail} width={width} />
         {notice || pendingLeader ? (
           <box height={1} paddingLeft={1}>
             <text fg={toHex(theme.warning)}>{pendingLeader ? 'leader…' : notice}</text>
@@ -194,5 +196,9 @@ export function App({ sync, theme, router, onQuit }: AppProps) {
       </box>
     );
   }
-  return <ThemeContext.Provider value={theme}>{body}</ThemeContext.Provider>;
+  return (
+    <ThemeContext.Provider value={theme}>
+      <TranscriptSettingsProvider value={settings}>{body}</TranscriptSettingsProvider>
+    </ThemeContext.Provider>
+  );
 }

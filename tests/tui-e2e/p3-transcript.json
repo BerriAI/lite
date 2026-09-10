@@ -1,0 +1,55 @@
+[
+  {
+    "wait": "fixture/test-model",
+    "note": "status line shows the session model"
+  },
+  {
+    "send": "hi there\r"
+  },
+  {
+    "wait": "hi there",
+    "note": "user chassis rendered"
+  },
+  {
+    "wait": "Hello from Lite",
+    "note": "assistant markdown text rendered"
+  },
+  {
+    "wait": "answer = 42",
+    "note": "fenced code block rendered"
+  },
+  {
+    "wait": "Thought",
+    "timeout": 25000,
+    "note": "reasoning row collapsed to Thought"
+  },
+  {
+    "wait": "Build",
+    "note": "turn footer shows titlecased mode"
+  },
+  {
+    "send": "create fixture\r"
+  },
+  {
+    "wait": "Write result.txt",
+    "timeout": 25000,
+    "note": "write tool row visible (awaiting permission)"
+  },
+  {
+    "sleep": 500
+  },
+  {
+    "send": "\u0003"
+  },
+  {
+    "sleep": 300
+  },
+  {
+    "send": "\u0003"
+  },
+  {
+    "expectExit": 0,
+    "timeout": 10000,
+    "note": "double ctrl+c exits"
+  }
+]
