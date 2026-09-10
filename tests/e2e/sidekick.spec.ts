@@ -75,10 +75,18 @@ test('the sidekick writes behind parent-surfaced approvals and one persistent ch
   await send(page, session, 'second');
   await approve(page, 'sidekick'); await approve(page, /sidekick/i); await done(request, session);
   const after = (await detail(request, session)).delegations!;
-  expect(after).toHaveLength(1); expect(after[0].id).toBe(delegation.id); expect(after[0].childSessionId).toBe(delegation.childSessionId);
+  expect(after).toHaveLength(2); expect(after[0]).toEqual(delegation); expect(after[1].id).not.toBe(delegation.id); expect(after[1].childSessionId).toBe(delegation.childSessionId);
   expect(await readFile(join(workspace, 'sidekick-note.txt'), 'utf8')).toBe('sidekick turn 2');
   const final = (await calls(request, session)).filter(call => call.messages.some(message => message.role === 'user' && String(message.content).includes('SIDEKICK_CHILD'))).at(-1)!;
   expect(final.messages.filter(message => message.role === 'user')).toHaveLength(2);
+  await expandSteps(page);
+  await sidekickCard(page).last().getByRole('button',{name:'Open transcript',exact:true}).click();
+  await expect(transcript(page)).toContainText('Sidekick report for turn 2');
+  await expect(transcript(page)).not.toContainText('Sidekick report for turn 1');
+  await transcript(page).getByRole('button',{name:'Close dialog',exact:true}).click();
+  await sidekickCard(page).first().getByRole('button',{name:'Open transcript',exact:true}).click();
+  await expect(transcript(page)).toContainText('Sidekick report for turn 1');
+  await expect(transcript(page)).not.toContainText('Sidekick report for turn 2');
 });
 
 test('the sidekick tool is advertised only when the architecture is selected', async ({ page, request }) => {

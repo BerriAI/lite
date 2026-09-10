@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Activity, ArrowUpRight, Check, ChevronRight, Eye, EyeOff, KeyRound, Plus, Server, Settings2, Shield, ShieldCheck, Star, Trash2, Unplug, X } from 'lucide-react';
 import type { McpServerConfig, Provider, Settings as SettingsType, UsageReport } from '../../shared/types';
 import type { PermissionDecision, PermissionRuleSet } from '../../shared/permissions';
@@ -50,13 +50,13 @@ function parseContextRows(rows: ContextLimitRow[]): Record<string, number> {
   }
   return Object.fromEntries(entries);
 }
-export function Settings({ settings, onClose, onSave, onProfiles, profilesDisabled }: { onProfiles?: () => void; profilesDisabled?: boolean; settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
+export function Settings({ settings, onClose, onSave, onProfiles, profilesDisabled, profiles }: { profiles?: ReactNode; onProfiles?: () => void; profilesDisabled?: boolean; settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
   const [draft, setDraft] = useState<SettingsType>(() => ({ ...settings, providers: settings.providers.map(({ apiKey: _key, ...p }) => p) }));
   const [contextRows, setContextRows] = useState(() => contextRowsFor(settings.providers));
   const [ruleRows, setRuleRows] = useState(() => ruleRowsFor(settings.permissionRules));
   const rulesTouched = useRef(false);
   const saving = useRef(false);
-  const [tab, setTab] = useState<'providers' | 'general' | 'permissions' | 'integrations' | 'usage'>('providers');
+  const [tab, setTab] = useState<'providers' | 'general' | 'permissions' | 'integrations' | 'usage' | 'profiles'>('providers');
   const [selected, setSelected] = useState(settings.defaultProvider || settings.providers[0]?.id || '');
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -333,12 +333,13 @@ export function Settings({ settings, onClose, onSave, onProfiles, profilesDisabl
     <div className="settings-layout"><nav className="settings-nav" aria-label="Settings sections">
       <button className={tab === 'providers' ? 'selected' : ''} onClick={() => setTab('providers')}><Server size={16} />Providers</button>
       <button className={tab === 'general' ? 'selected' : ''} onClick={() => setTab('general')}><Settings2 size={16} />Workspace</button>
-      {onProfiles && <button aria-label="Project profiles" disabled={profilesDisabled} onClick={onProfiles}><Star size={16} />Project profiles</button>}
+      {onProfiles && <button className={tab === 'profiles' ? 'selected' : ''} aria-label="Project profiles" disabled={profilesDisabled} onClick={() => { onProfiles(); setTab('profiles'); }}><Star size={16} />Project profiles</button>}
       <button className={tab === 'permissions' ? 'selected' : ''} onClick={() => setTab('permissions')}><Shield size={16} />Permissions</button>
       <button className={tab === 'integrations' ? 'selected' : ''} onClick={() => setTab('integrations')}><Unplug size={16} />Integrations</button>
       <button className={tab === 'usage' ? 'selected' : ''} onClick={() => setTab('usage')}><Activity size={16} />Usage</button>
       <div className="settings-note"><ShieldCheck size={17} /><p>Your keys stay on this local server. They are never returned to the browser.</p></div>
     </nav><div className="settings-content">
+      {profiles && <div hidden={tab !== 'profiles'}>{profiles}</div>}
       {tab === 'providers' && <>
         <div className="section-heading"><div><h3>Bring your own intelligence.</h3><p>One gateway, or connect directly. Your choice.</p></div></div>
         <div className="provider-tabs">{draft.providers.map(p => <button key={p.id} className={p.id === selected ? 'selected' : ''} onClick={() => { setSelected(p.id); setShowKey(false); setError(''); setNotice(''); }}><span className={`provider-dot ${p.configured ? 'configured' : ''}`} />{p.name}</button>)}<button onClick={addProvider} aria-label="Add provider"><Plus size={15} />Add</button></div>
@@ -461,6 +462,6 @@ export function Settings({ settings, onClose, onSave, onProfiles, profilesDisabl
       {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss error" onClick={() => setError('')}><X size={14} /></button></div>}
       {notice && <p className="success-note" role="status"><Check size={15} />{notice}</p>}
     </div></div>
-    <footer className="modal-footer"><span>Local by default. Open by design.</span><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || testing || anyMcpAction || reviewLoading || rulesInvalid} onClick={() => save(true)}>Save settings<ChevronRight size={15} /></button></footer>
+    <footer className="modal-footer">{tab === 'profiles' ? <button className="button secondary" onClick={onClose}>Done</button> : <><span>Local by default. Open by design.</span><button className="button secondary" onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || testing || anyMcpAction || reviewLoading || rulesInvalid} onClick={() => save(true)}>Save settings<ChevronRight size={15} /></button></>}</footer>
   </Modal>;
 }

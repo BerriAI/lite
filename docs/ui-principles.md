@@ -14,3 +14,7 @@ Lite should give most of its space and attention to the conversation and the nex
 - Completed execution belongs behind one response-level steps disclosure. Tool cards, task transcripts, and reasoning should not interrupt the answer by default. Flag tool issues and modifications in the collapsed summary.
 - Project profiles belong in Settings, never in the composer. Show a single mode control and the main model; keep the sidekick's full configuration in the model picker.
 - Do not confuse density with tiny type. Use readable answer text, quiet table rules, and consistent alignment; reserve stronger styling for user actions.
+
+- Configure models in decision order: architecture dropdown with one-line descriptions, searchable dropdowns for the selected roles, then a separate optional Planner model section. Default a fresh workspace to Single model; remember explicit workspace choices.
+- Project profiles use the same Settings navigation and form dimensions as other sections, with visible creation/editing controls. Saving a definition and applying it to the current session are separate actions.
+- Keep the sidebar short: New session, the session list, and a Settings control in the bottom workspace row. Search stays available through the keyboard palette.

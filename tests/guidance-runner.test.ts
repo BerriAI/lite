@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -99,7 +99,19 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     expect(carrying.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('caps steering notes per response and discards undelivered notes on cancel', async () => {
+  it('seals history and releases the turn even if usage persistence fails during completion', async () => {
+    const session = await create();
+    const usage = vi.spyOn(runner.usage, 'turn').mockImplementationOnce(() => { throw new Error('Simulated usage storage failure'); });
+    await run(session.id);
+    usage.mockRestore();
+    expect(runner.active(session.id)).toBe(false);
+    expect(runner.history.state(session.id)).toMatchObject({ canUndo: true });
+    expect(runner.history.state(session.id).pendingRecovery).toBeUndefined();
+    await run(session.id, 'Continue after storage recovered');
+    expect(store.session(session.id).status).toBe('idle');
+  });
+
+  it('caps steering notes per response and preserves accepted notes on cancel', async () => {
     const session = await create();
     let released!: () => void; const gate = new Promise<void>(resolve => { released = resolve; });
     respond = (_body, res) => { void gate.then(() => text(res)); };
@@ -108,11 +120,11 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     for (let index = 0; index < 5; index++) expect((await api(`/sessions/${session.id}/steer`, { content: `Note ${index}` })).status).toBe(202);
     expect((await api(`/sessions/${session.id}/steer`, { content: 'One too many' })).status).toBe(409);
     await runner.cancel(session.id); released!(); await running;
-    // Held response was cancelled before any step drained the notes: no marker persisted.
-    expect(store.messages(session.id).filter(m => m.role === 'system' && m.content.includes('[Steering]'))).toHaveLength(0);
-    // A fresh run does not resurrect discarded notes.
+    // Accepted notes survive cancellation as pending continuation context, rather than being lost.
+    expect(store.messages(session.id).filter(m => m.role === 'system' && m.content.includes('[Steering]'))).toHaveLength(5);
+    // A later explicit user turn sees the accepted notes in saved context.
     respond = (_body, res) => text(res);
     await run(session.id, 'After cancel');
-    expect(calls.map(body => JSON.stringify(body.messages)).filter(m => m.includes('Note 0')).length).toBe(0);
+    expect(calls.map(body => JSON.stringify(body.messages)).filter(m => m.includes('Note 0')).length).toBeGreaterThan(0);
   });
 });

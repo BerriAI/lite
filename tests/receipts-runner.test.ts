@@ -38,7 +38,7 @@ describe('end-of-turn evidence receipts in the Runner', () => {
     expect(await readFile(join(directory, 'made.txt'), 'utf8')).toBe('evidence');
     const final = finalAssistant(session.id);
     expect(final.content).toBe('File written.\n\n[Receipts: 1 file(s) changed, no checks were run.]');
-    expect(final.receipts).toEqual({ filesChanged: ['made.txt'], commandsRun: [], checksRun: [], checksFailed: [], filesChangedAfterLastCheck: [], unreadFilesChanged: ['made.txt'] });
+    expect(final.receipts).toEqual({ filesChanged: ['made.txt'], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: ['made.txt'] });
     // Receipts survive persistence and reach the session detail projection.
     expect((await api(`/sessions/${session.id}`)).body.messages.at(-1).receipts.filesChanged).toEqual(['made.txt']);
   });
@@ -56,7 +56,7 @@ describe('end-of-turn evidence receipts in the Runner', () => {
     await run(session.id, 'Write then verify');
     const final = finalAssistant(session.id);
     expect(final.content).toBe('Verified.');
-    expect(final.receipts).toMatchObject({ filesChanged: ['checked.txt'], checksRun: ['npm test --help'], checksFailed: [], filesChangedAfterLastCheck: [] });
+    expect(final.receipts).toMatchObject({ filesChanged: ['checked.txt'], checksRun: ['npm test --help'], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [] });
     const bash = store.messages(session.id).flatMap(m => m.toolCalls ?? []).find(call => call.name === 'bash')!;
     expect(bash.output).toMatch(/Exit code: 0\s*$/); // The heuristic's failure probe stays honest.
   });
@@ -83,7 +83,7 @@ describe('end-of-turn evidence receipts in the Runner', () => {
     await run(session.id, 'Just read');
     const final = finalAssistant(session.id);
     expect(final.content).toBe('Read only.');
-    expect(final.receipts).toEqual({ filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] });
+    expect(final.receipts).toEqual({ filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] });
   });
 
   it('never attaches receipts to a child researcher transcript', async () => {

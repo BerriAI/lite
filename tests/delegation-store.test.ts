@@ -37,6 +37,28 @@ async function skill() {
 function reopen() { store.close(); store = new Store(join(directory, 'data')); history = new History(store); delegations = new Delegations(store, history); }
 
 describe('durable foreground researcher storage', () => {
+  it('migrates the legacy unique-child table without losing a completed handoff', () => {
+    const root=origin();root.assistant.toolCalls![0].name='sidekick';store.saveMessage(root.assistant);
+    const first=delegations.create({...root.input,role:'sidekick',contextKey:'compatible'});
+    finish(first.child);delegations.settle(first.delegation.id,'completed','Original report');history.seal(root.parent.id);
+    const before=delegations.transcript(root.parent.id,first.delegation.id);
+    store.db.exec(`CREATE TABLE delegations_legacy (
+      id TEXT PRIMARY KEY, parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      parent_turn_id TEXT NOT NULL, parent_message_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+      child_session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+      status TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
+      INSERT INTO delegations_legacy SELECT * FROM delegations;
+      DROP TABLE delegations; ALTER TABLE delegations_legacy RENAME TO delegations;
+      DELETE FROM schema_migrations WHERE version=1;`);
+    reopen();
+    const restored=delegations.transcript(root.parent.id,first.delegation.id);
+    expect(restored.messages).toEqual(before.messages);expect(restored.delegation).toEqual({...before.delegation,legacyContext:true});
+    const next=origin({session:store.session(root.parent.id)});next.assistant.toolCalls![0].name='sidekick';store.saveMessage(next.assistant);
+    const second=delegations.reuse({...next.input,delegationId:first.delegation.id,contextKey:'compatible'});
+    expect(second.child.id).toBe(first.child.id);expect(second.delegation.id).not.toBe(first.delegation.id);
+    expect(delegations.transcript(root.parent.id,first.delegation.id).messages).toEqual(before.messages);
+    expect(store.db.prepare('SELECT version FROM schema_migrations').all()).toEqual([{version:1}]);
+  });
   it.each(['build', 'plan'] as const)('atomically creates hidden child, prompt, pin, history and exact parent link from %s', async mode => {
     const profile = await skill(), root = origin({ profile, mode }); const { child, user, delegation } = delegations.create(root.input);
     expect(child).toMatchObject({ mode, permissionMode: 'auto', workspace: root.parent.workspace, providerId: 'test', model: 'model' });

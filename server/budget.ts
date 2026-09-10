@@ -35,7 +35,7 @@ function providerIdentity(provider: Provider): string {
 }
 /** A bounded in-memory observation cache. Only successful explicit model discovery
  * populates it; get never fetches, falls back by model name, or refreshes its TTL. */
-export interface CatalogLimit { contextWindow?: number; maxInputTokens?: number; }
+export interface CatalogLimit { reasoningEfforts?: Model['reasoningEfforts']; contextWindow?: number; maxInputTokens?: number; }
 export class ModelCatalogCache {
   private entries = new Map<string, { identity: string; createdAt: number; limits: Map<string, CatalogLimit> }>();
   constructor(private now: () => number = () => Date.now()) {}
@@ -48,10 +48,11 @@ export class ModelCatalogCache {
       if (seen.has(model.id)) { limits.delete(model.id); continue; }
       seen.add(model.id);
       const limit: CatalogLimit = {
+        ...(model.reasoningEfforts ? {reasoningEfforts:[...model.reasoningEfforts]} : {}),
         ...(validContextWindow(model.contextWindow) ? { contextWindow: model.contextWindow } : {}),
         ...(validContextWindow(model.maxInputTokens) ? { maxInputTokens: model.maxInputTokens } : {}),
       };
-      if (limit.contextWindow !== undefined || limit.maxInputTokens !== undefined) limits.set(model.id, limit);
+      if (limit.contextWindow !== undefined || limit.maxInputTokens !== undefined || limit.reasoningEfforts !== undefined) limits.set(model.id, limit);
     }
     this.entries.delete(provider.id);
     this.entries.set(provider.id, { identity: providerIdentity(provider), createdAt: this.now(), limits });

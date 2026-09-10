@@ -12,7 +12,7 @@ const roots: Root[] = [];
 function root() { const host = document.createElement('div'); document.body.append(host); const value = createRoot(host); roots.push(value); return value; }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (reason: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function el<T extends Element = HTMLElement>(selector: string): T { const found = document.querySelector<T>(selector); expect(found, selector).not.toBeNull(); return found!; }
-async function click(selector: string) { if (selector === '[aria-label="Project profiles"]' && !document.querySelector(selector)) await press('Settings'); await act(async () => el<HTMLButtonElement>(selector).click()); }
+async function click(selector: string) { if (selector === '[aria-label="Project profiles"]' && !document.querySelector(selector)) await click('[aria-label="Settings"]'); await act(async () => el<HTMLButtonElement>(selector).click()); }
 function button(label: string) { const found = [...document.querySelectorAll('button')].find(value => value.textContent?.trim() === label); expect(found, label).toBeDefined(); return found!; }
 async function press(label: string) { await act(async () => button(label).click()); }
 async function choose(id: string) { await act(async () => { const input = el<HTMLSelectElement>('[aria-label="Profile"]'); input.value = id; input.dispatchEvent(new Event('change', { bubbles: true })); }); }

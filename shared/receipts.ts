@@ -12,6 +12,8 @@ export interface TurnReceipts {
   checksRun: string[];
   /** checksRun entries whose result reported failure (see checkFailed). */
   checksFailed: string[];
+  /** Failed check commands not superseded by a later successful identical check. */
+  unresolvedChecks?: string[];
   /** Files whose LAST change landed after the LAST completed check — the
    * "you edited after your tests passed" catch. Empty when no checks ran
    * (that case is already reported as "no checks were run"). */
@@ -33,7 +35,7 @@ export interface TurnReceipts {
  *   make test · make check
  * Deliberately narrow: a false "no checks were run" is a small annoyance,
  * while a false "checks ran" would launder unverified work. */
-const CHECKERS = ['npm test', 'npx vitest', 'npx tsc', 'npm run typecheck', 'npm run lint', 'npm run check', 'pytest', 'cargo test', 'cargo check', 'go test', 'make test', 'make check'];
+const CHECKERS = ['npm test', 'npx vitest', 'npx tsc', 'npx playwright test', 'npm run test', 'npm run typecheck', 'npm run lint', 'npm run check', 'pytest', 'cargo test', 'cargo check', 'go test', 'make test', 'make check'];
 // Word boundaries on both sides so 'echo test', 'pytest-cov' and 'npm run checkstyle' never match.
 const CHECK_PATTERN = new RegExp(`(?:^|[;&|(\\s])(?:${CHECKERS.map(checker => checker.replace(/ /g, '\\s+')).join('|')})(?=$|[;&|)\\s])`);
 export const isCheckCommand = (command: string): boolean => CHECK_PATTERN.test(command);

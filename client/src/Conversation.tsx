@@ -1,3 +1,4 @@
+import { groupRuns } from '../../shared/conversation';
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { QuestionRequest } from '../../shared/questions';
 import ReactMarkdown from 'react-markdown';
@@ -23,7 +24,7 @@ function CopyCode({ children }: { children: React.ReactNode }) {
   }
   return <CopyButton text={text(children).replace(/\n$/, '')} label="Copy code" />;
 }
-const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Delegate task', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
+const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Research task', sidekick: 'Sidekick', delegate: 'Worker', verify: 'Driver verification', takeover: 'Driver takeover', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
 function ToolCard({ tool }: { tool: ToolCall }) {
   const working = tool.status === 'running' || tool.status === 'pending';
   const title = tool.args?.path || tool.args?.command || tool.args?.pattern || tool.args?.url;
@@ -41,11 +42,13 @@ export function Conversation({ detail, connection, onDecide, onFork, renderQuest
   const running = detail.session.status === 'running' || detail.session.status === 'waiting';
   const last = detail.messages.filter(message => message.role !== 'tool').at(-1);
   const groups = groupRuns(detail.messages);
+  const tasks=detail.delegations?.filter(task=>task.status==='running')??[];
+  const workActivity=detail.permissions.length||detail.questions?.length?false:tasks.length>1?`${tasks.length} workers running`:tasks.length===1?`${tasks[0].role?tasks[0].role[0].toUpperCase()+tasks[0].role.slice(1):'Research'} · ${tasks[0].activity??tasks[0].description}`:undefined;
   const hasWork = groups.findLast(group => group.startsRun && group.closesTranscript)?.steps.some(message => message.reasoning || message.toolCalls?.length);
   useLayoutEffect(() => { if (atBottom && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [detail.messages, detail.permissions, detail.questions, atBottom]);
   return <div className="conversation-shell"><div className="conversation-scroll" ref={scroll} onScroll={e => { const el = e.currentTarget; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 100); }}><div className="conversation-content">
     <div className="conversation-start"><span />{new Date(detail.session.createdAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}<span /></div>
-    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }) => <MessageView key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript} runUsage={runUsage} steps={steps} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
+    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }) => <MessageView key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript} runUsage={runUsage} steps={steps} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
     {!detail.messages.length && <div className="session-empty"><Logo /><h2>{readOnly ? 'No transcript yet.' : 'A fresh start.'}</h2><p>{readOnly ? 'Research messages will appear here when available. This view cannot start a run.' : 'Give your agent a task. It will work in this session’s workspace.'}</p></div>}
     {!readOnly && detail.questions?.map(renderQuestion)}
     {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} busy={busy} />)}
@@ -53,54 +56,24 @@ export function Conversation({ detail, connection, onDecide, onFork, renderQuest
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" aria-label="Jump to latest" title="Jump to latest" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={16} /></button>}</div>;
 }
-/** One task = one continuous assistant block. Consecutive assistant messages
- * form a "run": the byline renders once at its head, actions once at its completed tail, and the tail's usage sums the whole run. Each
- * step keeps its own article so per-step fork boundaries and transcript
- * counts still reflect provider rounds. */
-function groupRuns(messages: Message[]) {
-  const rendered = messages.filter(m => m.role !== 'tool');
-  return rendered.map((message, index) => {
-    const assistant = message.role === 'assistant';
-    const startsRun = assistant && rendered[index - 1]?.role !== 'assistant';
-    const endsRun = assistant && rendered[index + 1]?.role !== 'assistant';
-    // Every message in the trailing run stays live until the turn finishes.
-    const closesTranscript = assistant && rendered.slice(index).every(m => m.role === 'assistant');
-    let runUsage: Usage | undefined;
-    if (endsRun) {
-      for (let i = index; i >= 0 && rendered[i].role === 'assistant'; i--) {
-        const usage = rendered[i].usage;
-        if (!usage) continue;
-        runUsage = runUsage ? {
-          inputTokens: runUsage.inputTokens + usage.inputTokens,
-          outputTokens: runUsage.outputTokens + usage.outputTokens,
-          ...(runUsage.durationMs !== undefined || usage.durationMs !== undefined ? { durationMs: (runUsage.durationMs ?? 0) + (usage.durationMs ?? 0) } : {}),
-          ...(runUsage.cost !== undefined || usage.cost !== undefined ? { cost: (runUsage.cost ?? 0) + (usage.cost ?? 0) } : {}),
-        } : { ...usage };
-      }
-    }
-    const steps: Message[] = [];
-    if (startsRun) for (let i = index; i < rendered.length && rendered[i].role === 'assistant'; i++) steps.push(rendered[i]);
-    return { message, startsRun, endsRun, closesTranscript, runUsage, steps };
-  });
-}
 /** Compact host-computed evidence line for a mutating turn, attached under the
  * final assistant message like the context-estimate row. Rendered only when
  * files changed; the copy mirrors the appended [Receipts: …] content notice. */
 function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
   const checks = receipts.checksRun.length === 0 ? '· No checks run'
     : receipts.filesChangedAfterLastCheck.length ? `· ${receipts.filesChangedAfterLastCheck.length} file${receipts.filesChangedAfterLastCheck.length === 1 ? '' : 's'} changed after last check`
-    : `· Checks: ${receipts.checksRun.at(-1)} ${receipts.checksFailed.includes(receipts.checksRun.at(-1)!) ? '✗' : '✓'}`;
+    : `· Checks: ${receipts.checksRun.at(-1)} ${(receipts.unresolvedChecks ?? receipts.checksFailed).includes(receipts.checksRun.at(-1)!) ? '✗' : '✓'}`;
   return <div className="receipts-row" title="Host-computed from tool receipts, not model claims">Changed: {receipts.filesChanged.join(', ')} {checks}</div>;
 }
 /** The transcript is available on demand; the answer owns the reading surface. */
-function WorkLog({ messages, live, renderTask }: { messages: Message[]; live: boolean; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
+function WorkLog({ messages, live, renderTask, workActivity }: { messages: Message[]; live: boolean; workActivity?: string|false; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
   const calls = messages.flatMap(message => (message.toolCalls ?? []).map(tool => ({ tool, message })));
   const thinking = messages.filter(message => message.reasoning);
   if (!calls.length && !thinking.length) return null;
   const current = calls.findLast(({ tool }) => tool.status === 'running' || tool.status === 'pending')?.tool;
-  const working = live && Boolean(current || !messages.at(-1)?.content);
+  const working = live && workActivity!==false && Boolean(current || !messages.at(-1)?.content);
   const action = current && (current.args?.description || current.args?.path || current.args?.command || current.args?.pattern);
-  const label = working ? current ? `${toolLabels[current.name] || (current.name === 'sidekick' ? 'Sidekick' : current.name)}${typeof action === 'string' ? ` · ${action}` : ''}` : 'Thinking' : calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process';
+  const label = working ? workActivity || (current ? `${toolLabels[current.name] || (current.name === 'sidekick' ? 'Sidekick' : current.name)}${typeof action === 'string' ? ` · ${action}` : ''}` : 'Thinking') : calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process';
   const failed = calls.filter(({ tool }) => tool.status === 'error' || tool.status === 'denied').length;
   const modified = calls.filter(({ tool }) => tool.intercepted).length;
   return <details className={`work-log${working ? ' active' : ''}`} aria-label="Response steps">
@@ -112,18 +85,31 @@ function WorkLog({ messages, live, renderTask }: { messages: Message[]; live: bo
     </div>
   </details>;
 }
-function MessageView({ message, running, grouped, tail, live, runUsage, steps, onFork, disabled, readOnly, renderTask }: { message: Message; running: boolean; grouped: boolean; tail: boolean; live: boolean; runUsage?: Usage; steps: Message[]; onFork: () => void; disabled: boolean; readOnly?: boolean; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
+function MessageView({ message, running, grouped, tail, live, runUsage, steps, workActivity, onFork, disabled, readOnly, renderTask }: { message: Message; running: boolean; grouped: boolean; tail: boolean; live: boolean; runUsage?: Usage; steps: Message[]; workActivity?: string|false; onFork: () => void; disabled: boolean; readOnly?: boolean; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
   if (message.role === 'system') return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : 'Your message'}>
     {assistant && !grouped && <div className="message-byline"><Logo small /><span>Lite</span></div>}
-    <div className="message-body">{assistant && !grouped && <WorkLog messages={steps} live={live} renderTask={renderTask} />}
+    <div className="message-body">{assistant && !grouped && <WorkLog messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}
       {message.content && <div className="markdown"><Markdown content={message.content} /></div>}
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
 
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
       {assistant && message.receipts && message.receipts.filesChanged.length > 0 && <ReceiptsRow receipts={message.receipts} />}
     </div>
-    {assistant && tail && !live && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <span className="usage" title="Reported by your model provider; totals for this response">{runUsage.outputTokens.toLocaleString()} tokens{runUsage.durationMs ? ` · ${(runUsage.durationMs / 1000).toFixed(1)}s` : ''}{runUsage.cost !== undefined ? ` · $${runUsage.cost.toFixed(4)}` : ''}</span>}</div>}
+    {assistant && tail && !live && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={message.turnUsage} />}</div>}
   </article>;
+}
+
+function UsageDetails({usage,family}:{usage:Usage;family?:Message['turnUsage']}) {
+  const complete=!family||family.reportedRequests===family.requests;
+  const reported=!family||family.reportedRequests>0;
+  const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number}>();
+  for(const record of family?.breakdown??[]) {
+    const key=JSON.stringify([record.providerId,record.model,record.role,record.phase]);
+    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${record.phase}`}`,input:0,output:0,requests:0,reported:0};
+    row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;}rows.set(key,row);
+  }
+  const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;
+  return family?<details className="usage usage-details"><summary>{summary}</summary><div className="usage-breakdown">{[...rows].map(([key,row])=><div key={key}><strong>{row.label}</strong><span>{row.reported?`${row.input.toLocaleString()} in · ${row.output.toLocaleString()} out`:'Usage not reported'}{row.reported<row.requests?` · ${row.requests-row.reported} request(s) unreported`:''}</span></div>)}</div></details>:<span className="usage" title="Reported input and output tokens for this response">{summary}</span>;
 }

@@ -9,6 +9,7 @@ export interface ProjectProfile {
   skills?: string[];
 }
 export interface ProjectSkill { id: string; name: string; description: string }
+export interface EditableProfile extends ProjectProfile { instructions?: string }
 export interface ProfileDiagnostic { path: string; code: string; message: string }
 export interface ProfileCatalog { workspace?: string; revision: string; profiles: ProjectProfile[]; skills: ProjectSkill[]; diagnostics: ProfileDiagnostic[] }
 export interface ApplyProfileRequest { expectedConfigRevision: number; choice: ProfileChoice; selection?: { providerId?: string; model?: string; mode?: 'plan' | 'build' } }

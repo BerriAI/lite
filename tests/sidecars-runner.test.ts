@@ -131,18 +131,31 @@ describe('sidecar extensions Runner/API integration', () => {
     await expect(access(join(directory, '..', '..', 'outside.txt'))).rejects.toThrow();
   });
 
-  it('sidecars resolve from CURRENT settings: a mid-session change affects the next interception (v1 divergence from hook capture)', async () => {
+  it('sidecar changes between turns apply to the next accepted turn', async () => {
     setSidecars([]);
     respond = oneCallThenText('write_file', { path: 'first.txt', content: 'a' });
     const s = await create(); await run(s.id, 'Write first');
     expect(toolCalls(s.id)[0].intercepted).toBeUndefined();
     // Install a blocker AFTER the first turn; the next turn's interception sees it
-    // (hooks, by contrast, are pinned at turn acceptance — divergence documented).
+    // because the new turn captures the updated configuration.
     setSidecars([sidecar(responder('console.log(JSON.stringify({jsonrpc:"2.0",id:m.id,result:{action:"block",reason:"now blocked"}}))'), 'late')]);
     respond = oneCallThenText('write_file', { path: 'second.txt', content: 'b' });
     await run(s.id, 'Write second');
     await expect(access(join(directory, 'second.txt'))).rejects.toThrow();
     expect(toolCalls(s.id).at(-1)?.output).toBe('Blocked by sidecar late: now blocked');
+  });
+
+  it('blocks an intercepted action if sidecar configuration changes after acceptance', async () => {
+    setSidecars([]);
+    const reply = oneCallThenText('write_file', { path: 'unapproved-policy.txt', content: 'Do not write' });
+    respond = (body, res) => {
+      if (body.messages.at(-1)?.role !== 'tool') setSidecars([sidecar('exit 0', 'new-policy')]);
+      reply(body, res);
+    };
+    const session = await create(); await run(session.id);
+    expect(toolCalls(session.id)[0].status).toBe('denied');
+    expect(toolCalls(session.id)[0].output).toContain('Sidecar configuration changed');
+    await expect(access(join(directory, 'unapproved-policy.txt'))).rejects.toThrow();
   });
 
   it('sidecars run AFTER PreToolUse hooks: a hook block means the sidecar never sees the call', async () => {

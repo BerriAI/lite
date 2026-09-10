@@ -102,7 +102,7 @@ export const webSearchTool: ToolDefinition = definition('web_search',
 // RULE_TOOLS schema stay valid.
 export const sidekickTool: ToolDefinition = definition('sidekick',
   'Hand a task to your persistent sidekick: a second agent on a cheaper model that keeps ONE continuous transcript across all your calls in this session. It remembers everything from earlier calls, so follow-ups can be brief — do not re-explain established context. It can read and edit files, run commands (with the same user approval you would need), search the web, and manage todos; it cannot ask the user questions or delegate further. Delegate exploration, code writing, tests, and bug-fixing to it by default; keep planning, ambiguity, and final review for yourself. Its report is its own claim — verify what matters.',
-  { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 } }, ['description', 'prompt']);
+  { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 }, repairOf: {type:'string',description:'Failed invocation ID this task repairs, when applicable.'} }, ['description', 'prompt']);
 
 /** The narrow slice of Store that tool_output_page needs. */
 export interface ToolOutputReader { toolOutput(sessionId: string, callId: string): { content: string; sha256: string } | undefined }
@@ -253,7 +253,7 @@ export function researchTaskInput(args: Record<string, unknown>): { description:
 }
 /** Same shape and limits as researchTaskInput; a distinct name keeps errors honest. */
 export function sidekickTaskInput(args: Record<string, unknown>): { description: string; prompt: string } {
-  if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt')) throw new Error('Sidekick accepts only description and prompt.');
+  if (Object.keys(args).some(key => key !== 'description' && key !== 'prompt' && key !== 'repairOf')) throw new Error('Worker tasks accept description, prompt, and optional repairOf.');
   const description = textArg(args, 'description'), prompt = textArg(args, 'prompt');
   if (description.length > 200 || Buffer.byteLength(description) > 800 || Buffer.byteLength(prompt) > 16 * 1024) throw new Error('Sidekick description or prompt exceeds its limit.');
   return { description, prompt };

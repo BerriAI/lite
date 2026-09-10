@@ -22,7 +22,8 @@ export type { SidecarConfig, SidecarEvent } from './sidecars.js';
 import type { ArchitectureSelection } from './architectures.js';
 export type { ArchitectureSelection, ArchitectureKind, ArchitectureInfo, ArchitectureRole } from './architectures.js';
 
-export type ReasoningEffort = 'low' | 'medium' | 'high';
+export const REASONING_EFFORTS = ['none','minimal','low','medium','high','xhigh','max'] as const;
+export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 /** Session preferences keyed by JSON.stringify([providerId, model]). */
 export type ModelReasoning = Record<string, ReasoningEffort>;
 export type Mode = 'build' | 'plan';
@@ -30,7 +31,7 @@ export type PermissionMode = 'ask' | 'auto';
 export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
 export type ProviderKind = 'openai' | 'anthropic' | 'codex';
 export interface Provider { id: string; name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; configured?: boolean; models?: string[]; contextWindows?: Record<string, number>; }
-export interface Model { id: string; name: string; providerId: string; contextWindow?: number; maxInputTokens?: number; }
+export interface Model { reasoningEfforts?: ReasoningEffort[]; id: string; name: string; providerId: string; contextWindow?: number; maxInputTokens?: number; }
 export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean;
   /** Lifecycle hooks configured at the app level (design note 4.3). */
   hooks?: HookConfig[];
@@ -54,7 +55,7 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
  * refresh/disconnect never reshapes the advertised tool array
  * (docs/design-capability-proxy.md, Option 3). */
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; advertise?: boolean; }
-export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
+export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProfile; configRevision?: number; historyRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
   goal?: SessionGoal;
   /** Optional planner half of a planner+executor pair. Plan-mode turns run on
@@ -73,21 +74,21 @@ export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProf
    * tail so it stays in the cached prefix. Changing it is an idle-only config
    * change with a revision bump, exactly like changing the model. */
   outputStyle?: string; }
-export interface ToolCall { delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
+export interface ToolCall { changes?: FileChange[]; delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
   /** Sidecar interception attribution (design note 4.5): present iff a sidecar
    * modified this call. `args` above are the MODIFIED (executed) arguments;
    * the unmodified original is preserved here so the interception is auditable
    * in the transcript and visibly attributed on the activity card. */
   intercepted?: { by: string; originalArgs: Record<string,unknown>; reason: string }; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
-export interface Message { context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
+export interface Message { turnId?: string; turnUsage?: import('./usage.js').TurnUsage; context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
   /** Host-computed end-of-turn evidence account. Only on the FINAL assistant message of a completed root turn; observation only, never persisted for children. */
   receipts?: TurnReceipts; }
 export interface Usage { inputTokens: number; outputTokens: number; cachedTokens?: number; cost?: number; durationMs?: number; }
 export interface Todo { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; }
 export interface PermissionRequest { id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }
 export interface FileEntry { name: string; path: string; type: 'file' | 'directory'; size?: number; }
-export interface FileChange { path: string; before: string | null; after: string | null; }
+export interface FileChange { path: string; before: string | null; after: string | null; actorSessionId?: string; invocationId?: string; }
 export interface QueuedMessage { id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }
 export interface QueueState { items: QueuedMessage[]; paused: boolean; reason?: string; manualPause?: boolean; }
 export interface BackgroundJob { id: string; command: string; status: 'running' | 'exited' | 'killed' | 'failed'; pid?: number; startedAt: number; endedAt?: number; exitCode?: number; signal?: string; timedOut: boolean; truncated: boolean; }

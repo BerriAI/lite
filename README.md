@@ -1,8 +1,21 @@
 # Lite
 
-A local-first coding workspace. Bring a project, connect your models, and go from an idea to tested code without losing the thread.
+Lite is a local-first coding harness built around **multi-model agents**. Choose how your models work together, give them a task, and review one conversation with shared approvals, changes, verification evidence, and history.
 
 Built for LiteLLM, with OpenAI-compatible gateways, native Anthropic API support, and an explicit ChatGPT subscription connection. Your project stays on your machine; prompts and selected context go to the provider you choose.
+
+## Model arrangements
+
+| Arrangement | How it works |
+| --- | --- |
+| **Single model** | One model investigates, implements, and checks the work. |
+| **Sidekick Fusion** | A strong lead plans and reviews; a cheaper persistent sidekick explores, implements, tests, and repairs across compatible handoffs. |
+| **Team Fusion** | A strong lead gives fresh cheaper workers scoped assignments, then verifies the integrated result. Optional parallel workers use separate workspace copies and controlled patch integration. |
+| **Expert Fusion** | A cheaper driver coordinates and verifies; a fresh strong expert implements each assignment or repair without inheriting the driver's conversation. |
+
+Assign any connected provider/model to each role. “Strong” and “cheaper” describe the intended arrangement; Lite does not assume a model's quality or guarantee savings. The lead in Team and the driver in Expert delegate source edits automatically; a demonstrated worker failure can trigger an explicit bounded takeover. **Plan mode** stays read-only and optionally uses a separate planner. Bounded read-only research remains available independently of Fusion. File Pipeline and further TUI product work are deferred.
+
+Open the model picker from the composer. Choose one of four architectures from the dropdown, then choose the driver and worker models in their searchable dropdowns (Single model needs only one). The optional Planner model switch uses a separate model in Plan mode. Close the picker and send your task. Lite remembers the most recent model arrangement for each workspace; existing conversations retain their own configuration. Work appears behind one steps disclosure. Worker approvals stay in the main conversation, Stop cancels the task family, and completed responses include recorded changes, checks, and aggregate provider usage. See [architecture behavior and limits](docs/architectures.md).
 
 ## Quick start
 
@@ -15,7 +28,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open **http://localhost:3210**. Choose a model, pick a workspace in Settings, and send a task. Build mode asks before editing files or executing commands. Plan mode exposes read-only tools and user questions, not workspace mutations.
+Open **http://localhost:3210**. Pick a workspace in Settings, connect a provider, and choose an arrangement and models from the composer. Build mode asks before editing files or executing commands. Plan mode exposes read-only tools and user questions, not workspace mutations.
 
 For a production build:
 
@@ -38,7 +51,7 @@ npm start
 - Mid-response steering: send a short note into a running response with the Steer button; it lands between steps as your latest instruction, auditable in the transcript.
 - Loop guards beyond identical-batch blocking: a repeated failing call is refused after three attempts with a change-approach directive, and rounds that produce no new information first draw a nudge, then an honest stop.
 - Session goals: set one objective and the agent pursues it across turns, reporting continue/complete/blocked each turn and continuing itself within a turn budget — with a bounded host evaluator when it forgets to report.
-- Planner + executor pairing: optionally set a planner model per session — Plan-mode turns think on the big model, Build turns execute on the fast one, and every message shows which model ran it.
+- Planner + executor pairing: optionally set a planner model per session — Plan-mode turns think on the big model, Build turns execute on the fast one, while the picker shows the model that will handle the next turn.
 - Lifecycle hooks: shell hooks on PreToolUse/PostToolUse/UserPromptSubmit/Stop with an exit-code verdict — a PreToolUse hook can block an approved call; project hooks run only in workspaces you explicitly trust. See [hooks](docs/design-hooks-plugins.md).
 - Plugin packages: install a directory of skills, commands, MCP configs, and hooks with `lite plugin install` — dry-run plan first, exact provenance for clean uninstall, plugin MCP servers land disabled, and `.claude-plugin` manifests are read where they map.
 - Sidecar extensions: long-lived interceptors that can modify or block tool calls over JSON-RPC — every modification is visibly attributed on the activity card with the original arguments preserved, and a broken sidecar never breaks the loop.
@@ -51,7 +64,7 @@ npm start
 - `view_image` and `web_search` tools — the agent can read workspace images (where the provider route supports them) and run bounded public web searches, both read-only and available to researchers.
 - Composer slash commands — type `/` for project command templates (`.lite/commands`, `.claude/commands`) with `$ARGUMENTS` and positional substitution.
 - A cache-stable request prefix: volatile facts (date, mode, permission posture, recalled memory) travel in a digest-tagged session-context snapshot instead of rewriting the system prompt every turn.
-- Per-turn undo/redo of recorded file-tool edits, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
+- Per-turn undo/redo of recorded file edits, supported foreground command changes, conversation and todos, with external-edit conflict checks and explicit interrupted-operation recovery; Git status and file review.
 - File/image attachments, workspace file context, model selection, command palette, and local project commands.
 - Explicit project profiles and instruction skills, previewed before selection and pinned per session, with tool restrictions and deliberate reloads.
 - Explicit MCP connections over local stdio, Streamable HTTP, or legacy SSE; cache-only status, deliberate catalog refresh/reconnect, and per-turn snapshots that refuse changed tool connections.
@@ -94,7 +107,7 @@ The CLI prints numbered choices to stderr while continuing to consume live event
 
 ## Context estimates and compaction
 
-**Context estimate** on a response is an approximate snapshot taken before its provider request—not a live remaining-token counter or a measurement of your unsent draft. It accounts for outbound text, instructions, and selected tool schemas. Images and opaque provider state are marked uncertain rather than counted by their encoded length.
+**Session actions → Context details** shows an approximate snapshot taken before its provider request—not a live remaining-token counter or a measurement of your unsent draft. It accounts for outbound text, instructions, and selected tool schemas. Images and opaque provider state are marked uncertain rather than counted by their encoded length.
 
 Set exact model limits under **Settings → provider → Context window overrides** when you know your gateway's capacity. Otherwise Lite uses validated total-context metadata from successful explicit model discovery for up to ten minutes, scoped to that provider configuration. Missing limits remain unknown; model names are never used to guess capacity. Subscription catalogs are not cached because account identity can change independently of provider settings. When a gateway publishes only an input cap (`max_input_tokens`, as LiteLLM does), that cap budgets the input estimate and is labeled as an input limit — it is never presented as a total context window.
 
@@ -102,11 +115,11 @@ Near a known limit, Lite may summarize a safe older prefix once if it would mean
 
 ## Undo, redo, and recovery
 
-The **Turn history** strip restores the last accepted user turn, including its conversation, todos, and recorded file-tool edits. **Redo** restores the saved state without another model request or tool execution. Your unsent draft stays intact; queued messages remain paused for explicit Resume. A new accepted turn replaces the redo branch, but typing, queued drafts, or rejected submissions do not.
+**Session actions → Undo last turn** restores the last accepted user turn, including its conversation, todos, delegated file edits, and supported source changes observed during foreground commands. **Redo** restores the saved state without another model request or tool execution. Your unsent draft stays intact; queued messages remain paused for explicit Resume. A new accepted turn replaces the redo branch, but typing, queued drafts, or rejected submissions do not.
 
 File restoration refuses conflicting external edits. If an operation was only partly applied or the process stopped during a recorded edit, **Recover history** reconciles saved file snapshots before allowing another run. It never replays shell commands or infers that an interrupted tool succeeded. Incomplete provider tool history is archived and replaced with a safe prefix and an explicit recovery notice. Torn writes or files matching neither snapshot require manual repair. Graceful shutdown stops new work and allows up to five seconds for cancellation and bookkeeping; a forced or timed-out exit can still require recovery. Manual compaction archives the old conversation and updates its checkpoint in one SQLite transaction.
 
-Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can expire; oversized turns explicitly report that undo is unavailable. Imports and forks copy conversation only, not ownership of another session’s file changes. Older sessions without checkpoints keep their legacy session-wide recorded-file restoration action. **Shell, terminal, MCP, network, Git, and database effects are not reversed.**
+Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can expire; oversized turns explicitly report that undo is unavailable. Imports and forks copy conversation only, not ownership of another session’s file changes. Older sessions without checkpoints keep their legacy session-wide recorded-file restoration action. Foreground command history observes bounded UTF-8 source files (up to 2 MiB per file, 12 MiB per observation, and 10,000 entries). Changed binary/large files and incomplete scans produce a specific history notice. Generated/dependency directories, background commands, terminal input, MCP, network, Git metadata, and database effects are outside this file-history guarantee. Commands are never replayed by Undo/Redo.
 
 ## Providers and subscriptions
 
@@ -122,7 +135,7 @@ Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can 
 
 Lite reads `AGENTS.md`, `LITE.md`, and `.lite/instructions.md` in the selected workspace when building the agent's instructions. Keep guidance focused on project conventions and verification commands. Markdown files in `.lite/commands/` and `.claude/commands/` become local slash commands.
 
-Project profiles in `.lite/profiles.json` and instruction skills in `.lite/skills/<id>/SKILL.md` are **explicit opt-in**. Open **Project profiles** near the composer to preview instructions, select skills, and review tool restrictions. Recommendations never activate skills automatically. Active instructions stay pinned through source edits, deletion, and restart until deliberately replaced or cleared. Changing a profile preserves your model, mode, and permissions unless you explicitly apply its defaults; queued work stays paused. See the [profile format, CLI examples, and safety boundaries](docs/profiles.md).
+Project profiles in `.lite/profiles.json` and instruction skills in `.lite/skills/<id>/SKILL.md` are **explicit opt-in**. Open **Settings → Project profiles** to create or edit profiles, preview instructions, select skills, and review tool restrictions. Saving a profile updates its project definition; choose Use profile to apply it to the session. Recommendations never activate skills automatically. Active instructions stay pinned through source edits, deletion, and restart until deliberately replaced or cleared. Changing a profile preserves your model, mode, and permissions unless you explicitly apply its defaults; queued work stays paused. See the [profile format, CLI examples, and safety boundaries](docs/profiles.md).
 
 MCP server commands are executable configuration. Save and review them in **Settings → Integrations**, then choose **Connect** explicitly. Saving settings, checking status, and sending a model request never connect automatically. Tools use the same approval workflow as other mutable actions, but a pending approval cannot redirect an old tool name to a replacement server. Catalog changes require explicit refresh; interrupted calls are never replayed automatically. Named profiles and Plan mode exclude MCP tools; skills-only selection retains ordinary Build-mode policy. See [MCP connections, limits, and snapshot safety](docs/mcp.md).
 
@@ -133,7 +146,7 @@ MCP server commands are executable configuration. Save and review them in **Sett
 - Terminals currently support macOS/Linux and live only while the server runs. Hidden terminals expire after 30 minutes with no viewers. Reconnection replays up to 256 KiB of output, not a full-screen terminal snapshot. Login profiles can add their own environment variables; the app does not forward its provider credentials.
 - Automatic retries happen only for explicit transient HTTP failures, at most twice, before streaming begins. Ambiguous network failures and partial streams are not replayed. Failed attempts may still incur provider charges.
 - File tools enforce the workspace's real path, reject symlink escapes and `.git` writes, and guard bounded reads/edits. Discovery skips hidden and generated directories. These checks do not turn shell commands into isolated processes.
-- Undo covers recorded file-tool mutations, not arbitrary shell/MCP/network/database side effects. It preflights all targets and rechecks each file immediately before restoration. Conflicts preserve remaining snapshots; completed restorations are recorded separately. It is not a cross-file transaction or protection against arbitrary concurrent external writers.
+- Undo covers recorded file-tool mutations and supported observed foreground-command source changes; it does not reverse arbitrary external side effects. It preflights all targets and rechecks each file immediately before restoration. Conflicts preserve remaining snapshots; completed restorations are recorded separately. It is not a cross-file transaction or protection against arbitrary concurrent external writers.
 - Attachments are snapshotted when sent. Imported attachment paths never open local files; missing embedded content must be explicitly reattached. Command files use the same bounded regular-file protections and cannot redirect through symlinks.
 - `.env`, `.lite/`, logs, test outputs, and the local work log are ignored by Git. `.lite/` stores the local database and subscription tokens. Session exports may contain source code, paths, and tool output; review before sharing.
 - Never paste secrets into prompts or upload secret files. Provider billing applies to real model calls.

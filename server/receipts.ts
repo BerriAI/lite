@@ -15,6 +15,7 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
   const commandsRun: string[] = [];
   const checksRun: string[] = [];
   const checksFailed: string[] = [];
+  const unresolvedChecks = new Set<string>();
   // Sequence positions let "after the last check" and "read earlier" compare
   // across batches without carrying timestamps (endedAt granularity is ms and
   // ties within a batch are common).
@@ -29,6 +30,10 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
     if (message.role !== 'assistant') continue;
     for (const call of message.toolCalls ?? []) {
       const seq = sequence++;
+      for(const change of call.changes??[]) {
+        if(!lastChange.has(change.path))filesChanged.push(change.path);
+        lastChange.set(change.path,seq);
+      }
       if (call.status !== 'completed') continue;
       const path = typeof call.args.path === 'string' ? call.args.path : undefined;
       if (call.name === 'read_file' && path !== undefined) {
@@ -41,12 +46,13 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
         // looked at it, so those never clear the flag (documented limitation).
         const read = firstRead.get(path);
         if (read === undefined || read >= seq) unread.add(path);
-      } else if (call.name === 'bash' && call.args.run_in_background !== true) {
+      } else if ((call.name === 'bash' || call.name === 'verify') && call.args.run_in_background !== true) {
         const command = typeof call.args.command === 'string' ? call.args.command : '';
         commandsRun.push(command);
-        if (isCheckCommand(command)) {
+        if (call.name === 'verify' || isCheckCommand(command)) {
           checksRun.push(command);
-          if (checkFailed(result(call))) checksFailed.push(command);
+          if (checkFailed(result(call))) { checksFailed.push(command); unresolvedChecks.add(command); }
+          else unresolvedChecks.delete(command);
           lastCheck = seq;
         }
       }
@@ -54,13 +60,14 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
   }
   // Empty when no checks ran: that turn is already fully described by "no checks were run".
   const filesChangedAfterLastCheck = lastCheck < 0 ? [] : filesChanged.filter(path => lastChange.get(path)! > lastCheck);
-  return { filesChanged, commandsRun, checksRun, checksFailed, filesChangedAfterLastCheck, unreadFilesChanged: filesChanged.filter(path => unread.has(path)) };
+  return { filesChanged, commandsRun, checksRun, checksFailed, unresolvedChecks: [...unresolvedChecks], filesChangedAfterLastCheck, unreadFilesChanged: filesChanged.filter(path => unread.has(path)) };
 }
 
 /** The short host line appended to a mutating turn's final assistant message
  * when the work is unverified; null when nothing needs saying (no mutation, or
  * checks ran after the last change). Observation only, never a gate. */
 export function receiptsNotice(receipts: TurnReceipts): string | null {
+  if (receipts.unresolvedChecks?.length) return `\n\n[Receipts: ${receipts.unresolvedChecks.length} check(s) still failing: ${receipts.unresolvedChecks.join(', ')}.]`;
   if (!receipts.filesChanged.length || (receipts.checksRun.length !== 0 && !receipts.filesChangedAfterLastCheck.length)) return null;
   const detail = receipts.checksRun.length === 0 ? ', no checks were run' : `, ${receipts.filesChangedAfterLastCheck.length} changed after the last check`;
   return `\n\n[Receipts: ${receipts.filesChanged.length} file(s) changed${detail}.]`;

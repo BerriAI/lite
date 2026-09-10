@@ -11,7 +11,11 @@
  */
 
 /** The per-session selection persisted on Session.architecture. */
-export type ArchitectureSelection = { kind: 'sidekick-fusion'; sidekick: { providerId: string; model: string } };
+export interface ModelRoute { providerId: string; model: string }
+export type ArchitectureSelection =
+  | { kind: 'sidekick-fusion'; sidekick: ModelRoute }
+  | { kind: 'team-fusion'; worker: ModelRoute; concurrency?: 1 | 2 | 3 | 4 }
+  | { kind: 'expert-fusion'; expert: ModelRoute };
 export type ArchitectureKind = ArchitectureSelection['kind'];
 
 /** One selectable model slot an architecture asks the user to fill. */
@@ -22,10 +26,28 @@ export const ARCHITECTURES: readonly ArchitectureInfo[] = [
   {
     kind: 'sidekick-fusion',
     name: 'Sidekick Fusion',
-    description: 'A frontier main agent plans, delegates, and reviews while a cheaper persistent sidekick explores, writes code, and fixes bugs — two cached contexts working in parallel.',
+    description: 'A lead plans and reviews while a persistent sidekick explores, implements, tests, and repairs.',
     roles: [{ id: 'sidekick', label: 'Sidekick model', hint: 'cheaper/faster' }],
   },
+  {
+    kind: 'team-fusion', name: 'Team Fusion',
+    description: 'A strong lead divides work into scoped assignments for fresh cheaper workers, then verifies the result.',
+    roles: [{ id: 'worker', label: 'Worker model', hint: 'cheaper/faster' }],
+  },
+  {
+    kind: 'expert-fusion', name: 'Expert Fusion',
+    description: 'A cheaper driver briefs fresh strong experts to implement and repair, and runs verification itself.',
+    roles: [{ id: 'expert', label: 'Expert model', hint: 'stronger' }],
+  },
 ] as const;
+
+export function architectureWorker(selection: ArchitectureSelection): ModelRoute {
+  return selection.kind === 'sidekick-fusion' ? selection.sidekick : selection.kind === 'team-fusion' ? selection.worker : selection.expert;
+}
+
+export function selectArchitecture(kind: ArchitectureKind, route: ModelRoute): ArchitectureSelection {
+  return kind === 'sidekick-fusion' ? { kind, sidekick: route } : kind === 'team-fusion' ? { kind, worker: route } : { kind, expert: route };
+}
 
 export function architectureInfo(kind: ArchitectureKind): ArchitectureInfo {
   const info = ARCHITECTURES.find(entry => entry.kind === kind);

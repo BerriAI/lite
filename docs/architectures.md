@@ -1,111 +1,70 @@
 # Multi-model architectures
 
-Lite's founding opinion is that a coding harness is intrinsically multi-model.
-"Which model?" is often the wrong question — the right one is "which
-arrangement of models?". A session therefore runs either a single model or a
-named **architecture**: a fixed arrangement of cooperating models with defined
-roles, picked from the same model picker where you would pick a plain model.
+Lite treats the arrangement of models as a session setting. The web picker exposes Single model, Sidekick Fusion, Team Fusion, and Expert Fusion. Models are configurable routes to connected providers, not models bundled with Lite. File Pipeline is not implemented.
 
-## The registry
+## Arrangements
 
-`shared/architectures.ts` is the single source of truth. It exports:
+- **Single model:** the existing general-purpose tool loop.
+- **Sidekick Fusion:** the lead plans, delegates, and reviews; a write-capable sidekick retains context across compatible handoffs. Foreground calls wait for its report while the server remains responsive to events, steering, approvals, and cancellation. The two model calls do not run simultaneously during a handoff.
+- **Team Fusion:** the lead uses `delegate` for fresh task-scoped workers. Each receives a self-contained brief with relevant paths, constraints, and acceptance criteria. Source editing belongs to workers; the lead inspects the result and uses `verify` for combined checks.
+- **Expert Fusion:** a cheaper driver uses fresh strong experts for implementation and repairs, then runs verification itself. An expert receives the selected brief and workspace tools, not a fork of the driver conversation. It cannot delegate or ask the user questions.
 
-- `ArchitectureSelection` — the discriminated union persisted on
-  `Session.architecture`. Each architecture is one variant carrying the models
-  the user chose for its roles (`{ kind: 'sidekick-fusion', sidekick:
-  { providerId, model } }`).
-- `ARCHITECTURES` — the display registry (`kind`, `name`, one-line
-  `description`, and the `roles` the picker asks the user to fill). Both the
-  web picker and the terminal picker render from this list, and the server
-  validates selections against the same union.
+Team and Expert drivers cannot invoke arbitrary Bash or connected tools to bypass their role. Their `verify` tool accepts a small grammar of foreground test, typecheck, lint, and build commands, and runs through the normal Bash permission and interception policy. Test scripts remain executable workspace code, not an operating-system sandbox. After a worker failure, `takeover` records a reason and exact file paths and allows at most three driver file edits in that turn. Source-edit tools are advertised only while that recorded takeover has edits remaining. A repair names the failed invocation with `repairOf`; unresolved assignments stay visible.
 
-`Session.architecture` sits beside `planner` and follows the same contract:
-nullable, validated on create/PATCH (each role's provider must be connected),
-a config change (idle session required, `configRevision` bump), dropped on
-import when the named provider does not exist locally.
+## Configuration and policy
 
-## Sidekick Fusion
+`shared/architectures.ts` defines the selection union, role metadata, and route helpers; `server/app.ts` validates API input. A selection is:
 
-The first architecture: two *parallel, persistent* agents in one session.
+```json
+{"kind":"sidekick-fusion","sidekick":{"providerId":"gateway","model":"fast-model"}}
+{"kind":"team-fusion","worker":{"providerId":"gateway","model":"fast-model"},"concurrency":2}
+{"kind":"expert-fusion","expert":{"providerId":"gateway","model":"strong-model"}}
+```
 
-- The **main agent** runs on the session's model — typically the frontier
-  model you'd pick anyway. It plans, interprets ambiguity, delegates, monitors,
-  and does the final review. Under this architecture its system prompt tells it
-  to take minimal actions and read only what is strictly necessary: by default
-  it hands work to the sidekick and verifies the reports.
-- The **sidekick** runs on the model you pick for the role — usually cheaper
-  and faster. It is the delegated executor: it explores the codebase, writes
-  and edits code, runs commands and tests, and fixes bugs, with the full tool
-  set except delegation itself (`task`/`sidekick`), user questions, memory, and
-  goal editing.
+The picker starts with an architecture dropdown and displays only its required model rows. Every row has its own searchable model menu and per-model reasoning control. Below a divider, the optional Planner model switch reveals the Plan-mode route. Output style is a compact separate row. First-use workspaces default to Single model.
 
-What makes it Fusion rather than a subagent call: the sidekick is **one
-continuous transcript for the whole session**. The main agent's `sidekick`
-tool sends each task into the *same* child session, so earlier turns are real
-shared context — the sidekick does not re-explore what it already learned, and
-its provider-side prompt cache stays warm across tasks. This is deliberately
-not the "smart friend" pattern of one-shot advisor queries; both agents keep
-their own persistent cached context and work in parallel lanes.
+The session's `providerId`/`model` remain the lead or driver. Clearing `architecture` selects Single model. Configuration changes require an idle session and advance its revision; queued messages pause for explicit review and resume. Workspace preferences remember the most recently selected model arrangement without changing existing sessions or copying credentials.
 
-### Trust and permission flow
+A turn captures its workspace, model routes, permission rules, reasoning preferences, guidance, style, profile, and hooks at acceptance. Child actions use that policy, not stale settings in a persisted child. Model effort is saved per provider/model pair. Provider default omits the override. Catalog-advertised efforts constrain the picker and preflight; when capability metadata is missing, an explicit override is passed through and provider rejection gives recovery guidance. Model names do not imply capability or context-window size.
 
-The sidekick has no authority of its own:
+Plan mode uses the selected main model or optional planner, exposes read-only tools, and launches no write-capable workers. Returning to Build restores the arrangement. Profiles with tool restrictions incompatible with Fusion are rejected before accepting the task.
 
-- Every mutating action the sidekick takes (file writes, shell commands) goes
-  through the **user's normal permission flow, surfaced in the parent
-  session's UI** and labeled as a sidekick request. "Always allow" grants are
-  stored under the parent session, so they behave exactly like grants you gave
-  the main agent.
-- The sidekick's report returns to the main agent prefixed as untrusted data,
-  never as user authorization. The main agent is instructed to verify before
-  presenting work as done.
-- The sidekick cannot delegate further, cannot ask the user questions, and
-  children never inherit hooks.
+## Contexts and immutable handoffs
 
-### Budgets and lifecycle
+Every handoff has a new invocation ID, origin tool call, terminal report, and transcript slice. Sidekick alone can reuse a completed context whose captured configuration, workspace, and history remain compatible. Failed, cancelled, or incompatible contexts are retired. Undo/Redo and recovery advance the history revision so a later call cannot silently revive abandoned context.
 
-Sidekick limits are wider than researcher (`task`) limits because the sidekick
-is the executor, not a scout: per call it may run up to 50 model steps and 10
-minutes, and per turn up to 8 launches, 120 cumulative steps, and 30 minutes,
-with a 64 KiB report bound and a 16 MiB transcript budget (constants in
-`server/runner.ts`).
+Worker compaction preserves the current assignment and archives earlier raw messages privately. Every completed handoff retains its own transcript even after later compaction. Root history archives remain ordinary archived sessions. The database migration removes the old unique-child restriction without deleting transcripts; old Sidekick records that cannot reconstruct overwritten origins are marked as legacy context associations.
 
-Lifecycle details:
+## Ownership and lifecycle
 
-- One durable sidekick child per session. Each `sidekick` call re-points the
-  single delegation record to the new parent turn, appends the new task to the
-  child transcript, and settles the record to a terminal status when the call
-  ends — so transcripts freeze between turns and undo/redo of the parent stays
-  coherent.
-- An **interrupted** sidekick (server restart mid-task) is not resumed; the
-  next call starts a fresh child. A torn transcript is worse context than an
-  empty one.
-- Changing the sidekick model in the picker applies on the next call: the
-  runner resolves the provider and model from the live selection each launch,
-  even though the persisted child session still names the old pair.
-- The read-only `task` researcher is unchanged and still available alongside
-  the sidekick; the two never count against each other's budgets.
+Worker file-tool changes belong to the root turn with actor and invocation attribution. Foreground commands save a source observation before execution and reconcile file changes afterward. An interrupted observation requires recovery and does not replay the command. Undo/Redo covers supported recorded source files and refuses intervening edits; history notices identify effects outside that guarantee.
 
-### Cache-aware model switching (future hook)
+Approvals belong to the root UI and name the actual action and actor. Worker PreToolUse/PostToolUse hooks inherit the captured parent policy. Sidecar configurations are captured at acceptance; changing them during a response blocks remaining intercepted calls until a new response. Sidecar modifications retain original arguments and pass approval again. Read-only researchers retain their stricter tool ceiling and do not inherit mutating hooks.
 
-The Fusion design treats compaction boundaries as the sanctioned point where
-the in-charge model could swap "for free" — the transcript is being rewritten
-anyway, so no warm cache is sacrificed. In v1 the roles are fixed (main stays
-main, sidekick stays sidekick) and compaction of each agent's history happens
-independently; the swap policy is a registry-shaped extension point, not a
-hard-coded behavior to work around.
+Stop aborts active child requests and approvals and waits for owned background jobs to stop before settling their reports. A worker that returns with unfinished background commands is failed and those commands are stopped. Approval wait time is excluded from worker execution time limits. Steering is recorded before acknowledgement, forwarded to active workers, and applied at a safe tool/model boundary. A note that arrives too late remains visible for continuation; recovery restores acknowledged notes even if the process stopped before delivery.
 
-## Adding a new architecture
+All Fusion workers share a per-root-turn budget: eight invocations, 120 model steps, and 30 cumulative active minutes. Each invocation is limited to 50 steps, ten active minutes, 16 MiB of transcript, and a 64 KiB report; the configured max-step ceiling may be lower. These limits bound repair and fallback activity. Read-only research has its separate, smaller budget.
 
-1. Add a variant to `ArchitectureSelection` and an entry to `ARCHITECTURES`
-   in `shared/architectures.ts` (kind, name, one-line description, roles).
-2. Extend the zod `architectureSchema` in `server/app.ts` so create/PATCH
-   validate the new variant and each role's provider.
-3. Implement the runtime in `server/runner.ts`: gate any new tools on
-   `policy.session.architecture?.kind`, give the arrangement its own limits,
-   and route child permissions through the parent as `sidekick()` does.
-4. The pickers need no structural work: they render the registry. Add any
-   role-specific flow only if the architecture has more than one role.
-5. Cover it with a runner integration test (see
-   `tests/sidekick-runner.test.ts` for the pattern) asserting tool
-   advertisement gating, permission routing, and lifecycle.
+## Isolated Team execution
+
+Team defaults to one worker. The optional concurrency setting permits two to four independent `delegate` calls in the same model tool batch to run together. Other batches remain sequential. Each worker starts in a private copy of the current workspace, including dirty source files, with its own Git baseline and a 256 MiB copy limit. Existing installed `node_modules` may be linked for execution; generated/dependency directories are outside source history and this is not a hostile-code sandbox.
+
+New steering invalidates pending publication. After all workers stop, Lite compares each candidate patch with the captured baseline and current root files. Overlapping worker paths and external root edits are conflicts, so those assignments do not overwrite root files. Unsupported binary/large changes are retained for review. Successful text patches are applied through root history intents. A partial integration interrupted by cancellation or a crash uses ordinary file-history recovery. Only integrated changes and checks in the root workspace count as root verification evidence; tests inside a copy do not establish combined correctness. Failed/conflicting workspaces remain available at their reported local paths.
+
+## Evidence and accounting
+
+One response-level work log contains invocation rows and on-demand briefs, models, reports, and tool transcripts. Runtime activity comes from the executing worker. Verification receipts are based on recorded tools and observed file effects, not a worker's prose. A later successful identical check supersedes the earlier failure without removing its historical record. Unresolved checks, assignments, and missing driver verification remain visible.
+
+A durable request ledger attributes usage to the root turn, actor, model, and phase, including worker calls, retries, compaction, and goal review. Repeated cumulative usage chunks update one request. The footer appears once after the root response and expands into a role/model breakdown. Missing usage stays unreported; a partly priced task has no fabricated total cost. No architecture promises a quality, latency, quota, or cost improvement without measurement.
+
+## Validation
+
+Runner integration tests exercise persistent versus fresh context, parent approvals and edits, repairs, cancellation, hooks, compaction, concurrent private workspaces, conflicts, and integrated verification. Storage tests cover migration, immutable records, recovery, and usage. Browser tests cover selection, task details, history, and the existing session flows. TUI product work is deferred; shared types and existing CLI session execution remain supported.
+
+For an opt-in live smoke comparison against connected providers, run:
+
+```sh
+node scripts/fusion-smoke.mjs --strong-provider PROVIDER_ID --strong-model MODEL_ID --cheap-provider PROVIDER_ID --cheap-model MODEL_ID
+```
+
+The script uses a separate identical CSV-parser fixture for each arrangement, restores its independent acceptance tests before scoring, cancels timed-out runs, archives test sessions, and records provider-reported family usage, failed or denied root tools, and takeovers. It checks host completion holds separately from independent test success. Pass `--architecture expert-fusion` (or another arrangement ID) to run only that arrangement. It writes a JSON report and retains fixture workspaces for inspection. One small task is not a general quality or cost benchmark. See the [delivery audit](fusion-implementation.md) for recorded results.

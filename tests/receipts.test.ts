@@ -52,7 +52,7 @@ describe('computeReceipts', () => {
       filesChanged: ['a.ts', 'b.ts'],
       commandsRun: ['npm test', 'npm test'],
       checksRun: ['npm test', 'npm test'],
-      checksFailed: ['npm test'],
+      checksFailed: ['npm test'], unresolvedChecks: [],
       filesChangedAfterLastCheck: ['a.ts'],
       unreadFilesChanged: ['b.ts'],
     });
@@ -60,7 +60,7 @@ describe('computeReceipts', () => {
   it('returns all-empty receipts for a no-mutation turn', () => {
     const accepted = user(sessionId);
     const messages = [accepted, batch(sessionId, [read('a.ts'), { name: 'grep', args: { pattern: 'x' } }])];
-    expect(computeReceipts(messages, accepted.id)).toEqual({ filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] });
+    expect(computeReceipts(messages, accepted.id)).toEqual({ filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] });
   });
   it('leaves filesChangedAfterLastCheck empty when no checks ran', () => {
     const accepted = user(sessionId);
@@ -117,7 +117,7 @@ describe('computeReceipts', () => {
 });
 
 describe('receiptsNotice', () => {
-  const base = { filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] };
+  const base = { filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] };
   it('is silent for pure-read turns and verified turns', () => {
     expect(receiptsNotice(base)).toBeNull();
     expect(receiptsNotice({ ...base, filesChanged: ['a.ts'], checksRun: ['npm test'] })).toBeNull();

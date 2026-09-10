@@ -51,7 +51,7 @@ test('history search finds text from another session without any approval prompt
   expect(await page.getByRole('region', { name: 'Permission requested', exact: true }).count()).toBe(0);
   expect(toolResults(result)).toContain('DISTINCTIVE_CROSS_SESSION_MARKER');
   expect(toolResults(result)).toContain(earlier.id);
-  await expect(page.getByText('Search history', { exact: true })).toBeVisible();
+  await page.locator('.work-log > summary').click(); await expect(page.getByText('Search history', { exact: true })).toBeVisible();
 });
 
 test('an unmatched search reports indexed counts and does not claim absence', async ({ page, request }) => {

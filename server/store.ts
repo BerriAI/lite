@@ -32,7 +32,7 @@ export class Store {
         parent_turn_id TEXT NOT NULL,
         parent_message_id TEXT NOT NULL,
         tool_call_id TEXT NOT NULL,
-        child_session_id TEXT NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+        child_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
         status TEXT NOT NULL,
         data TEXT NOT NULL,
         UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
@@ -44,12 +44,44 @@ export class Store {
       -- riding the cascade) must never erase its usage record.
       CREATE TABLE IF NOT EXISTS usage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, day TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cached_tokens INTEGER, created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS usage_log_day ON usage_log(day);`);
+    try { this.migrateDelegations(); } catch (error) { this.db.close(); throw error; }
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
       const queue=this.queue(session.id);
       if(queue.items.length)this.saveQueue(session.id,{...queue,paused:true,reason:'Server restarted. Review and resume queued messages explicitly.'});
     }
+  }
+  /** A context can have many immutable handoffs, but only one active writer.
+   * Migrate transactionally without guessing origins overwritten by old reuse. */
+  private migrateDelegations(): void {
+    this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY)');
+    if (this.db.prepare('SELECT 1 FROM schema_migrations WHERE version=1').get()) return;
+    this.atomic(() => {
+      const schema = this.db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='delegations'").get() as { sql: string };
+      if (/child_session_id\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(schema.sql)) {
+        this.db.exec(`CREATE TABLE delegations_v2 (
+          id TEXT PRIMARY KEY, parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          parent_turn_id TEXT NOT NULL, parent_message_id TEXT NOT NULL, tool_call_id TEXT NOT NULL,
+          child_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          status TEXT NOT NULL, data TEXT NOT NULL,
+          UNIQUE(parent_session_id,parent_turn_id,parent_message_id,tool_call_id));
+          INSERT INTO delegations_v2 SELECT * FROM delegations ORDER BY rowid;
+          DROP TABLE delegations;
+          ALTER TABLE delegations_v2 RENAME TO delegations;`);
+        for (const row of this.db.prepare('SELECT id,data FROM delegations').all() as { id: string; data: string }[]) {
+          const data = JSON.parse(row.data);
+          if (data.summary?.role === 'sidekick') {
+            data.summary.legacyContext = true;
+            this.db.prepare('UPDATE delegations SET data=? WHERE id=?').run(JSON.stringify(data), row.id);
+          }
+        }
+      }
+      this.db.exec(`CREATE INDEX IF NOT EXISTS delegations_parent ON delegations(parent_session_id);
+        CREATE INDEX IF NOT EXISTS delegations_child ON delegations(child_session_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS delegations_active_context ON delegations(child_session_id) WHERE status='running';
+        INSERT INTO schema_migrations(version) VALUES(1);`);
+    });
   }
   close() { this.db.close(); }
   settings(): Settings {
@@ -81,8 +113,7 @@ export class Store {
   }
   isChild(id: string): boolean { return Boolean(this.db.prepare('SELECT 1 FROM delegations WHERE child_session_id=?').get(id)); }
   private assertChildMutable(id: string): void {
-    const row = this.db.prepare('SELECT status FROM delegations WHERE child_session_id=?').get(id) as { status: string } | undefined;
-    if (row && row.status !== 'running') throw Object.assign(new Error('Researcher transcripts are immutable after completion.'), { status: 409 });
+    if (this.isChild(id) && !this.db.prepare("SELECT 1 FROM delegations WHERE child_session_id=? AND status='running'").get(id)) throw Object.assign(new Error('Worker transcripts are immutable between assignments.'), { status: 409 });
   }
   session(id: string): Session {
     const row = this.db.prepare('SELECT data FROM sessions WHERE id=?').get(id) as { data: string } | undefined;
@@ -95,7 +126,7 @@ export class Store {
   private normalizedSession(session: Session): Session {
     return { ...session, configRevision: Number.isSafeInteger(session.configRevision) && session.configRevision! >= 0 ? session.configRevision : 0 };
   }
-  private atomic<T>(operation: () => T): T {
+  atomic<T>(operation: () => T): T {
     const name = `lite_store_${randomUUID().replaceAll('-', '')}`;
     this.db.exec(`SAVEPOINT ${name}`);
     try { const result = operation(); this.db.exec(`RELEASE SAVEPOINT ${name}`); return result; }
@@ -185,7 +216,7 @@ export class Store {
     this.session(id);
     if (this.isChild(id)) throw Object.assign(new Error('Delete a researcher through its originating parent session.'), { status: 409 });
     this.atomic(() => {
-      const children = this.db.prepare('SELECT child_session_id FROM delegations WHERE parent_session_id=?').all(id) as { child_session_id: string }[];
+      const children = this.db.prepare('SELECT DISTINCT child_session_id FROM delegations WHERE parent_session_id=?').all(id) as { child_session_id: string }[];
       for (const child of children) this.db.prepare('DELETE FROM sessions WHERE id=?').run(child.child_session_id);
       this.db.prepare('DELETE FROM sessions WHERE id=?').run(id);
     });
@@ -205,7 +236,21 @@ export class Store {
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   compactHistory(id: string, messages: Message[]): Session {
-    if (this.isChild(id)) throw Object.assign(new Error('Researcher history cannot be compacted.'), { status: 409 });
+    if (this.isChild(id)) {
+      const active=this.db.prepare("SELECT data FROM delegations WHERE child_session_id=? AND status='running'").get(id) as {data:string}|undefined;
+      if (!active || !JSON.parse(active.data).summary?.role) throw Object.assign(new Error('Only an active worker context can be compacted.'), { status: 409 });
+      // Earlier handoff transcripts are already immutable snapshots on their
+      // invocation records. Keep the full projection privately as well, without
+      // creating a user-owned session that could execute as the worker.
+      this.db.exec('CREATE TABLE IF NOT EXISTS worker_context_archives (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL)');
+      return this.atomic(()=>{
+        const source=this.session(id);
+        this.db.prepare('INSERT INTO worker_context_archives(id,session_id,data) VALUES(?,?,?)').run(randomUUID(),id,JSON.stringify(this.messages(id)));
+        this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
+        for(const message of messages)this.saveMessage(message);
+        return source;
+      });
+    }
     // A savepoint is atomic standalone and also participates in History.compact's
     // outer transaction, so an archive cannot commit before its checkpoint does.
     this.db.exec('SAVEPOINT lite_compaction');

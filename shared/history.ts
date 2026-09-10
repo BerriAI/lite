@@ -5,5 +5,6 @@ export interface HistoryState {
   undoId?: string;
   redoId?: string;
   unavailableReason?: string;
+  effectsNotice?: string;
   pendingRecovery?: { reason: string; paths: string[] };
 }

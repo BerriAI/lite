@@ -5,7 +5,7 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import type { Session, SessionDetail, Settings } from '../../shared/types';
 
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
-const dialog = (page: Page) => page.getByRole('dialog', { name: 'Project profiles', exact: true });
+const dialog = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
 let workspace: string, settings: Settings, sessions: Session[];
 const manifest = () => ({ version: 1, profiles: [
   { id: 'inspector', name: 'Careful inspector', description: 'Inspect code without edits.', instructions: 'PROFILE_INSPECTOR_PINNED: Inspect actual files and report only verified facts.', tools: ['read_file', 'glob', 'grep', 'todo_read'], defaultModel: { providerId: 'fixture', model: 'test-fast' }, defaultMode: 'plan', skills: ['review'] },
@@ -35,7 +35,7 @@ async function create(request: APIRequestContext, input: Record<string, unknown>
   expect(response.status()).toBe(201); const session: Session = await response.json(); sessions.push(session); return session;
 }
 async function open(page: Page, session: Session) { await page.goto(`/#session/${session.id}`); await expect(composer(page)).toBeVisible(); await expect(page.getByText('Connecting to live updates…', { exact: true })).toHaveCount(0); }
-async function picker(page: Page) { if (await page.getByRole('button', { name: 'Open navigation', exact: true }).isVisible()) await page.getByRole('button', { name: 'Open navigation', exact: true }).click(); await page.getByRole('button', { name: 'Workspace settings', exact: true }).click(); await page.getByRole('button', { name: 'Project profiles', exact: true }).click(); await expect(dialog(page)).toBeVisible(); await expect(dialog(page).getByLabel('Profile', { exact: true })).toBeVisible(); return dialog(page); }
+async function picker(page: Page) { if (await page.getByRole('button', { name: 'Open navigation', exact: true }).isVisible()) await page.getByRole('button', { name: 'Open navigation', exact: true }).click(); await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('button', { name: 'Project profiles', exact: true }).click(); await expect(dialog(page)).toBeVisible(); await expect(dialog(page).getByLabel('Profile', { exact: true })).toBeVisible(); return dialog(page); }
 async function choose(page: Page, name = 'Careful inspector', skill = false) { const panel = await picker(page); await panel.getByLabel('Profile', { exact: true }).selectOption({ label: name }); if (skill) await panel.getByRole('checkbox', { name: 'Review checklist', exact: true }).check(); return panel; }
 async function use(page: Page, name = 'Careful inspector', skill = false) { const panel = await choose(page, name, skill); await panel.getByRole('button', { name: 'Use profile', exact: true }).click(); await expect(panel).toHaveCount(0); }
 async function send(page: Page, request: APIRequestContext, session: Session, prompt: string) {
@@ -223,4 +223,35 @@ test('mobile profile selection fits the viewport and leaves the composer usable'
   await panel.getByRole('button', { name: 'Use profile', exact: true }).click(); await expect(panel).toHaveCount(0); await expect(composer(page)).toHaveValue('Mobile draft remains.');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.screenshot({ path: 'test-results/profiles-mobile.png', fullPage: true, animations: 'disabled' });
+});
+
+test('profiles use the Settings layout and can be created, edited, and deliberately applied', async ({ page, request }) => {
+  const session = await create(request); await open(page, session);
+  const panel = await picker(page);
+  await expect(panel.locator('.settings-nav')).toBeVisible();
+  await expect(panel).toContainText('Reusable instructions and tool limits');
+  await panel.getByRole('button', { name: 'New profile', exact: true }).click();
+  await panel.getByLabel('Profile name', { exact: true }).fill('Release reviewer');
+  await panel.getByLabel('Profile description', { exact: true }).fill('Review changes before release.');
+  await panel.getByLabel('Profile instructions', { exact: true }).fill('PROFILE_RELEASE_PINNED: Check compatibility and document verification.');
+  await panel.getByRole('button', { name: 'Workspace', exact: true }).click();
+  await expect(panel.getByLabel('Profile instructions', { exact: true })).toBeHidden();
+  await panel.getByRole('button', { name: 'Project profiles', exact: true }).click();
+  await expect(panel.getByLabel('Profile instructions', { exact: true })).toHaveValue('PROFILE_RELEASE_PINNED: Check compatibility and document verification.');
+  await page.screenshot({ path: '/tmp/lite-profile-editor-desktop.png', animations: 'disabled' });
+  await panel.getByRole('button', { name: 'Save profile', exact: true }).click();
+  await expect(panel.getByRole('status')).toContainText('Profile saved');
+  expect((await detail(request, session.id)).session.profile).toBeUndefined();
+  const manifestOnDisk = JSON.parse(await readFile(join(workspace, '.lite/profiles.json'), 'utf8'));
+  expect(manifestOnDisk.profiles).toHaveLength(3); expect(manifestOnDisk.skills).toHaveLength(1);
+  await page.screenshot({ path: '/tmp/lite-profiles-desktop.png', animations: 'disabled' });
+  await panel.getByRole('button', { name: 'Edit profile', exact: true }).click();
+  await panel.getByLabel('Profile instructions', { exact: true }).fill('PROFILE_RELEASE_EDITED: Check compatibility and verify examples.');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: '/tmp/lite-profile-editor-mobile.png', animations: 'disabled' });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await panel.getByRole('button', { name: 'Save profile', exact: true }).click();
+  await panel.getByRole('button', { name: 'Use profile', exact: true }).click();
+  const prompt = 'PROFILE_BROWSER use newly edited profile'; await send(page, request, session, prompt);
+  expect(systemText((await profileCalls(request, prompt))[0])).toContain('PROFILE_RELEASE_EDITED');
 });

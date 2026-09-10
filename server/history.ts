@@ -1,3 +1,4 @@
+import { snapshotWorkspace, snapshotChanges, type WorkspaceSnapshot } from './workspace-snapshot.js';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { Store } from './store.js';
@@ -8,7 +9,7 @@ import type { HistoryState } from '../shared/history.js';
 
 export const HISTORY_LIMITS = { depth: 20, bytes: 32 * 1024 * 1024, fileBytes: 2 * 1024 * 1024 } as const;
 type Snapshot = { messages: Message[]; todos: Todo[]; changes: FileChange[] };
-type Checkpoint = { id: string; userId: string; before: Snapshot | null; after: Snapshot | null; changes: FileChange[]; unavailableReason?: string; floorReason?: string };
+type Checkpoint = { id: string; userId: string; workspace?: string; before: Snapshot | null; after: Snapshot | null; changes: FileChange[]; unavailableReason?: string; floorReason?: string; effectsNotice?: string };
 type Row = { id: string; sequence: number; status: 'open' | 'applied' | 'undone' | 'interrupted'; data: string };
 type Operation = { checkpointId: string; direction: 'undo' | 'redo'; plan: FileChange[]; completed: string[] };
 const initialized = new WeakSet<Store>();
@@ -33,6 +34,8 @@ export class History {
       PRIMARY KEY(session_id,path));
       CREATE TABLE IF NOT EXISTS history_operations (
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);`);
+    store.db.exec('CREATE TABLE IF NOT EXISTS command_snapshots (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, checkpoint_id TEXT NOT NULL, workspace TEXT NOT NULL, data TEXT NOT NULL);');
+    store.db.exec('CREATE TABLE IF NOT EXISTS steering_notes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, turn_id TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);');
     if (!initialized.has(store)) {
       store.db.prepare("UPDATE history_checkpoints SET status='interrupted' WHERE status='open'").run();
       initialized.add(store);
@@ -71,7 +74,8 @@ export class History {
     const interrupted = rows.some(row => row.status === 'interrupted' || (row.status === 'open' && !live));
     const messages = this.store.messages(id);
     const incomplete = !live && completeToolBoundary(messages) !== messages.length;
-    const pendingRecovery = operation || (intents.length && !live) || interrupted || incomplete ? {
+    const commands=this.store.db.prepare('SELECT 1 FROM command_snapshots WHERE session_id=? LIMIT 1').get(id);
+    const pendingRecovery = operation || (commands&&!live) || (intents.length && !live) || interrupted || incomplete ? {
       reason: operation ? `Finish interrupted ${operation.direction} before continuing.` : 'An interrupted file edit or accepted turn needs recovery before continuing.',
       paths: [...new Set([...(operation?.plan.map(change => change.path) ?? []), ...intents.map(intent => intent.path)])],
     } : undefined;
@@ -84,6 +88,7 @@ export class History {
       canUndo: !!undo && !pendingRecovery && !open && !this.read(undo).unavailableReason,
       canRedo: !!redo && !pendingRecovery && !open && !this.read(redo).unavailableReason,
       ...(undo ? { undoId: undo.id } : {}), ...(redo ? { redoId: redo.id } : {}),
+      ...((undo||redo)&&this.read((undo??redo)!).effectsNotice?{effectsNotice:this.read((undo??redo)!).effectsNotice}:{}),
       ...(reason ? { unavailableReason: reason } : {}), ...(pendingRecovery ? { pendingRecovery } : {}),
     };
   }
@@ -99,9 +104,13 @@ export class History {
       this.assertCanCompact(id);
       if (messages.some(message => message.sessionId !== id) || completeToolBoundary(messages) !== messages.length) throw conflict('Compacted history contains mismatched messages or an incomplete tool group.');
       const archive = this.store.compactHistory(id, messages);
+      this.advanceRevision(id);
       this.refreshAfterCompaction(id);
       return archive;
     });
+  }
+  private advanceRevision(id: string): void {
+    this.store.updateSession(id, { historyRevision: (this.store.session(id).historyRevision ?? 0) + 1 });
   }
   private refreshAfterCompaction(id: string): void {
     if (this.rows(id).some(row => row.status === 'open')) return; // Automatic in-turn compaction is captured by seal.
@@ -134,7 +143,7 @@ export class History {
         this.store.saveQueue(id, { ...queue, items: queue.items.slice(1) });
       } else if (queue.items.length) throw conflict('Resume or remove queued messages before sending a new turn.');
       const before = this.snapshot(id);
-      const checkpoint: Checkpoint = { id: randomUUID(), userId: message.id, before, after: null, changes: [] };
+      const checkpoint: Checkpoint = { id: randomUUID(), userId: message.id, workspace: this.store.session(id).workspace, before, after: null, changes: [] };
       if (size(checkpoint) > HISTORY_LIMITS.bytes / 2) { checkpoint.before = null; checkpoint.unavailableReason = 'Conversation exceeds the 32 MiB checkpoint budget. This turn will not support undo.'; }
       this.store.db.prepare("DELETE FROM history_checkpoints WHERE session_id=? AND status='undone'").run(id);
       this.store.db.prepare('INSERT INTO history_checkpoints(id,session_id,status,data) VALUES(?,?,?,?)').run(checkpoint.id, id, 'open', JSON.stringify(checkpoint));
@@ -173,6 +182,44 @@ export class History {
       this.save(rows[0], checkpoint);
     }
   }
+  noteEffects(id: string, notice: string): void {
+    const row=this.rows(id).findLast(row=>row.status==='open'||row.status==='interrupted');
+    if(!row)return;
+    const checkpoint=this.read(row);checkpoint.effectsNotice=notice;this.save(row,checkpoint);
+  }
+  async beginCommand(id: string, workspace: string, actor?: Pick<FileChange,'actorSessionId'|'invocationId'>): Promise<string> {
+    const row=this.rows(id).findLast(row=>row.status==='open');
+    if(!row)throw conflict('No accepted turn is available for command effects.');
+    const before=await snapshotWorkspace(workspace,[this.store.directory]);
+    const key=randomUUID();
+    this.store.db.prepare('INSERT INTO command_snapshots(id,session_id,checkpoint_id,workspace,data) VALUES(?,?,?,?,?)').run(key,id,row.id,workspace,JSON.stringify({before,actor}));
+    this.noteEffects(id,'Undo covers recorded source-file changes. Generated/dependency directories, processes, network and external tool effects are outside file history.');
+    return key;
+  }
+  async finishCommand(key: string): Promise<FileChange[]> {
+    const record=this.store.db.prepare('SELECT * FROM command_snapshots WHERE id=?').get(key) as {session_id:string;checkpoint_id:string;workspace:string;data:string}|undefined;
+    if(!record)return [];
+    const {before,actor}=JSON.parse(record.data) as {before:WorkspaceSnapshot;actor?:Pick<FileChange,'actorSessionId'|'invocationId'>};
+    const result=snapshotChanges(before,await snapshotWorkspace(record.workspace,[this.store.directory]));
+    const changes=result.changes.map(change=>({...change,...actor}));
+    this.transaction(()=>{
+      const row=this.rows(record.session_id).find(row=>row.id===record.checkpoint_id);
+      if(!row)throw conflict('The command history checkpoint is missing.');
+      const checkpoint=this.read(row);
+      for(const change of changes) {
+        this.validateChange(change);
+        const previous=checkpoint.changes.find(item=>item.path===change.path);
+        if(previous&&previous.after!==change.before)throw conflict(`Unrecorded changes conflict with command history for ${change.path}. Inspect the workspace before recovering.`);
+        checkpoint.changes=[...checkpoint.changes.filter(item=>item.path!==change.path),{...change,before:previous?previous.before:change.before}];
+        this.store.recordChange(record.session_id,change);
+      }
+      if(result.incomplete)checkpoint.effectsNotice='Some binary, large, or unscanned file effects could not be captured. Undo restores only recorded source files; inspect other command effects separately.';
+      if(size(checkpoint)>HISTORY_LIMITS.bytes)throw conflict('Command changes exceed the history budget. Inspect the workspace before recovery.');
+      this.save(row,checkpoint);
+      this.store.db.prepare('DELETE FROM command_snapshots WHERE id=?').run(key);
+    });
+    return changes;
+  }
   private validateChange(change: FileChange): void {
     if (!change || typeof change.path !== 'string' || !change.path || isAbsolute(change.path) || change.path.includes('\\') || change.path.split('/').some(part => !part || part === '.' || part === '..') || [change.before, change.after].some(text => text !== null && (typeof text !== 'string' || text.includes('\0') || Buffer.byteLength(text) > HISTORY_LIMITS.fileBytes))) throw invalid('Invalid recorded file change.');
   }
@@ -208,7 +255,7 @@ export class History {
     liveTurns.get(this.store)?.delete(id);
     const row = this.rows(id).findLast(row => row.status === 'open');
     if (!row) return;
-    if (this.intents(id).length) { this.save(row, this.read(row), 'interrupted'); this.pause(id); return; }
+    if (this.intents(id).length || this.store.db.prepare('SELECT 1 FROM command_snapshots WHERE session_id=?').get(id)) { this.save(row, this.read(row), 'interrupted'); this.pause(id); return; }
     const checkpoint = this.read(row);
     checkpoint.after = this.snapshot(id);
     if (completeToolBoundary(checkpoint.after.messages) !== checkpoint.after.messages.length) {
@@ -240,7 +287,7 @@ export class History {
     const checkpoint = this.read(row);
     this.assertSnapshot(id, (direction === 'undo' ? checkpoint.after : checkpoint.before)!);
     const plan = checkpoint.changes.filter(change => change.before !== change.after).map(change => direction === 'undo' ? { ...change } : { path: change.path, before: change.after, after: change.before });
-    const workspace = this.store.session(id).workspace;
+    const workspace = checkpoint.workspace ?? this.store.session(id).workspace;
     for (const change of plan) if (await readRestoreTarget(workspace, change.path) !== change.after) throw conflict(`Cannot ${direction} ${change.path}: its contents changed outside this turn.`);
     const operation: Operation = { checkpointId: expected, direction, plan, completed: [] };
     this.transaction(() => { this.pause(id); this.saveOperation(id, operation); });
@@ -254,7 +301,7 @@ export class History {
     const source = operation.direction === 'undo' ? checkpoint.after : checkpoint.before;
     if (!target || !source) throw conflict('The pending history snapshot is unavailable.');
     this.assertSnapshot(id, source);
-    const workspace = this.store.session(id).workspace;
+    const workspace = checkpoint.workspace ?? this.store.session(id).workspace;
     const pending: FileChange[] = [];
     for (const change of operation.plan) {
       const current = await readRestoreTarget(workspace, change.path);
@@ -274,6 +321,7 @@ export class History {
       this.replaceSnapshot(id, target);
       this.save(row, checkpoint, operation.direction === 'undo' ? 'undone' : 'applied');
       this.store.db.prepare('DELETE FROM history_operations WHERE session_id=?').run(id);
+      this.advanceRevision(id);
       this.pause(id);
       this.store.updateSession(id, { status: 'idle' });
     });
@@ -285,7 +333,9 @@ export class History {
     this.pause(id);
     const operation = this.operation(id);
     if (operation) return this.finishOperation(id, operation);
-    const workspace = this.store.session(id).workspace;
+    const pending=this.rows(id).findLast(row=>row.status==='interrupted'||row.status==='open');
+    const workspace = (pending&&this.read(pending).workspace)??this.store.session(id).workspace;
+    for(const command of this.store.db.prepare('SELECT id FROM command_snapshots WHERE session_id=? ORDER BY rowid').all(id) as {id:string}[])await this.finishCommand(command.id);
     for (const intent of this.intents(id)) {
       const change: FileChange = JSON.parse(intent.data);
       const current = await readRestoreTarget(workspace, change.path);
@@ -299,10 +349,20 @@ export class History {
       const note: Message = { id: randomUUID(), sessionId: id, role: 'system', content: 'Recovery notice: an interrupted response contained incomplete tool results. The original history was archived. Some tool outcomes and shell side effects may be unknown; inspect the workspace before continuing. No tool success was inferred or replayed.', createdAt: Date.now() };
       this.store.compactHistory(id, [...messages.slice(0, boundary), note]);
     }
+    // Accepted steering is durable before acknowledgement. Restore any note
+    // absent from the retained transcript after a hard interruption.
+    const visibleIds = new Set(this.store.messages(id).map(message => message.id));
+    for (const row of this.rows(id).filter(row => row.status === 'interrupted' || row.status === 'open')) {
+      const turnId = this.read(row).userId;
+      for (const note of this.store.db.prepare('SELECT id,content,created_at FROM steering_notes WHERE session_id=? AND turn_id=? ORDER BY rowid').all(id,turnId) as {id:string;content:string;created_at:number}[]) {
+        if (!visibleIds.has(note.id)) this.store.saveMessage({id:note.id,sessionId:id,turnId,role:'system',content:`[Steering] The user sent this note before the response was interrupted. It still needs attention: ${note.content}`,createdAt:note.created_at});
+      }
+    }
     for (const row of this.rows(id).filter(row => row.status === 'interrupted' || row.status === 'open')) {
       if (row.status === 'interrupted') this.save(row, this.read(row), 'open');
       this.seal(id);
     }
+    this.advanceRevision(id);
     return this.state(id);
   }
 }

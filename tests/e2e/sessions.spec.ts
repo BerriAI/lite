@@ -55,6 +55,8 @@ async function expectExactReply(page: Page, request: APIRequestContext, id: stri
   ]);
   await expect(assistant.locator('.message-body > .markdown pre code')).toHaveText('const answer = 42;');
   await expect(assistant.locator('.message-body > .markdown')).toHaveCount(1);
+  const workLog = assistant.locator('.work-log');
+  if (!(await workLog.getAttribute('open'))) await workLog.locator(':scope > summary').click();
   await assistant.locator('.thinking > summary').click();
   await expect(assistant.locator('.thinking .markdown')).toHaveText(reasoning);
 }

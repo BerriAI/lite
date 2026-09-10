@@ -87,6 +87,9 @@ export class Jobs {
     child.stderr?.on('data', append);
     child.once('error', error => { if (job.status === 'running') { job.status = 'failed'; job.endedAt = Date.now(); append(Buffer.from(`\n[Job process error: ${errorMessage(error)}]`)); this.settle(job); } });
     child.once('exit', (code, signal) => {
+      // A shell can exit before its background descendants. Reap the owned
+      // process group now, while its identity still belongs to this job.
+      this.signalTree(job, 'SIGKILL');
       if (job.status !== 'running') { this.settle(job); return; }
       job.exitCode = code ?? undefined; job.signal = signal ?? undefined;
       job.status = job.timedOut ? 'killed' : signal ? 'killed' : 'exited';
@@ -186,6 +189,13 @@ export class Jobs {
 
   /** Kill every job in one session (session delete). Best-effort SIGKILL. */
   killSession(sessionId: string): void { for (const job of this.forSession(sessionId)) { if (job.status === 'running') this.signalTree(job, 'SIGKILL'); this.jobs.delete(this.key(sessionId, job.id)); } this.counters.delete(sessionId); }
+
+  /** Keep the output receipts, but settle owned processes before a worker ends. */
+  async stopSession(sessionId: string): Promise<void> {
+    const running=this.forSession(sessionId).filter(job=>job.status==='running');
+    await Promise.all(running.map(job=>this.kill(sessionId,job.id)));
+    if (running.some(job=>job.status==='running')) throw new Error('Background process cleanup is still pending.');
+  }
 
   /** Kill all jobs across all sessions (server shutdown). Does not wait. */
   killAll(): void { for (const job of this.jobs.values()) if (job.status === 'running') this.signalTree(job, 'SIGTERM'); }

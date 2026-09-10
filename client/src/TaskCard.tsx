@@ -7,14 +7,15 @@ import { Conversation } from './Conversation';
 import { Modal, SpeedRail } from './ui';
 
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
-const sidekick = (task: DelegationSummary) => task.role === 'sidekick';
+const sidekick = (task: DelegationSummary) => Boolean(task.role);
+const actor = (task: DelegationSummary) => task.role === 'expert' ? 'Expert' : task.role === 'worker' ? 'Worker' : 'Sidekick';
 const statusLabel = (task: DelegationSummary) => task.status === 'running' && sidekick(task) ? 'Working' : statusLabels[task.status];
 export const delegationPath = (task: DelegationSummary) => `/sessions/${encodeURIComponent(task.parentSessionId)}/delegations/${encodeURIComponent(task.id)}`;
 export function TaskCard({ task, tool, onOpen, onCancel, cancelling, error }: { task: DelegationSummary; tool: ToolCall; onOpen: () => void; onCancel: () => void; cancelling: boolean; error?: string }) {
   const running = task.status === 'running';
   const fusion = sidekick(task);
-  return <section className="research-task" role="region" aria-label={fusion ? 'Sidekick task' : 'Research task'}>
-    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? "Sidekick · edits and commands use this session’s permissions" : "Read-only research"}>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions"><button className="text-button" onClick={onOpen}>Open transcript</button>{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
+  return <section className="research-task" role="region" aria-label={fusion ? `${actor(task)} task` : 'Research task'}>
+    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions"><button className="text-button" onClick={onOpen}>Open transcript</button>{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
     {task.error && <p className="error-text" role="status">{task.error}</p>}
 
     {error && <p className="error-text" role="alert">{error}</p>}
@@ -33,7 +34,7 @@ export function TaskTranscript({ task, onClose }: { task: DelegationSummary; onC
   const previousStatus = useRef(task.status);
   const path = delegationPath(task);
   const fusion = sidekick(task);
-  const noun = fusion ? 'sidekick' : 'research';
+  const noun = fusion ? actor(task).toLowerCase() : 'research';
   useEffect(() => {
     let live = true, source: EventSource | undefined, journal: RunEvent[] = [], latestRead = 0, journalFloor = 0;
     current.current = null; setDetail(null); setLoading(true); setError(''); setConnection('connecting');
@@ -85,9 +86,9 @@ export function TaskTranscript({ task, onClose }: { task: DelegationSummary; onC
     if (previousStatus.current !== task.status) { previousStatus.current = task.status; void refresh.current(); }
   }, [task.status]);
   const summary = detail?.delegation ?? task;
-  return <Modal title={fusion ? 'Sidekick transcript' : 'Research transcript'} onClose={onClose} wide>
+  return <Modal title={fusion ? `${actor(task)} transcript` : 'Research transcript'} onClose={onClose} wide>
     <div className="research-transcript">
-      <div className="research-transcript-header"><div><strong title={fusion ? "Sidekick · edits and commands use this session’s permissions" : "Read-only research"}>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong></div><span className="research-transcript-status" role="status">{summary.status === 'running' ? <Clock3 size={13} /> : <Check size={13} />}{statusLabel(summary)}</span></div>
+      <div className="research-transcript-header"><div><strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong>{detail && <p className="field-hint">{detail.session.model}{task.legacyContext?' · Legacy context association':''}{task.isolated?' · Isolated workspace':''}</p>}</div><span className="research-transcript-status" role="status">{summary.status === 'running' ? <Clock3 size={13} /> : <Check size={13} />}{statusLabel(summary)}</span></div>
       <div className="research-transcript-toolbar"><p>Read-only transcript</p><button className="button secondary" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}>Refresh transcript</button></div>
       {error && <div className="inline-alert" role="alert">{error}</div>}
       {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}

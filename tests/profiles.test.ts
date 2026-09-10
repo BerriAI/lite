@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { link, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { link, mkdir, mkdtemp, readFile as readNativeFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, PROFILE_LIMITS } from '../server/profiles.js';
+import { readProfileCatalog, readEditableProfile, saveProjectProfile, resolveProfileChoice, profileSourceStatus, PROFILE_LIMITS } from '../server/profiles.js';
 import { readFile, readProfileSource } from '../server/tools.js';
 
 let directory: string;
@@ -12,6 +12,33 @@ beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(),
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
 describe('explicit project profile catalog and safe sources', () => {
+  it('creates and edits profiles without losing other profiles or skills, or changing pinned sessions', async () => {
+    const initial = await readProfileCatalog(directory);
+    const profile = { id: 'builder', name: 'Builder', instructions: 'Build carefully.', tools: ['read_file', 'write_file'] as const };
+    await saveProjectProfile(directory, { create: true, catalogRevision: initial.revision, profile: { ...profile, tools: [...profile.tools] } });
+    const saved = await readEditableProfile(directory, 'builder');
+    expect(saved.profile.instructions).toBe('Build carefully.');
+    await save();
+    const catalog = await readProfileCatalog(directory), pinned = await resolveProfileChoice(directory, { profileId: 'review', skillIds: ['testing'] });
+    await saveProjectProfile(directory, { create: true, catalogRevision: catalog.revision, profile: { ...profile, tools: [...profile.tools] } });
+    const review = await readEditableProfile(directory, 'review');
+    await saveProjectProfile(directory, { create: false, catalogRevision: review.catalogRevision, profile: { ...review.profile, instructions: 'New instructions.' } });
+    const manifest = JSON.parse(await readNativeFile(join(directory, '.lite/profiles.json'), 'utf8'));
+    expect(manifest.profiles).toHaveLength(2); expect(manifest.skills).toEqual([{ id: 'testing', name: 'Testing', description: 'Useful tests' }]);
+    expect(pinned.snapshot?.instructions).toBe('Follow the project review checklist.');
+    expect((await profileSourceStatus(directory, pinned.snapshot!)).status).toBe('changed');
+    await expect(saveProjectProfile(directory, { create: false, catalogRevision: review.catalogRevision, profile: review.profile })).rejects.toThrow(/changed/);
+  });
+
+  it('profile editing refuses invalid manifests and redirected configuration directories', async () => {
+    await save();
+    const profile = (await readEditableProfile(directory, 'review')).profile;
+    await writeFile(join(directory, '.lite/profiles.json'), '{ invalid');
+    await expect(saveProjectProfile(directory, { create: true, catalogRevision: (await readProfileCatalog(directory)).revision, profile })).rejects.toThrow(/invalid/);
+    await rm(join(directory, '.lite'), { recursive: true }); await mkdir(join(directory, 'elsewhere')); await symlink(join(directory, 'elsewhere'), join(directory, '.lite'));
+    await expect(saveProjectProfile(directory, { create: true, catalogRevision: (await readProfileCatalog(directory)).revision, profile })).rejects.toThrow();
+    await expect(readNativeFile(join(directory, 'elsewhere/profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+  });
   it('exposes metadata without bodies, resolves explicit skills exactly, never activates recommendations', async () => {
     await save(); const catalog = await readProfileCatalog(directory);
     expect(catalog.diagnostics).toEqual([]); expect(catalog.profiles).toHaveLength(1); expect(catalog.skills).toHaveLength(1);

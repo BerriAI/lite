@@ -4,7 +4,9 @@ A profile is an explicitly selected set of project instructions and built-in too
 
 ## Define a profile
 
-Create `.lite/profiles.json` in the project's workspace:
+Open **Settings → Project profiles → New profile** to set a name, description, and instructions. **Tools and defaults** configures available tools, an optional model/mode default, and recommended skills. Save, then choose **Use profile** to apply it. **Edit profile** changes an existing definition without replacing active snapshots. Stale saves are rejected and retain your draft.
+
+The editor saves `.lite/profiles.json` in the project workspace. You can also maintain that file directly:
 
 ```json
 {
@@ -50,7 +52,7 @@ Use a provider ID already configured in Lite. Model discovery can be incomplete,
 
 ## Select deliberately
 
-Open **Project profiles** near the composer. Choose a profile and inspect its instructions, included/excluded tools, and defaults. Check each skill you want; recommendations start unchecked.
+Open **Settings → Project profiles**. Choose a profile and inspect its instructions, included/excluded tools, and defaults. Check each skill you want; recommendations start unchecked.
 
 - **Use profile** keeps the displayed model and mode. It saves the selected profile and skills.
 - **Apply defaults** explicitly adopts the profile's model/mode defaults as well. A Plan → Build change is shown before applying.

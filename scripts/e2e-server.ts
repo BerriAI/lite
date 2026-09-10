@@ -23,7 +23,7 @@ const mock=createServer(async(req,res)=>{
   const lastUser=data.messages.filter((m:any)=>m.role==='user').at(-1)?.content||'';
   const prompt=typeof lastUser==='string'?lastUser:JSON.stringify(lastUser);
   if(prompt.includes('PROFILE_BROWSER')){profileRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(profileRequests.length>30)profileRequests.shift();}
-  if(prompt.includes('DELEGATE_BROWSER')||prompt.includes('DELEGATE_CHILD')||prompt.includes('SIDEKICK_BROWSER')||prompt.includes('SIDEKICK_CHILD')){delegationRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(delegationRequests.length>100)delegationRequests.shift();}
+  if(prompt.includes('DELEGATE_BROWSER')||prompt.includes('DELEGATE_CHILD')||prompt.includes('SIDEKICK_BROWSER')||prompt.includes('SIDEKICK_CHILD')||prompt.includes('FUSION_BROWSER')||prompt.includes('FUSION_CHILD')){delegationRequests.push({model:data.model,messages:data.messages,tools:data.tools||[]});if(delegationRequests.length>100)delegationRequests.shift();}
   if(prompt.includes('provider failure')||(prompt.includes('DELEGATE_CHILD')&&prompt.includes('CHILD_FAILURE'))){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Fixture provider rejected the request.'}}));return;}
   res.writeHead(200,{'Content-Type':'text/event-stream'});
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
@@ -52,6 +52,14 @@ const mock=createServer(async(req,res)=>{
     if(data.messages.at(-1)?.role==='tool')emit({content:`Delegation outcome: ${data.messages.at(-1).content}`});
     else if(prompt.includes('ADVERTISE_ONLY'))emit({content:data.tools?.some((tool:any)=>tool.function.name==='task')?'Research task is available.':'Research task is unavailable under this profile.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'browser-research-task',type:'function',function:{name:'task',arguments:JSON.stringify({description:'Inspect fixture project',prompt:prompt.replace('DELEGATE_BROWSER','DELEGATE_CHILD')})}}]});}
+  }else if(prompt.includes('FUSION_CHILD')){
+    if(data.messages.at(-1)?.role==='tool')emit({content:'Implementation complete. The driver must verify the root workspace.'});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:'fusion-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'answer.txt',content:'42\n'})}}]});}
+  }else if(prompt.includes('FUSION_BROWSER')){
+    if(!data.tools?.some((tool:any)=>tool.function.name==='delegate'))emit({content:'Planning only. Write-capable delegation is unavailable.'});
+    else if(data.messages.at(-1)?.role!=='tool'){toolCall=true;emit({tool_calls:[{index:0,id:'fusion-delegate',type:'function',function:{name:'delegate',arguments:JSON.stringify({description:'Implement the answer file',prompt:prompt.replace('FUSION_BROWSER','FUSION_CHILD')})}}]});}
+    else if(data.messages.some((message:any)=>message.role==='assistant'&&message.tool_calls?.some((call:any)=>call.function.name==='verify')))emit({content:'The answer file is implemented and npm test passed in the root workspace.'});
+    else{toolCall=true;emit({tool_calls:[{index:0,id:'fusion-verify',type:'function',function:{name:'verify',arguments:JSON.stringify({command:'npm test'})}}]});}
   }else if(prompt.includes('SIDEKICK_CHILD')){
     // The persistent sidekick: writes a per-turn marker file, then reports.
     const turn=data.messages.filter((m:any)=>m.role==='user').length;

@@ -114,9 +114,9 @@ export default function App() {
   useEffect(() => {
     const session = detail?.session;
     if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode, planner: session.planner, outputStyle: session.outputStyle, modelReasoning: session.modelReasoning, architecture: session.architecture });
-  }, [detail?.session.modelReasoning, detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.planner?.providerId, detail?.session.planner?.model, detail?.session.outputStyle, detail?.session.architecture?.sidekick.providerId, detail?.session.architecture?.sidekick.model, detail?.session.configRevision, configBusy]);
+  }, [detail?.session.modelReasoning, detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.planner?.providerId, detail?.session.planner?.model, detail?.session.outputStyle, detail?.session.architecture, detail?.session.configRevision, configBusy]);
   const provider = settings?.providers.find(p => p.id === selection.providerId);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeSettings = useCallback(() => { setSettingsOpen(false); setProfileDialog(null); }, []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const closeConfirm = useCallback(() => setConfirm(null), []);
   const closeRename = useCallback(() => setRename(null), []);
@@ -165,11 +165,21 @@ export default function App() {
     if (currentId.current !== id) { selectionRequest.current++; setDetail(null); setProfileDialog(null); }
     currentId.current = id; setActiveId(id); setSidebarOpen(false); setSessionMenu(false); setError('');
   }, []);
+  useEffect(() => {
+    if(activeId||!settings)return;
+    let live=true;const request=selectionRequest.current;
+    api<Partial<Selection>>(`/workspace-preferences?${query({workspace})}`).then(preferred=>{
+      if(live&&!currentId.current&&selectionRequest.current===request&&!pendingSession.current)setSelection(current=>({...current,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}}));
+    }).catch(()=>{});
+    return()=>{live=false;};
+  },[activeId,workspace,settings?.defaultProvider,settings?.defaultModel]);
   const newSession = useCallback(() => {
     pendingSession.current = null; setNewProfile(null); setProfileDialog(null); selectionRequest.current++;
     navigate(null); setDetail(null);
     const s = settingsRef.current;
-    if (s) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode });
+    if (s) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode, architecture:null });
+    const request=selectionRequest.current;
+    if(s)void api<Partial<Selection>>(`/workspace-preferences?${query({workspace:s.workspace})}`).then(preferred=>{if(!currentId.current&&selectionRequest.current===request)setSelection(current=>({...current,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}}));}).catch(()=>{});
     setTimeout(() => document.getElementById('message-input')?.focus(), 50);
   }, [navigate]);
   const load = useCallback(async () => {
@@ -177,7 +187,7 @@ export default function App() {
     try {
       const [s, r] = await Promise.all([api<SettingsType>('/settings'), api<{ sessions: Session[] }>('/sessions?archived=false')]);
       setSettings(s); setSessions(r.sessions);
-      if (!currentId.current) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode });
+      if (!currentId.current) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode, architecture:null });
     } catch (e) { setError(errorMessage(e)); } finally { setLoading(false); }
   }, []);
   useEffect(() => { void load(); }, [load]);
@@ -300,7 +310,7 @@ export default function App() {
     if (!dialog.id) {
       setNewProfile(choice.profileId || choice.skillIds.length ? { workspace: dialog.workspace, choice } : null);
       if (defaults) setSelection(value => ({ ...value, ...defaults }));
-      setProfileDialog(null); return;
+      setProfileDialog(null); setSettingsOpen(false); return;
     }
     const id = dialog.id, stillHere = () => currentId.current === id && selectionRequest.current === dialog.view;
     configOperation.current = true; setConfigBusy(true); setError('');
@@ -315,7 +325,7 @@ export default function App() {
     finally {
       try { await refreshDetail(id); } catch (e) { failure += `${failure ? ' ' : ''}Could not refresh the session: ${errorMessage(e)}. Reload before continuing.`; }
       if (stillHere() && accepted) {
-        setProfileDialog(null);
+        setProfileDialog(null); setSettingsOpen(false);
         setToast('Project configuration updated. Queued messages remain paused.');
         if (failure) setError(failure);
       }
@@ -328,7 +338,12 @@ export default function App() {
     if (configurationLocked()) return;
     const previous = selection, id = activeId, request = ++selectionRequest.current;
     setSelection(next);
-    if (!id) return;
+    if (!id) {
+      configOperation.current=true;setConfigBusy(true);
+      try {await post('/workspace-preferences',{...next,workspace});} catch(e) {if(selectionRequest.current===request){setSelection(previous);setError(errorMessage(e));}}
+      finally {configOperation.current=false;setConfigBusy(false);}
+      return;
+    }
     configOperation.current = true; setConfigBusy(true); setError('');
     const stillHere = () => currentId.current === id && selectionRequest.current === request;
     const cursor = detailRef.current?.lastEventId ?? 0;
@@ -540,7 +555,7 @@ export default function App() {
     const label = action === 'undo' ? 'Undo last turn' : action === 'redo' ? 'Redo turn' : action === 'recover' ? 'Recover history' : 'Undo session changes';
     const description = action === 'legacy'
       ? 'Restore all file edits recorded by this legacy session, not a single turn. Changed files are not overwritten. Shell commands, MCP actions and terminal effects cannot be reversed.'
-      : `${action === 'undo' ? 'Remove the last accepted turn from the conversation and restore its recorded file edits and plan.' : action === 'redo' ? 'Restore the saved conversation, recorded file edits and plan for this turn. No provider request is replayed.' : 'Finish interrupted history work after checking the listed paths. Conflicting files must be restored to their expected state before recovery can finish.'} Queued messages stay paused until you explicitly resume them. Shell commands, MCP actions and terminal effects are not reversed or replayed.`;
+      : `${action === 'undo' ? 'Remove the last accepted turn from the conversation and restore its recorded file edits and plan.' : action === 'redo' ? 'Restore the saved conversation, recorded file edits and plan for this turn. No provider request is replayed.' : 'Finish interrupted history work after checking the listed paths. Conflicting files must be restored to their expected state before recovery can finish.'} Queued messages stay paused until you explicitly resume them. ${state?.effectsNotice || 'Shell commands, MCP actions and terminal effects are not reversed or replayed.'}`;
     setConfirm({ title: action === 'legacy' ? 'Undo this session’s file changes?' : `${label}?`, description, label, sessionId: id, historyAction: true, action: () => moveHistory(id, action, checkpointId) });
   }
   async function fork(messageId?: string) {
@@ -576,13 +591,13 @@ export default function App() {
     <a className="skip-link" href="#main-content">Skip to conversation</a>
     {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
     <aside ref={sidebarRef} className="sidebar" aria-label="Session navigation"><div className="sidebar-brand"><button className="brand" onClick={newSession} aria-label="Lite home"><Logo /><span>lite<span className="brand-period">.</span></span></button><button className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={17} /></button><span className="local-label">LOCAL</span></div>
-      <div className="sidebar-top"><button className="new-session" onClick={newSession}><Plus size={17} /><span>New session</span><kbd>⌘ N</kbd></button><button className="sidebar-search-launch" onClick={() => setPaletteOpen(true)}><Search size={16} /><span>Search anything</span><kbd>⌘ K</kbd></button></div>
+      <div className="sidebar-top"><button className="new-session" onClick={newSession}><Plus size={17} /><span>New session</span><kbd>⌘ N</kbd></button></div>
       <div className="sessions-heading"><span>{archived ? 'Archived sessions' : 'Your sessions'}</span><button className={`icon-button ${archived ? 'selected' : ''}`} aria-label={archived ? 'Show recent sessions' : 'Show archived sessions'} title={archived ? 'Show recent sessions' : 'Show archived sessions'} onClick={() => setArchived(v => !v)}><Archive size={14} /></button></div>
       {sessions.length > 5 || search ? <div className="session-search"><Search size={13} /><input aria-label="Filter sessions" placeholder="Filter sessions…" value={search} onChange={e => setSearch(e.target.value)} />{search && <button aria-label="Clear session search" onClick={() => setSearch('')}><X size={12} /></button>}</div> : null}
       <div className="session-list">{loading ? <div className="sidebar-loading"><SpeedRail compact active /><span>Loading your space…</span></div> : groups.map(group => group.rows.length > 0 && <section className="session-group" key={group.title}><h3>{group.title}</h3>{group.rows.map(session => <div className={`session-row ${activeId === session.id ? 'active' : ''}`} key={session.id}><button className="session-link" onClick={() => navigate(session.id)} title={session.title}><MessageSquare size={14} /><span>{session.title || 'Untitled session'}</span>{(session.status === 'running' || session.status === 'waiting') && activeId !== session.id && <span className={`session-activity ${session.status}`} aria-label={session.status} />}</button><details className="session-context"><summary aria-label={`Actions for ${session.title}`}><MoreHorizontal size={16} /></summary><div className="session-context-menu"><button onClick={e => { setRename(session); setRenameValue(session.title); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Pencil size={13} />Rename</button><button disabled={busy} onClick={e => { void archive(session); e.currentTarget.closest('details')?.removeAttribute('open'); }}>{session.archived ? <ArchiveRestore size={13} /> : <Archive size={13} />}{session.archived ? 'Restore' : 'Archive'}</button><button className="danger" disabled={session.status === 'running' || session.status === 'waiting'} onClick={e => { askDelete(session); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Trash2 size={13} />Delete</button></div></details></div>)}</section>)}
         {!loading && !visibleSessions.length && <div className="sidebar-empty"><MessageSquare size={20} /><p>{search ? 'No matching sessions' : archived ? 'No archived sessions' : 'A little space for what’s next.'}</p><span>{search ? 'Try another search.' : archived ? 'Archive sessions to keep things tidy.' : 'Your conversations will live here.'}</span></div>}
       </div>
-      <div className="sidebar-bottom"><button className="sidebar-footer-button" onClick={() => importInput.current?.click()}><Upload size={15} /><span>Import session</span></button><button className="sidebar-footer-button" onClick={() => setSettingsOpen(true)} disabled={!settings}><Settings2 size={16} /><span>Settings</span></button><div className="workspace-identity"><span className="workspace-avatar"><Terminal size={16} /></span><div><strong>{workspace.split('/').filter(Boolean).at(-1) || 'Your workspace'}</strong><span>On your machine</span></div><button className="icon-button" aria-label="Workspace settings" disabled={!settings} onClick={() => setSettingsOpen(true)}><ChevronDown size={14} /></button></div></div>
+      <div className="sidebar-bottom"><button className="sidebar-footer-button" onClick={() => importInput.current?.click()}><Upload size={15} /><span>Import session</span></button><div className="workspace-identity"><span className="workspace-avatar"><Terminal size={16} /></span><div><strong>{workspace.split('/').filter(Boolean).at(-1) || 'Your workspace'}</strong><span>On your machine</span></div><button className="icon-button" aria-label="Settings" title="Settings" disabled={!settings} onClick={() => setSettingsOpen(true)}><Settings2 size={17} /></button></div></div>
     </aside>
     <main className="main" id="main-content"><header className="topbar"><div className="topbar-left"><button className="icon-button mobile-menu" aria-label="Open navigation" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb-project"><Folder size={14} />{workspace.split('/').filter(Boolean).at(-1) || 'Workspace'}</span><span className="breadcrumb-slash">/</span><span className="topbar-title">{detail?.session.title || (activeId ? 'Session' : 'New session')}</span></div><div className="topbar-actions">{detail && <>{!running && <span className={`session-state ${detail.session.status}`}><span />{detail.session.status === 'running' ? 'Working' : detail.session.status === 'waiting' ? detail.questions?.length ? 'Needs answer' : 'Needs approval' : detail.session.status === 'error' ? 'Run error' : detail.session.archived ? 'Archived' : 'Saved locally'}</span>}<div className="session-menu-wrap"><button className="icon-button" aria-label="Session actions" aria-expanded={sessionMenu} onClick={() => setSessionMenu(v => !v)}><MoreHorizontal size={19} /></button>{sessionMenu && <><button className="menu-dismiss" aria-label="Close session actions" onClick={() => setSessionMenu(false)} /><div className="session-menu"><button onClick={() => { setRename(detail.session); setRenameValue(detail.session.title); setSessionMenu(false); }}><Pencil size={14} />Rename session</button><button disabled={running || busy || goal?.status === 'active'} onClick={() => { setGoalText(''); setGoalTurns('10'); setGoalModal(true); setSessionMenu(false); }}><Target size={14} />Set session goal</button><button disabled={running || busy} onClick={() => { void fork(); setSessionMenu(false); }}><GitFork size={14} />Fork conversation</button><button disabled={running || !latestContext} onClick={() => { setContextSession(activeId); setSessionMenu(false); }}><FileCode2 size={14} />Context details</button><button onClick={() => { void exportSession(); setSessionMenu(false); }}><Download size={14} />Export session</button><button disabled={running || busy} onClick={() => { setSessionMenu(false); setConfirm({ title: 'Compact this conversation?', description: 'Summarize older context to make room for your next steps. This changes the context used by future model calls.', label: 'Compact context', action: async () => { await post(`/sessions/${activeId}/compact`); await refreshDetail(activeId!); setToast('Conversation compacted'); } }); }}><ArrowDownToLine size={14} />Compact context</button>{history && <><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canUndo || !history.undoId} onClick={() => { askHistory('undo'); setSessionMenu(false); }}><Undo2 size={14} />Undo last turn</button><button disabled={historyDisabled || Boolean(history.pendingRecovery) || !history.canRedo || !history.redoId} onClick={() => { askHistory('redo'); setSessionMenu(false); }}><Redo2 size={14} />Redo turn</button></>}{legacyUndo && <button disabled={historyDisabled} onClick={() => { askHistory('legacy'); setSessionMenu(false); }}><Undo2 size={14} />Undo session file changes</button>}<button onClick={() => { void archive(detail.session); setSessionMenu(false); }}><Archive size={14} />{detail.session.archived ? 'Restore session' : 'Archive session'}</button><button onClick={() => { setSessionMenu(false); void act(async () => { await api(`/sessions/${activeId}/tool-grants`, {method:'DELETE'}); setToast('Remembered tool approvals cleared. Auto mode is unchanged.'); }); }}><Shield size={14} />Reset remembered approvals</button><hr /><button className="danger" disabled={running} onClick={() => { askDelete(detail.session); setSessionMenu(false); }}><Trash2 size={14} />Delete session</button></div></>}</div></>}
         {detail && <button className={`icon-button ${terminalOpen ? 'selected' : ''}`} aria-label={terminalOpen ? 'Hide terminal pane' : 'Open terminal'} aria-expanded={terminalOpen} title="Open a local shell (not sandboxed)" onClick={() => setTerminalOpen(v => !v)}><Terminal size={18} /></button>}
@@ -605,10 +620,10 @@ export default function App() {
       </div>{workspaceOpen && settings && <Workspace workspace={workspace} sessionId={activeId ?? undefined} todos={detail?.todos ?? []} refreshKey={refreshKey} onClose={() => setWorkspaceOpen(false)} onUndo={legacyUndo ? () => askHistory('legacy') : undefined} running={historyDisabled} />}</div>
     </main>
     <input type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
-    {profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
+    {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {contextSession && contextSession === activeId && !running && latestContext && <Modal title="Context details" onClose={() => setContextSession(null)}><div className="context-dialog"><ContextIndicator context={latestContext} /></div></Modal>}
     {transcriptTask && <TaskTranscript key={`${transcriptTask.parentSessionId}-${transcriptTask.id}`} task={transcriptTask} onClose={closeTask} />}
-    {settingsOpen && settings && <Settings settings={settings} profilesDisabled={selectionDisabled} onProfiles={() => { setSidebarOpen(false); setSettingsOpen(false); openProfiles(); }} onClose={closeSettings} onSave={saveSettings} />}
+    {settingsOpen && settings && <Settings settings={settings} profilesDisabled={selectionDisabled} onProfiles={() => { setSidebarOpen(false); openProfiles(); }} profiles={profileDialog && profileDialog.id === activeId ? <ProfilePicker embedded key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeSettings} onApply={applyProfile} /> : null} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
     {goalModal && activeId && <Modal title="Set session goal" onClose={closeGoal}><form className="rename-form" onSubmit={e => { e.preventDefault(); void setSessionGoal(); }}><label>Goal<textarea autoFocus rows={3} maxLength={2000} placeholder="One objective to pursue across multiple turns…" value={goalText} onChange={e => setGoalText(e.target.value)} /></label><label>Max turns (1-25)<input type="number" min={1} max={25} value={goalTurns} onChange={e => setGoalTurns(e.target.value)} /></label><p className="goal-hint">The assistant reports progress each turn and the host continues automatically until the goal completes, blocks, or reaches the turn limit. Cancelling a response pauses continuation; your next message resumes it.</p><div className="form-actions"><button className="button secondary" type="button" onClick={closeGoal}>Cancel</button><button className="button primary" disabled={!goalText.trim() || busy}>Set goal</button></div></form></Modal>}
     {rename && <Modal title="Rename session" onClose={closeRename}><form className="rename-form" onSubmit={e => { e.preventDefault(); void act(async () => { const session = await patch<Session>(`/sessions/${rename.id}`, { title: renameValue.trim() }); setSessions(list => list.map(s => s.id === session.id ? session : s)); if (activeId === session.id) setDetail(d => d ? { ...d, session } : d); setRename(null); }); }}><label>Session name<input autoFocus maxLength={160} value={renameValue} onChange={e => setRenameValue(e.target.value)} /></label><div className="form-actions"><button className="button secondary" type="button" onClick={closeRename}>Cancel</button><button className="button primary" disabled={!renameValue.trim() || busy}>Save name</button></div></form></Modal>}

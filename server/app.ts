@@ -1,3 +1,6 @@
+import { REASONING_EFFORTS } from '../shared/types.js';
+import { WorkspacePreferences } from './workspace-preferences.js';
+import { architectureWorker } from '../shared/architectures.js';
 import express, { type Express, type Response } from 'express';
 import { z } from 'zod';
 import { realpath, stat, readdir } from 'node:fs/promises';
@@ -9,7 +12,7 @@ import { Runner, type ExternalTools } from './runner.js';
 import { Memory } from './memory.js';
 import { listModels } from './providers.js';
 import { modelCatalog } from './budget.js';
-import { readProfileCatalog, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
+import { readProfileCatalog, readEditableProfile, saveProjectProfile, saveProjectProfileSchema, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
 import { validateRuleSet } from './permissions.js';
 import { validateHooks } from './hooks.js';
 import { validateSidecars } from './sidecars.js';
@@ -26,8 +29,13 @@ const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array
 const settingsSchema = z.object({providers:z.array(providerSchema).max(30).refine(p=>new Set(p.map(x=>x.id)).size===p.length,'Provider IDs must be unique').optional(),defaultProvider:z.string().max(64).optional(),defaultModel:z.string().max(250).optional(),workspace:z.string().max(4096).optional(),permissionMode:z.enum(['ask','auto']).optional(),maxSteps:z.number().int().min(1).max(200).optional(),theme:z.enum(['light','dark','system']).optional(),mcpServers:z.record(z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),mcpSchema).refine(value=>Object.keys(value).length<=30,'At most 30 MCP servers may be configured.').optional(),permissionRules:z.unknown().optional(),memoryEnabled:z.boolean().optional(),hooks:z.unknown().optional(),sidecars:z.unknown().optional(),trustedWorkspaces:z.array(z.string().min(1).max(4096)).max(HOOK_LIMITS.trustedWorkspaces).optional(),notifications:z.boolean().optional(),expectedMcpConfigRevision:z.string().min(1).max(128).optional()});
 // planner: the optional planning half of a planner+executor pair; null clears it.
 // architecture: the optional multi-model arrangement (shared/architectures.ts); null clears it.
-const architectureSchema = z.object({kind:z.literal('sidekick-fusion'),sidekick:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)})});
-const sessionSchema = z.object({modelReasoning:z.record(z.string().max(400),z.enum(['low','medium','high'])).refine(value=>Object.keys(value).length<=100,'At most 100 model reasoning preferences may be configured.').optional(),title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),architecture:architectureSchema.nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
+const modelRouteSchema = z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).strict();
+const architectureSchema = z.discriminatedUnion('kind', [
+  z.object({kind:z.literal('sidekick-fusion'),sidekick:modelRouteSchema}).strict(),
+  z.object({kind:z.literal('team-fusion'),worker:modelRouteSchema,concurrency:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(4)]).optional()}).strict(),
+  z.object({kind:z.literal('expert-fusion'),expert:modelRouteSchema}).strict(),
+]);
+const sessionSchema = z.object({modelReasoning:z.record(z.string().max(400),z.enum(REASONING_EFFORTS)).refine(value=>Object.keys(value).length<=100,'At most 100 model reasoning preferences may be configured.').optional(),title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),architecture:architectureSchema.nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
@@ -68,6 +76,8 @@ export function createApp(options:AppOptions = {}) {
   const profileDetail=(snapshot:ProfileSnapshot|null,source:ProfileDetail['source']={status:snapshot?'current':'inactive'},diagnostics:ProfileDetail['diagnostics']=[]):ProfileDetail=>({active:snapshot?.active??null,pinned:snapshot?{instructions:snapshot.instructions,skills:snapshot.skills,sources:snapshot.sources}:null,source,diagnostics});
   const publishConfiguration=(id:string)=>{for(const [type,data]of [['session',store.session(id)],['queue',store.queue(id)]] as const)try{bus.emit(id,type,data);}catch{console.error('Could not publish configuration update. Refresh to inspect saved state.');}};
   app.get('/api/profiles',async(req,res)=>{const signal=requestSignal(res),root=await workspace(req.query.workspace);signal.throwIfAborted();res.json({...await readProfileCatalog(root,signal),workspace:root});});
+  app.get('/api/profiles/edit',async(req,res)=>{const root=await workspace(req.query.workspace),id=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).parse(req.query.id);res.json(await readEditableProfile(root,id));});
+  app.post('/api/profiles/save',async(req,res)=>{const input=saveProjectProfileSchema.parse(req.body),root=await workspace(input.workspace);res.json(await saveProjectProfile(root,input));});
   app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
   app.get('/api/health',(_req,res)=>res.json({ok:true,version:'0.1.0'}));
   // 5.1 usage report. days is zod-clamped 1..90 (coerced from the query
@@ -152,6 +162,13 @@ export function createApp(options:AppOptions = {}) {
     if(provider.kind==='codex')modelCatalog.clear(provider.id);
     try{const models=await listModels(provider,AbortSignal.timeout(30000));if(provider.kind!=='codex')modelCatalog.remember(provider,models);res.json({ok:true,models:models.length});}catch(error){res.status(502).json({ok:false,error:safeError(error,store)});}
   });
+  const preferences=new WorkspacePreferences(store);
+  app.get('/api/workspace-preferences',async(req,res)=>res.json(preferences.get(await workspace(req.query.workspace))));
+  app.post('/api/workspace-preferences',async(req,res)=>{
+    const input=sessionSchema.required({providerId:true,model:true}).parse(req.body), root=await workspace(input.workspace);
+    checkProvider(input.providerId);if(input.architecture)checkProvider(architectureWorker(input.architecture).providerId);if(input.planner)checkProvider(input.planner.providerId);
+    preferences.save(root,{...input,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined});res.json({ok:true});
+  });
   app.get('/api/sessions',(req,res)=>res.json({sessions:store.sessions(queryString(req.query.q),req.query.archived==='true')}));
   app.post('/api/sessions',async(req,res)=>{
     const {profile,...input}=sessionSchema.extend({profile:profileChoiceSchema.optional()}).parse(req.body||{});
@@ -162,16 +179,16 @@ export function createApp(options:AppOptions = {}) {
       return {root,resolved:profile?await resolveProfileChoice(root,profile,signal):undefined};
     },({root,resolved})=>{
       const defaults=resolved?.defaults,pair=input.providerId&&input.model?{providerId:input.providerId,model:input.model}:nonempty?defaults?.model:undefined;
-      const selection={...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
+      const selection={...(nonempty?{}:preferences.get(root)),...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
       if(selection.mode===undefined)delete selection.mode;
       // planner:null means "no planner" on create; a set planner needs a real provider.
       if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
       // architecture:null means "single model" on create; each role needs a real provider.
-      if(!selection.architecture)delete selection.architecture;else checkProvider(selection.architecture.sidekick.providerId);
+      if(!selection.architecture)delete selection.architecture;else checkProvider(architectureWorker(selection.architecture).providerId);
       // outputStyle:null means "no style" on create, mirroring planner.
       if(!selection.outputStyle)delete selection.outputStyle;
       checkProvider(selection.providerId);
-      return store.createSession(selection as Partial<Session>,resolved);
+      const session=store.createSession(selection as Partial<Session>,resolved);preferences.save(root,session);return session;
     },requestSignal(res));
     res.status(201).json(session);
   });
@@ -222,11 +239,11 @@ export function createApp(options:AppOptions = {}) {
     // revision bump in the store, queue held.
     const configChange=patch.modelReasoning!==undefined||patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.architecture!==undefined||patch.outputStyle!==undefined;
     if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
-    checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);if(patch.architecture)checkProvider(patch.architecture.sidekick.providerId);
+    checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);if(patch.architecture)checkProvider(architectureWorker(patch.architecture).providerId);
     const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
-    if(configChange)publishConfiguration(req.params.id);res.json(session);
+    if(configChange){preferences.save(session.workspace,session);publishConfiguration(req.params.id);}res.json(session);
   });
-  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);runner.jobs.killSession(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
+  app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);runner.deleteSessionJobs(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
   const memory=new Memory(store);
   const memoryWorkspace=(value:unknown)=>{const workspace=queryString(value);if(!workspace.trim())throw httpError(400,'workspace is required.');return workspace;};
   app.get('/api/memory',(req,res)=>res.json({facts:memory.list(memoryWorkspace(req.query.workspace))}));

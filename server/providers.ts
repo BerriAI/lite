@@ -1,3 +1,4 @@
+import { REASONING_EFFORTS } from '../shared/types.js';
 import { randomUUID } from 'node:crypto';
 import { validContextWindow } from './budget.js';
 import type { Model, ReasoningEffort, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
@@ -488,11 +489,12 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
  * can never be steered by transcript content, and the timeout bounds spend.
  * Provider errors and timeouts throw; the CALLER decides the fallback (the
  * goal evaluator, for example, treats any failure as 'continue'). */
-export async function boundedReview(options: { provider: Provider; model: string; system: string; prompt: string; timeoutMs?: number }): Promise<string> {
+export async function boundedReview(options: { provider: Provider; model: string; system: string; prompt: string; timeoutMs?: number; signal?: AbortSignal; reasoningEffort?: ReasoningEffort; onUsage?: (usage:Usage)=>void }): Promise<string> {
   let text = '';
-  for await (const chunk of streamCompletion({ provider: options.provider, model: options.model, signal: AbortSignal.timeout(options.timeoutMs ?? 15_000),
+  for await (const chunk of streamCompletion({ provider: options.provider, model: options.model, reasoningEffort:options.reasoningEffort, signal: AbortSignal.any([...(options.signal?[options.signal]:[]),AbortSignal.timeout(options.timeoutMs ?? 15_000)]),
     system: options.system, messages: [{ role: 'user', content: options.prompt }] })) {
     if (chunk.type === 'text') text += chunk.text || '';
+    if (chunk.type === 'usage'&&chunk.usage)options.onUsage?.(chunk.usage);
     if (text.length > 100_000) break; // Reviews are short verdicts; never buffer a runaway stream.
   }
   return text.trim();
@@ -526,11 +528,13 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
     if (seen.has(id)) {
       // Ambiguous duplicate metadata is not authoritative for budgeting.
       const previous = models.find(model => model.id === id);
-      if (previous) { delete previous.contextWindow; delete previous.maxInputTokens; }
+      if (previous) { delete previous.contextWindow; delete previous.maxInputTokens; delete previous.reasoningEfforts; }
       continue;
     }
     seen.add(id);
-    models.push({ id, name: validName(value.display_name) ? value.display_name : validName(value.name) ? value.name : id, providerId: provider.id,
+    const levels=value.supported_reasoning_efforts??value.supported_reasoning_levels;
+    const efforts=Array.isArray(levels)?levels.map((item:unknown)=>typeof item==='string'?item:(item as {effort?:string})?.effort).filter((effort:unknown):effort is ReasoningEffort=>REASONING_EFFORTS.includes(effort as ReasoningEffort)):undefined;
+    models.push({ ...(efforts?{reasoningEfforts:efforts}:{}), id, name: validName(value.display_name) ? value.display_name : validName(value.name) ? value.name : id, providerId: provider.id,
       ...(validContextWindow(value.context_window) ? { contextWindow: value.context_window } : {}),
       // LiteLLM gateways publish max_input_tokens rather than context_window.
       // Kept as a separate field: an input cap is not a total context window.

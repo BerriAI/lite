@@ -1,5 +1,6 @@
-import { createHash } from 'node:crypto';
-import { realpath } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { link, lstat, mkdir, open, realpath, rename, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
 import { z } from 'zod';
 import { readProfileSource } from './tools.js';
 import type { ActiveProfile, PinnedSkill, ProfileCatalog, ProfileChoice, ProfileDiagnostic, ProfileSource } from '../shared/profiles.js';
@@ -15,6 +16,7 @@ const skillSchema = z.object({ id: slug, name: label, description: description.o
 const manifestSchema = z.object({ version: z.literal(1), profiles: z.array(profileSchema).max(PROFILE_LIMITS.profiles), skills: z.array(skillSchema).max(PROFILE_LIMITS.skills) }).strict().refine(value => unique(value.profiles.map(profile => profile.id)) && unique(value.skills.map(skill => skill.id))).refine(value => value.profiles.every(profile => profile.skills?.every(id => value.skills.some(skill => skill.id === id)) ?? true));
 export const profileChoiceSchema = z.object({ profileId: slug.nullable(), skillIds: z.array(slug).max(PROFILE_LIMITS.activeSkills).refine(unique), catalogRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
 const manifestPath = '.lite/profiles.json';
+export const saveProjectProfileSchema = z.object({ workspace: z.string().max(4096).optional(), catalogRevision: z.string().regex(/^[a-f0-9]{64}$/), create: z.boolean(), profile: profileSchema }).strict();
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
 const invalid = (message: string) => Object.assign(new Error(message), { status: 400 });
@@ -69,6 +71,62 @@ async function load(workspace: string, signal?: AbortSignal): Promise<Loaded> {
 }
 
 export async function readProfileCatalog(workspace: string, signal?: AbortSignal): Promise<ProfileCatalog> { return (await load(workspace, signal)).catalog; }
+
+export async function readEditableProfile(workspace: string, id: string) {
+  const loaded = await load(workspace), profile = loaded.profiles.get(id);
+  if (!profile) throw invalid('This project profile is missing or invalid. Refresh the catalog.');
+  return { profile, catalogRevision: loaded.catalog.revision };
+}
+
+const profileWrites = new Set<string>();
+/** Settings-only editor. Preserve other profiles and all skill declarations;
+ * never follow aliases or silently replace an invalid/newer manifest. */
+export async function saveProjectProfile(workspace: string, input: z.infer<typeof saveProjectProfileSchema>) {
+  const root = await realpath(workspace);
+  if (profileWrites.has(root)) throw conflict('Another profile save is in progress. Try again.');
+  profileWrites.add(root);
+  let temporary: string | undefined;
+  try {
+    const loaded = await load(root);
+    if (loaded.catalog.revision !== input.catalogRevision) throw conflict('Project profiles changed. Refresh the catalog before saving. Your draft has not been saved.');
+    let before: string | null = null;
+    try { before = await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes); }
+    catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
+    let manifest: z.infer<typeof manifestSchema>;
+    try { manifest = before === null ? { version: 1, profiles: [], skills: [] } : manifestSchema.parse(JSON.parse(before.replace(/^﻿/, ''))); }
+    catch { throw invalid('Fix the invalid .lite/profiles.json file before editing profiles here.'); }
+    const index = manifest.profiles.findIndex(profile => profile.id === input.profile.id);
+    if (input.create ? index !== -1 : index === -1) throw conflict(input.create ? 'That profile ID already exists. Choose another ID.' : 'This profile no longer exists. Refresh the catalog.');
+    if (input.create) manifest.profiles.push(input.profile); else manifest.profiles[index] = input.profile;
+    manifest = manifestSchema.parse(manifest);
+    const content = JSON.stringify(manifest, null, 2) + '\n';
+    if (Buffer.byteLength(content) > PROFILE_LIMITS.manifestBytes) throw invalid('The project profile catalog exceeds its size limit.');
+    const directory = join(root, '.lite');
+    await mkdir(directory, { recursive: true });
+    const identity = await lstat(directory);
+    const verifyDirectory = async () => {
+      const now = await lstat(directory);
+      if (!now.isDirectory() || now.isSymbolicLink() || now.dev !== identity.dev || now.ino !== identity.ino || await realpath(directory) !== directory) throw conflict('The project configuration directory changed or uses an alias.');
+    };
+    await verifyDirectory();
+    temporary = join(directory, `.profiles-${randomUUID()}.tmp`);
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(content, 'utf8'); await handle.sync(); } finally { await handle.close(); }
+    await verifyDirectory();
+    if ((await readProfileCatalog(root)).revision !== input.catalogRevision) throw conflict('Project profiles changed during the save. Refresh and try again.');
+    const target = join(root, manifestPath);
+    if (before === null) { await link(temporary, target); await unlink(temporary); }
+    else {
+      if (await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes) !== before) throw conflict('The profile manifest changed during the save.');
+      await rename(temporary, target);
+    }
+    temporary = undefined;
+    return { profile: input.profile, catalogRevision: (await readProfileCatalog(root)).revision };
+  } finally {
+    if (temporary) await unlink(temporary).catch(() => {});
+    profileWrites.delete(root);
+  }
+}
 export async function resolveProfileChoice(workspace: string, choice: ProfileChoice, signal?: AbortSignal): Promise<ResolvedProfile> {
   signal?.throwIfAborted();
   const parsed = profileChoiceSchema.safeParse(choice);
