@@ -1,7 +1,7 @@
 import type { ClientSurface } from '../shared/client.js';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, chmodSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { resolve, join, dirname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { completeToolBoundary } from './context.js';
 import type { ApplyProfileRequest } from '../shared/profiles.js';
@@ -11,10 +11,11 @@ import type { Session, Message, Settings, Todo, FileChange, RunEvent, Provider, 
 
 export class Store {
   readonly db: DatabaseSync;
-  constructor(readonly directory = resolve(process.env.LITE_DATA_DIR || '.lite')) {
+  constructor(readonly directory = resolve(process.env.SPEEDRAIL_DATA_DIR || '.speedrail')) {
+    if (basename(directory) === '.speedrail' && !existsSync(join(directory, 'speedrail.db')) && existsSync(join(dirname(directory), '.lite', 'lite.db'))) throw new Error('Saved data from the previous agent was found. Stop its server and run npm run migrate in the Speedrail checkout.');
     mkdirSync(directory, { recursive: true, mode: 0o700 });
-    this.db = new DatabaseSync(join(directory, 'lite.db'));
-    chmodSync(join(directory, 'lite.db'), 0o600);
+    this.db = new DatabaseSync(join(directory, 'speedrail.db'));
+    chmodSync(join(directory, 'speedrail.db'), 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL);
@@ -99,7 +100,7 @@ export class Store {
     const row = this.db.prepare('SELECT data FROM settings WHERE id=1').get() as { data: string } | undefined;
     const settings: Settings = row ? JSON.parse(row.data) : {
       providers: process.env.LITELLM_BASE_URL ? [{ id: 'litellm', name: 'LiteLLM', kind: 'openai', baseUrl: process.env.LITELLM_BASE_URL }] : [],
-      defaultProvider: 'litellm', defaultModel: process.env.LITE_MODEL || '', workspace: resolve(process.env.LITE_WORKSPACE || process.cwd()),
+      defaultProvider: 'litellm', defaultModel: process.env.SPEEDRAIL_MODEL || '', workspace: resolve(process.env.SPEEDRAIL_WORKSPACE || process.cwd()),
       permissionMode: 'ask', maxSteps: 40, theme: 'system', mcpServers: {},
     };
     settings.providers = settings.providers.map(p => p.id === 'litellm' ? { ...p, apiKey: p.apiKey ?? process.env.LITELLM_API_KEY } : p);
@@ -138,7 +139,7 @@ export class Store {
     return { ...session, configRevision: Number.isSafeInteger(session.configRevision) && session.configRevision! >= 0 ? session.configRevision : 0 };
   }
   atomic<T>(operation: () => T): T {
-    const name = `lite_store_${randomUUID().replaceAll('-', '')}`;
+    const name = `speedrail_store_${randomUUID().replaceAll('-', '')}`;
     this.db.exec(`SAVEPOINT ${name}`);
     try { const result = operation(); this.db.exec(`RELEASE SAVEPOINT ${name}`); return result; }
     catch (error) { this.db.exec(`ROLLBACK TO SAVEPOINT ${name}; RELEASE SAVEPOINT ${name}`); throw error; }
@@ -264,7 +265,7 @@ export class Store {
     }
     // A savepoint is atomic standalone and also participates in History.compact's
     // outer transaction, so an archive cannot commit before its checkpoint does.
-    this.db.exec('SAVEPOINT lite_compaction');
+    this.db.exec('SAVEPOINT speedrail_compaction');
     try {
       const source=this.session(id);
       const snapshot=this.profileSnapshot(id);
@@ -273,9 +274,9 @@ export class Store {
       this.saveTodos(archive.id,this.todos(id));
       this.db.prepare('DELETE FROM messages WHERE session_id=?').run(id);
       for(const message of messages)this.saveMessage(message);
-      this.db.exec('RELEASE SAVEPOINT lite_compaction');
+      this.db.exec('RELEASE SAVEPOINT speedrail_compaction');
       return archive;
-    } catch(error) { this.db.exec('ROLLBACK TO SAVEPOINT lite_compaction; RELEASE SAVEPOINT lite_compaction');throw error; }
+    } catch(error) { this.db.exec('ROLLBACK TO SAVEPOINT speedrail_compaction; RELEASE SAVEPOINT speedrail_compaction');throw error; }
   }
   /** Persist the full pre-truncation output of one tool call so
    * tool_output_page can read it back. Storage is capped at 4 MiB of UTF-8

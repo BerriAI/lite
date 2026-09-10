@@ -5,7 +5,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { FileChange } from '../shared/types.js';
 
 export const SNAPSHOT_LIMITS = { files: 10000, bytes: 12 * 1024 * 1024, fileBytes: 2 * 1024 * 1024 };
-export const SNAPSHOT_IGNORES = new Set(['.git','.lite','node_modules','dist','build','coverage','.next','.venv','venv','__pycache__','target','test-results','playwright-report']);
+export const SNAPSHOT_IGNORES = new Set(['.git','.speedrail','.lite','node_modules','dist','build','coverage','.next','.venv','venv','__pycache__','target','test-results','playwright-report']);
 export interface WorkspaceSnapshot { files: Record<string,string>; omitted: Record<string,string>; truncated: boolean }
 
 /** Bounded source-file observation. Does not follow symlinks, read outside the

@@ -22,7 +22,7 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
   const run = async (id: string, content = 'Do the task') => { runner.start(id, content); await runner.whenIdle(); };
   const system = (body: any) => body.messages[0].content as string;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-styles-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-styles-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);
@@ -57,9 +57,9 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
     }
   });
 
-  it('reads a workspace .lite/styles/<name>.md when the name is not a builtin', async () => {
-    await mkdir(join(directory, '.lite', 'styles'), { recursive: true });
-    await writeFile(join(directory, '.lite', 'styles', 'pirate.md'), 'Answer briefly, in the voice of a careful pirate.');
+  it('reads a workspace .speedrail/styles/<name>.md when the name is not a builtin', async () => {
+    await mkdir(join(directory, '.speedrail', 'styles'), { recursive: true });
+    await writeFile(join(directory, '.speedrail', 'styles', 'pirate.md'), 'Answer briefly, in the voice of a careful pirate.');
     expect((await api(`/styles?workspace=${encodeURIComponent(directory)}`)).body).toEqual({ styles: ['pirate'] });
     const session = await create({ outputStyle: 'pirate' });
     await run(session.id);
@@ -78,8 +78,8 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
   });
 
   it('is captured at acceptance: a mid-turn style PATCH is rejected idle-only, and a file edit mid-session never changes the accepted turn', async () => {
-    await mkdir(join(directory, '.lite', 'styles'), { recursive: true });
-    await writeFile(join(directory, '.lite', 'styles', 'house.md'), 'HOUSE-STYLE-V1 applies.');
+    await mkdir(join(directory, '.speedrail', 'styles'), { recursive: true });
+    await writeFile(join(directory, '.speedrail', 'styles', 'house.md'), 'HOUSE-STYLE-V1 applies.');
     const session = await create({ outputStyle: 'house' });
     let released!: () => void; const gate = new Promise<void>(resolve => { released = resolve; });
     respond = (_body, res) => { void gate.then(() => text(res)); };
@@ -90,7 +90,7 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
     released!(); await running;
     expect(system(calls[0])).toContain('HOUSE-STYLE-V1');
     // Editing the file between turns changes the NEXT accepted turn only.
-    await writeFile(join(directory, '.lite', 'styles', 'house.md'), 'HOUSE-STYLE-V2 applies.');
+    await writeFile(join(directory, '.speedrail', 'styles', 'house.md'), 'HOUSE-STYLE-V2 applies.');
     respond = (_body, res) => text(res);
     await run(session.id, 'Next turn');
     expect(system(calls.at(-1))).toContain('HOUSE-STYLE-V2');
@@ -119,9 +119,9 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
   });
 
   it('caps a workspace style file at 4KiB and treats an empty file as missing', async () => {
-    await mkdir(join(directory, '.lite', 'styles'), { recursive: true });
-    await writeFile(join(directory, '.lite', 'styles', 'huge.md'), `LEAD-TEXT ${'x'.repeat(8000)}TAIL-MARKER`);
-    await writeFile(join(directory, '.lite', 'styles', 'empty.md'), '   \n');
+    await mkdir(join(directory, '.speedrail', 'styles'), { recursive: true });
+    await writeFile(join(directory, '.speedrail', 'styles', 'huge.md'), `LEAD-TEXT ${'x'.repeat(8000)}TAIL-MARKER`);
+    await writeFile(join(directory, '.speedrail', 'styles', 'empty.md'), '   \n');
     const session = await create({ outputStyle: 'huge' });
     await run(session.id);
     expect(system(calls[0])).toContain('LEAD-TEXT');
@@ -146,11 +146,11 @@ describe('output styles (5.7): system prompt tail, acceptance capture, config se
 
   it('GET /api/styles lists only well-formed .md names and returns [] with no styles directory', async () => {
     expect((await api(`/styles?workspace=${encodeURIComponent(directory)}`)).body).toEqual({ styles: [] });
-    await mkdir(join(directory, '.lite', 'styles'), { recursive: true });
-    await writeFile(join(directory, '.lite', 'styles', 'beta.md'), 'B');
-    await writeFile(join(directory, '.lite', 'styles', 'alpha.md'), 'A');
-    await writeFile(join(directory, '.lite', 'styles', 'not-a-style.txt'), 'nope');
-    await writeFile(join(directory, '.lite', 'styles', 'bad name.md'), 'nope');
+    await mkdir(join(directory, '.speedrail', 'styles'), { recursive: true });
+    await writeFile(join(directory, '.speedrail', 'styles', 'beta.md'), 'B');
+    await writeFile(join(directory, '.speedrail', 'styles', 'alpha.md'), 'A');
+    await writeFile(join(directory, '.speedrail', 'styles', 'not-a-style.txt'), 'nope');
+    await writeFile(join(directory, '.speedrail', 'styles', 'bad name.md'), 'nope');
     expect((await api(`/styles?workspace=${encodeURIComponent(directory)}`)).body).toEqual({ styles: ['alpha', 'beta'] });
   });
 });

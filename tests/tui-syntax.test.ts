@@ -3,8 +3,8 @@ import { getTheme } from '../tui/theme.js';
 import { BUILTIN_THEMES } from '../tui/themes.js';
 import { subtleSyntaxRules, syntaxRules } from '../tui/syntax.js';
 
-const theme = getTheme('lite', 'dark', BUILTIN_THEMES);
-if (!theme) throw new Error('lite theme missing');
+const theme = getTheme('speedrail', 'dark', BUILTIN_THEMES);
+if (!theme) throw new Error('speedrail theme missing');
 
 describe('syntaxRules', () => {
   const rules = syntaxRules(theme);

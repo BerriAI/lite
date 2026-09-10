@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[];
 
 test.beforeEach(async ({ page }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-commands-browser-'))); sessions = [];
-  await mkdir(join(workspace, '.lite', 'commands'), { recursive: true });
-  await writeFile(join(workspace, '.lite', 'commands', 'inspect.md'), '# Inspect a target\nInspect $1 carefully. Full request: $ARGUMENTS');
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-commands-browser-'))); sessions = [];
+  await mkdir(join(workspace, '.speedrail', 'commands'), { recursive: true });
+  await writeFile(join(workspace, '.speedrail', 'commands', 'inspect.md'), '# Inspect a target\nInspect $1 carefully. Full request: $ARGUMENTS');
 });
 test.afterEach(async ({ request }) => {
   for (const session of sessions) {

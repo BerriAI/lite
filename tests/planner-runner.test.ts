@@ -29,7 +29,7 @@ describe('planner + executor dual-model routing', () => {
   const run = async (id: string, content = 'Do the work') => { runner.start(id, content); await runner.whenIdle(); };
   const lastContext = (id: string) => store.messages(id).filter(m => m.role === 'assistant').at(-1)?.context;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-planner-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-planner-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);

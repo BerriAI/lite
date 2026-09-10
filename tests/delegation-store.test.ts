@@ -11,7 +11,7 @@ import type { Message, Session } from '../shared/types.js';
 
 let directory: string, store: Store, history: History, delegations: Delegations;
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-delegations-'))); store = new Store(join(directory, 'data'));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-delegations-'))); store = new Store(join(directory, 'data'));
   store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Fixture', kind: 'openai', baseUrl: 'http://127.0.0.1:1' }], defaultProvider: 'test', defaultModel: 'model' });
   history = new History(store); delegations = new Delegations(store, history);
 });
@@ -29,9 +29,9 @@ function finish(child: Session) { store.saveMessage(message(child.id, 'assistant
 const records = () => store.db.prepare('SELECT * FROM delegations ORDER BY rowid').all();
 function database() { return Object.fromEntries(['sessions', 'messages', 'session_profiles', 'delegations', 'history_checkpoints', 'queues'].map(table => [table, store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])); }
 async function skill() {
-  await mkdir(join(directory, '.lite/skills/research'), { recursive: true });
-  await writeFile(join(directory, '.lite/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'named', name: 'Named', tools: ['read_file'] }], skills: [{ id: 'research', name: 'Research' }] }));
-  await writeFile(join(directory, '.lite/skills/research/SKILL.md'), 'EXACT PINNED RESEARCH\r\n');
+  await mkdir(join(directory, '.speedrail/skills/research'), { recursive: true });
+  await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'named', name: 'Named', tools: ['read_file'] }], skills: [{ id: 'research', name: 'Research' }] }));
+  await writeFile(join(directory, '.speedrail/skills/research/SKILL.md'), 'EXACT PINNED RESEARCH\r\n');
   return (await resolveProfileChoice(directory, { profileId: null, skillIds: ['research'] })).snapshot!;
 }
 function reopen() { store.close(); store = new Store(join(directory, 'data')); history = new History(store); delegations = new Delegations(store, history); }
@@ -67,7 +67,7 @@ describe('durable foreground researcher storage', () => {
     expect(store.profileSnapshot(child.id)).toEqual(profile); expect(store.toolGrants(child.id)).toEqual([]);
     expect(store.messages(root.parent.id)[1].toolCalls?.[0]).toMatchObject({ delegationId: delegation.id, status: 'running' });
     expect(delegations.list(root.parent.id)).toEqual([delegation]); expect(delegations.transcript(root.parent.id, delegation.id)).toMatchObject({ readOnly: true, lastEventId: 0, messages: [user] });
-    await rm(join(directory, '.lite'), { recursive: true }); expect(store.profileSnapshot(child.id)).toEqual(profile);
+    await rm(join(directory, '.speedrail'), { recursive: true }); expect(store.profileSnapshot(child.id)).toEqual(profile);
   });
   it('never persists extra runtime credentials or grants from the child authority object', () => {
     const root = origin(); store.grantTool(root.parent.id, 'bash', 'root-only');

@@ -6,7 +6,7 @@ import type { Session, SessionDetail } from '../../shared/types';
 import type { DelegationSummary } from '../../shared/delegation';
 
 async function expandSteps(page: Page) { const log = page.locator('.conversation-shell').first().locator(':scope > .conversation-scroll > .conversation-content > article > .message-body > .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 const sidekickCard = (page: Page) => page.getByRole('region', { name: 'Sidekick task', exact: true, includeHidden: true });
 const transcript = (page: Page) => page.getByRole('region', { name: 'Sidekick transcript', exact: true });
 const permission = (page: Page) => page.getByRole('region', { name: 'Permission requested', exact: true });
@@ -14,7 +14,7 @@ let workspace: string, sessions: Session[], browserErrors: string[];
 
 test.beforeEach(async ({ page }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-sidekick-browser-'))); sessions = [];
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-sidekick-browser-'))); sessions = [];
 });
 test.afterEach(async ({ request }) => {
   for (const session of sessions) {
@@ -69,7 +69,7 @@ test('the sidekick writes behind parent-surfaced approvals and one persistent ch
   expect(childCalls.length).toBeGreaterThan(0); for (const call of childCalls) expect(call.model).toBe('test-fast');
   await expandSteps(page);
   await expect(transcript(page)).toContainText('Sidekick report for turn 1');
-  await expect(transcript(page).getByRole('textbox', { name: 'Message Lite', exact: true })).toHaveCount(0);
+  await expect(transcript(page).getByRole('textbox', { name: 'Message Speedrail', exact: true })).toHaveCount(0);
 
   // Second turn: the SAME child session continues — persistent context, not a fresh helper.
   await send(page, session, 'second');

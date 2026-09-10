@@ -10,7 +10,7 @@ import type { Message } from '../shared/types.js';
 
 describe('Fusion task accounting and recovery',()=>{
   let directory:string,store:Store;
-  beforeEach(async()=>{directory=await realpath(await mkdtemp(join(tmpdir(),'lite-fusion-accounting-')));store=new Store(join(directory,'state'));});
+  beforeEach(async()=>{directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-fusion-accounting-')));store=new Store(join(directory,'state'));});
   afterEach(async()=>{store.close();await rm(directory,{recursive:true,force:true});});
   it('counts each cumulative provider request once, includes compaction, and leaves partial costs unknown',()=>{
     const ledger=new UsageLedger(store);

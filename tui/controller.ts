@@ -1,6 +1,6 @@
 import type { Attachment, PermissionRequest, QuestionAnswer, QuestionRequest, Session, SessionDetail, Settings } from '../shared/types.js';
 import { SessionSync, type SyncState } from './sync.js';
-import { LiteClient } from './client.js';
+import { SpeedrailClient } from './client.js';
 
 export interface Draft { text: string; attachments: Attachment[] }
 export interface DraftStorage { load(key: string): Draft; save(key: string, draft: Draft): void; remember?(text: string): void; history?(): string[] }
@@ -16,7 +16,7 @@ export class TerminalController {
   private unsubscribe?: () => void;
   private generation = 0;
   private drafts = new Map<string, Draft>();
-  constructor(readonly client: LiteClient, private sync: SessionSync, private storage?: DraftStorage) {
+  constructor(readonly client: SpeedrailClient, private sync: SessionSync, private storage?: DraftStorage) {
     this.state = { sync: sync.getState(), draft: this.loadDraft(sync.sessionId), pending: null, notice: '', settings: null };
     this.connect();
   }

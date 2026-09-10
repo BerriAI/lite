@@ -46,7 +46,7 @@ const tools = (res: ServerResponse, calls: { name: string; args: unknown; id?: s
 describe('runner and turn history integration', () => {
   let directory: string, store: Store, bus: EventBus, runner: Runner, provider: Server, reply: Reply, calls: RequestBody[];
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-history-runner-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-history-runner-')));
     store = new Store(join(directory, 'state')); calls = []; reply = (_body, response) => text(response);
     provider = createServer(async (req, res) => {
       const buffers: Buffer[] = []; for await (const chunk of req) buffers.push(chunk);
@@ -332,7 +332,7 @@ describe('runner and turn history integration', () => {
         } return handle;}; syncBuiltinESMExports(); await import(${JSON.stringify(index)});`;
     const child = spawn(process.execPath, ['--import', loader, '--input-type=module', '-e', source], {
       cwd: directory,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(directory, 'home'), TMPDIR: directory, LITE_DATA_DIR: store.directory, LITE_PORT: String(port), NODE_NO_WARNINGS: '1' },
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(directory, 'home'), TMPDIR: directory, SPEEDRAIL_DATA_DIR: store.directory, SPEEDRAIL_PORT: String(port), NODE_NO_WARNINGS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = ''; child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });

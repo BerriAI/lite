@@ -30,7 +30,7 @@ describe('durable structured questions', () => {
   let requests: any[], respond: (res: ServerResponse, index: number) => void;
   const controllers = new Set<AbortController>();
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-questions-'))); store = new Store(join(directory, 'state')); requests = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-questions-'))); store = new Store(join(directory, 'state')); requests = [];
     respond = (res, index) => stream(res, index === 1 ? [call()] : undefined);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk); requests.push(JSON.parse(Buffer.concat(chunks).toString())); respond(res, requests.length); });
     store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Test', kind: 'openai', baseUrl: await listen(provider) }], defaultProvider: 'test', defaultModel: 'test-model' });

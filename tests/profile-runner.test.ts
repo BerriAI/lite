@@ -32,8 +32,8 @@ describe('profile Runner and API integration',()=>{
   const run=async(id:string)=>{runner.start(id,'Do the requested work');await runner.whenIdle();};
   const restart=async()=>{runner.stopAll();await runner.whenIdle();await close(server);store.close();store=new Store(join(directory,'state'));const app=createApp({store,external});runner=app.runner;server=createServer(app.app);url=await listen(server);};
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'lite-profile-integration-')));calls=[];
-    await mkdir(join(directory,'.lite','skills','testing'),{recursive:true});await writeFile(join(directory,'.lite','profiles.json'),JSON.stringify(manifest));await writeFile(join(directory,'.lite','skills','testing','SKILL.md'),'PINNED_SKILL: report exact executed tests.');
+    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-profile-integration-')));calls=[];
+    await mkdir(join(directory,'.speedrail','skills','testing'),{recursive:true});await writeFile(join(directory,'.speedrail','profiles.json'),JSON.stringify(manifest));await writeFile(join(directory,'.speedrail','skills','testing','SKILL.md'),'PINNED_SKILL: report exact executed tests.');
     respond=(_body,res)=>reply(res);
     providerServer=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
     const baseUrl=await listen(providerServer);store=new Store(join(directory,'state'));
@@ -60,7 +60,7 @@ describe('profile Runner and API integration',()=>{
 
   it('requires fresh catalog revision for every nonempty choice and drops imported activation/provenance',async()=>{
     for(const profile of [{profileId:'review',skillIds:[]},{profileId:null,skillIds:['testing']}])expect((await api('/sessions',{profile})).status).toBe(400);
-    const stale=await choice();await writeFile(join(directory,'.lite','profiles.json'),JSON.stringify({...manifest,version:1,profiles:manifest.profiles.map(p=>({...p,description:'Changed'}))}));
+    const stale=await choice();await writeFile(join(directory,'.speedrail','profiles.json'),JSON.stringify({...manifest,version:1,profiles:manifest.profiles.map(p=>({...p,description:'Changed'}))}));
     expect((await api('/sessions',{profile:stale})).status).toBe(409);expect(store.sessions()).toHaveLength(0);
     const s=await create(await choice());const imported=await api('/sessions/import',{session:{...s,profile:{...s.profile,instructions:'FORGED'},configRevision:44},messages:[]});
     expect(imported.status).toBe(201);expect(imported.body.profile).toBeUndefined();expect(imported.body.configRevision).toBe(0);expect(store.profileSnapshot(imported.body.id)).toBeNull();expect(calls).toEqual([]);
@@ -95,7 +95,7 @@ describe('profile Runner and API integration',()=>{
   });
 
   it('missing sources do not alter pinned instructions, and explicit clear works without source files',async()=>{
-    const s=await create(await choice('review',['testing']));await rm(join(directory,'.lite'),{recursive:true,force:true});
+    const s=await create(await choice('review',['testing']));await rm(join(directory,'.speedrail'),{recursive:true,force:true});
     const detail=await api(`/sessions/${s.id}/profile`);expect(detail.body.source.status).toBe('missing');expect(detail.body.pinned.skills[0].body).toContain('PINNED_SKILL');
     await run(s.id);expect(calls[0].messages[0].content).toContain('PINNED_PROFILE');expect(calls[0].messages[0].content).toContain('PINNED_SKILL');
     await restart();await run(s.id);expect(calls[1].messages[0].content).toContain('PINNED_PROFILE');expect(calls[1].messages[0].content).toContain('PINNED_SKILL');
@@ -154,7 +154,7 @@ describe('profile Runner and API integration',()=>{
 
   it('profile pins survive fork, archive and undo/redo without reloading source or replaying tools',async()=>{
     const s=await create(await choice('review',['testing'])),pinned=store.profileSnapshot(s.id);store.grantTool(s.id,'read_file','remembered');await run(s.id);await run(s.id);const original=store.messages(s.id),count=calls.length;
-    await rm(join(directory,'.lite'),{recursive:true,force:true});const fork=await api(`/sessions/${s.id}/fork`,{});expect(fork.status).toBe(201);expect(store.profileSnapshot(fork.body.id)).toEqual(pinned);expect(store.toolGrants(fork.body.id)).toEqual([]);
+    await rm(join(directory,'.speedrail'),{recursive:true,force:true});const fork=await api(`/sessions/${s.id}/fork`,{});expect(fork.status).toBe(201);expect(store.profileSnapshot(fork.body.id)).toEqual(pinned);expect(store.toolGrants(fork.body.id)).toEqual([]);
     const compact=await api(`/sessions/${s.id}/compact`,{});expect(compact.status).toBe(200);expect(calls).toHaveLength(count+1);const archive=store.sessions('',true)[0];expect(store.profileSnapshot(archive.id)).toEqual(pinned);expect(store.toolGrants(archive.id)).toEqual([]);expect(store.messages(archive.id).map(m=>({...m,sessionId:s.id,id:undefined}))).toEqual(original.map(m=>({...m,id:undefined})));
     const after=store.messages(s.id),history=runner.history.state(s.id);expect(history.canUndo).toBe(true);expect((await api(`/sessions/${s.id}/history/undo`,{checkpointId:history.undoId})).status).toBe(200);expect(store.profileSnapshot(s.id)).toEqual(pinned);
     expect((await api(`/sessions/${s.id}/history/redo`,{checkpointId:runner.history.state(s.id).redoId})).status).toBe(200);expect(store.messages(s.id)).toEqual(after);expect(store.profileSnapshot(s.id)).toEqual(pinned);expect(calls).toHaveLength(count+1);

@@ -10,7 +10,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 describe('usage ledger in the store', () => {
   let directory: string, store: Store;
-  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-usage-store-'))); store = new Store(join(directory, 'state')); });
+  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-usage-store-'))); store = new Store(join(directory, 'state')); });
   afterEach(async () => { store.close(); await rm(directory, { recursive: true, force: true }); });
 
   it('groups by day+provider+model with sums and request counts, keeping cachedTokens honest', () => {
@@ -58,7 +58,7 @@ describe('usage recording in the runner and the API report', () => {
   };
   const api = async (path: string, data?: unknown) => { const response = await fetch(url + '/api' + path, { method: data === undefined ? 'GET' : 'POST', headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-usage-runner-'))); store = new Store(join(directory, 'state')); cachedTokens = undefined; respond = undefined;
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-usage-runner-'))); store = new Store(join(directory, 'state')); cachedTokens = undefined; respond = undefined;
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); (respond ?? ((_b: any, r: ServerResponse) => usageText(r, cachedTokens)))(body, res); });
     store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Test', kind: 'openai', baseUrl: await listen(provider), apiKey: 'fake-key' }], defaultProvider: 'test', defaultModel: 'model' });
     const app = createApp({ store }); runner = app.runner; server = createServer(app.app); url = await listen(server);

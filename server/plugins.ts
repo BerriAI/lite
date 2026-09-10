@@ -55,8 +55,8 @@ type Manifest = z.infer<typeof manifestSchema>;
 const itemSchema = z.object({ kind: z.enum(['skill', 'command', 'mcp', 'hook']), target: z.string().min(1).max(256), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const registryEntrySchema = z.object({ version, description: description.optional(), installedAt: z.number().int().min(0), workspace: z.string().min(1).max(4096), items: z.array(itemSchema).max(256) }).strict();
 
-const SKILL_TARGET = /^\.lite\/skills\/([a-z0-9][a-z0-9-]{0,63})\/SKILL\.md$/;
-const COMMAND_TARGET = /^\.lite\/commands\/([a-z0-9][a-z0-9-]{0,63})\.md$/;
+const SKILL_TARGET = /^\.speedrail\/skills\/([a-z0-9][a-z0-9-]{0,63})\/SKILL\.md$/;
+const COMMAND_TARGET = /^\.speedrail\/commands\/([a-z0-9][a-z0-9-]{0,63})\.md$/;
 const MCP_TARGET = /^mcpServers\.([a-zA-Z0-9_-]{1,64})$/;
 const HOOK_TARGET = /^hooks#([a-f0-9]{16})$/;
 
@@ -139,7 +139,7 @@ function mapCompatManifest(value: Record<string, unknown>, warnings: string[]): 
   if (skillPaths === null) warnings.push('Compatible manifest skills must be an array of paths; the key was ignored.');
   for (const entry of (skillPaths ?? []).slice(0, PLUGIN_LIMITS.skills)) {
     // A skill entry is a directory containing SKILL.md (or that file directly);
-    // the skill id is the directory name — same layout skills use in .lite/.
+    // the skill id is the directory name — same layout skills use in .speedrail/.
     const raw = typeof entry === 'string' ? entry.replace(/^\.\//, '').replace(/\/$/, '') : '';
     const relative = raw.endsWith('/SKILL.md') ? raw : raw ? `${raw}/SKILL.md` : '';
     const parsedId = slug.safeParse(path.posix.basename(path.posix.dirname(relative)));
@@ -181,7 +181,7 @@ export async function planInstall(source: string, workspace: string, store: Stor
   if (typeof source !== 'string' || !source.trim() || source.length > PLUGIN_LIMITS.sourcePath) throw httpError(400, 'source must be a local plugin directory path.');
   let root: string;
   try { root = await fs.realpath(path.resolve(source)); } catch { throw httpError(400, 'Plugin source directory was not found. Git URLs are not supported: clone the package locally first.'); }
-  if (!(await fs.stat(root)).isDirectory()) throw httpError(400, 'Plugin source must be a directory containing lite-plugin.json.');
+  if (!(await fs.stat(root)).isDirectory()) throw httpError(400, 'Plugin source must be a directory containing speedrail-plugin.json.');
   const canonicalWorkspace = await fs.realpath(path.resolve(workspace));
   // The package must never be the workspace itself or a parent of it: install
   // targets would then alias package files and provenance would lie.
@@ -190,18 +190,18 @@ export async function planInstall(source: string, workspace: string, store: Stor
   const warnings: string[] = [];
   let manifest: Manifest, unmapped: string[] | undefined;
   let text: string | undefined;
-  try { text = await readPackageFile(root, 'lite-plugin.json', PLUGIN_LIMITS.manifestBytes); }
+  try { text = await readPackageFile(root, 'speedrail-plugin.json', PLUGIN_LIMITS.manifestBytes); }
   catch (error) { if (!(error instanceof Error && error.message.includes('is missing'))) throw error; }
   if (text !== undefined) {
     let value: unknown;
-    try { value = JSON.parse(text.replace(/^﻿/, '')); } catch { throw httpError(400, 'lite-plugin.json is not valid JSON.'); }
+    try { value = JSON.parse(text.replace(/^﻿/, '')); } catch { throw httpError(400, 'speedrail-plugin.json is not valid JSON.'); }
     const parsed = manifestSchema.safeParse(value);
-    if (!parsed.success) throw httpError(400, `Invalid lite-plugin.json: ${parsed.error.issues[0]?.message ?? 'schema error'} at ${parsed.error.issues[0]?.path.join('.') || 'root'}.`);
+    if (!parsed.success) throw httpError(400, `Invalid speedrail-plugin.json: ${parsed.error.issues[0]?.message ?? 'schema error'} at ${parsed.error.issues[0]?.path.join('.') || 'root'}.`);
     manifest = parsed.data;
   } else {
     let compat: string;
     try { compat = await readPackageFile(root, '.claude-plugin/plugin.json', PLUGIN_LIMITS.manifestBytes); }
-    catch { throw httpError(400, 'No plugin manifest found: expected lite-plugin.json (or a compatible .claude-plugin/plugin.json) at the package root.'); }
+    catch { throw httpError(400, 'No plugin manifest found: expected speedrail-plugin.json (or a compatible .claude-plugin/plugin.json) at the package root.'); }
     let value: unknown;
     try { value = JSON.parse(compat.replace(/^﻿/, '')); } catch { throw httpError(400, '.claude-plugin/plugin.json is not valid JSON.'); }
     if (!value || typeof value !== 'object' || Array.isArray(value)) throw httpError(400, '.claude-plugin/plugin.json must be a JSON object.');
@@ -217,7 +217,7 @@ export async function planInstall(source: string, workspace: string, store: Stor
   const actions: PlannedAction[] = [];
   for (const skill of manifest.skills ?? []) {
     const content = await readPackageFile(root, skill.path, PLUGIN_LIMITS.skillBytes);
-    const target = `.lite/skills/${skill.id}/SKILL.md`;
+    const target = `.speedrail/skills/${skill.id}/SKILL.md`;
     const state = await targetState(canonicalWorkspace, target);
     const conflict = state.exists ? (ownedTargets.has(target) ? 'same-plugin-update' as const : 'exists' as const) : undefined;
     if (conflict === 'exists') warnings.push(`Skill "${skill.id}" conflicts with an existing ${target} not owned by this plugin; it will be skipped.`);
@@ -225,7 +225,7 @@ export async function planInstall(source: string, workspace: string, store: Stor
   }
   for (const command of manifest.commands ?? []) {
     const content = await readPackageFile(root, command.path, PLUGIN_LIMITS.commandBytes);
-    const target = `.lite/commands/${command.name}.md`;
+    const target = `.speedrail/commands/${command.name}.md`;
     const state = await targetState(canonicalWorkspace, target);
     const conflict = state.exists ? (ownedTargets.has(target) ? 'same-plugin-update' as const : 'exists' as const) : undefined;
     if (conflict === 'exists') warnings.push(`Command "${command.name}" conflicts with an existing ${target} not owned by this plugin; it will be skipped.`);
@@ -263,7 +263,7 @@ export async function planInstall(source: string, workspace: string, store: Stor
 }
 
 /** Validate a file target and return its safe absolute path: fixed shapes
- * only, and no symlink on any existing component (a linked .lite/ must never
+ * only, and no symlink on any existing component (a linked .speedrail/ must never
  * redirect an install outside the workspace). */
 async function safeFileTarget(workspace: string, kind: 'skill' | 'command', target: string): Promise<string> {
   if (!(kind === 'skill' ? SKILL_TARGET : COMMAND_TARGET).test(target)) throw httpError(400, `Invalid ${kind} target path.`);

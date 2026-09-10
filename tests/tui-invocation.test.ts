@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DelegationDetail, DelegationSummary, RunEvent } from '../shared/types.js';
-import type { LiteClient } from '../tui/client.js';
+import type { SpeedrailClient } from '../tui/client.js';
 import { InvocationSync } from '../tui/invocation.js';
 
 const task={id:'handoff',childSessionId:'sidekick',parentSessionId:'driver',parentMessageId:'parent-message',parentTurnId:'turn',toolCallId:'call',role:'sidekick',status:'running',description:'Assignment',createdAt:1} as DelegationSummary;
@@ -9,7 +9,7 @@ const message=(id:number,sessionId='sidekick'):RunEvent=>({id,sessionId,type:'me
 
 describe('inline invocation synchronization',()=>{
   it('rejects a mismatched handoff and ignores events from another worker or an old cursor',async()=>{
-    let next=snapshot();const sync=new InvocationSync({api:async()=>next} as unknown as LiteClient,task);
+    let next=snapshot();const sync=new InvocationSync({api:async()=>next} as unknown as SpeedrailClient,task);
     try{
       next={...next,delegation:{...task,toolCallId:'other-call'}};await sync.refresh();
       expect(sync.getState().detail).toBeNull();expect(sync.getState().error).toContain('does not match');
@@ -18,7 +18,7 @@ describe('inline invocation synchronization',()=>{
     }finally{sync.stop();}
   });
   it('seals completed Sidekick handoffs before its reused child context emits another assignment',async()=>{
-    let next=snapshot();const sync=new InvocationSync({api:async()=>next} as unknown as LiteClient,task);
+    let next=snapshot();const sync=new InvocationSync({api:async()=>next} as unknown as SpeedrailClient,task);
     try{
       await sync.refresh();sync.apply(message(3));
       next={...sync.getState().detail!,delegation:{...task,status:'completed'},lastEventId:4};await sync.refresh();
@@ -28,7 +28,7 @@ describe('inline invocation synchronization',()=>{
   });
   it('rejects the next Sidekick turn even before the parent completion refresh arrives',async()=>{
     const current=snapshot();current.messages=[{id:'assignment-user',sessionId:'sidekick',role:'user',content:'This handoff',createdAt:1}];
-    const sync=new InvocationSync({api:async()=>current} as unknown as LiteClient,task);
+    const sync=new InvocationSync({api:async()=>current} as unknown as SpeedrailClient,task);
     try{
       await sync.refresh();sync.apply({...message(2),data:{...message(2).data,turnId:'next-assignment'}});
       expect(sync.getState().detail?.messages).toHaveLength(1);
@@ -38,7 +38,7 @@ describe('inline invocation synchronization',()=>{
   });
   it('discards a late snapshot after a newer refresh wins',async()=>{
     const pending:Array<(value:DelegationDetail)=>void>=[];
-    const sync=new InvocationSync({api:()=>new Promise(resolve=>pending.push(resolve))} as unknown as LiteClient,task);
+    const sync=new InvocationSync({api:()=>new Promise(resolve=>pending.push(resolve))} as unknown as SpeedrailClient,task);
     try{
       const first=sync.refresh(),second=sync.refresh();pending[1]({...snapshot(),lastEventId:10});await second;
       pending[0](snapshot());await first;expect(sync.getState().detail?.lastEventId).toBe(10);

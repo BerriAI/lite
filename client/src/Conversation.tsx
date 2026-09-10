@@ -120,7 +120,7 @@ function MessageView({ driver, workerNoun, message, running, grouped, tail, live
   if (message.role === 'system' && !steering) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : inline ? 'Assignment from driver' : 'Your message'}>
-    {assistant && !grouped && <div className="message-byline"><Logo small /><span>Lite</span></div>}
+    {assistant && !grouped && <div className="message-byline"><Logo small /><span>Speedrail</span></div>}
     <div className="message-body">{assistant && driver && (message.content || !message.toolCalls?.some(tool => tool.name === 'delegate' || tool.name === 'sidekick')) && <div className="driver-identity">Driver</div>}{steering && <span className="steering-label">Steering</span>}
       {message.content && (inline && !assistant ? <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={message.content} /></div></details> : <div className="markdown"><Markdown content={message.content} /></div>)}
       {assistant && <WorkLog workerNoun={workerNoun} expanded={expanded} onExpand={onExpand} messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}

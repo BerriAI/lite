@@ -24,7 +24,7 @@ describe('independent context durability audit', () => {
   let directory: string, store: Store, runner: Runner, appServer: Server, firstServer: Server, secondServer: Server, url: string, secondUrl: string, provider: Provider;
   let calls: { destination: string; body: any }[], respond: (destination: string, body: any, res: ServerResponse) => void;
   beforeEach(async () => {
-    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-context-audit-'))); store = new Store(join(directory, 'state')); calls = [];
+    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-context-audit-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_destination, body, res) => text(res, isSummary(body) ? 'Earlier context summarized.' : 'Finished');
     const server = (destination: string) => createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push({ destination, body }); respond(destination, body, res); });
     firstServer = server('original'); secondServer = server('replacement'); secondUrl = await listen(secondServer);
@@ -131,7 +131,7 @@ describe('independent context durability audit', () => {
       if (event.type !== 'reset') return;
       // Copy the durable SQLite state at the precise commit/event boundary,
       // before the in-process run resumes or seals its checkpoint.
-      store.db.exec(`VACUUM INTO '${join(crashDirectory, 'lite.db').replaceAll("'", "''")}'`);
+      store.db.exec(`VACUUM INTO '${join(crashDirectory, 'speedrail.db').replaceAll("'", "''")}'`);
       snapshot = true; runner.cancel(session.id);
     });
     try { runner.start(session.id, 'Latest'); await runner.whenIdle(); } finally { unsubscribe(); }

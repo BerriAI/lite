@@ -6,7 +6,7 @@ import { Store } from '../server/store.js';
 import { WorkspacePreferences } from '../server/workspace-preferences.js';
 
 let directory:string,store:Store;
-beforeEach(()=>{directory=mkdtempSync(join(tmpdir(),'lite-setup-'));store=new Store(directory);store.saveSettings({providers:[{id:'p',name:'Test',kind:'openai',baseUrl:'http://localhost'}]});});
+beforeEach(()=>{directory=mkdtempSync(join(tmpdir(),'speedrail-setup-'));store=new Store(directory);store.saveSettings({providers:[{id:'p',name:'Test',kind:'openai',baseUrl:'http://localhost'}]});});
 afterEach(()=>{store.close();rmSync(directory,{recursive:true,force:true});});
 it('keeps setup completion and permission defaults across clients, ordinary session saves, and restarts',()=>{
   const preferences=new WorkspacePreferences(store);

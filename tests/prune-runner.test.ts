@@ -23,7 +23,7 @@ describe('prune-first compaction ladder in the Runner', () => {
   let directory: string, store: Store, runner: ReturnType<typeof createApp>['runner'], server: Server, providerServer: Server, provider: Provider;
   let calls: any[], respond: (body: any, res: ServerResponse) => void;
   beforeEach(async () => {
-    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-prune-runner-'))); store = new Store(join(directory, 'state')); calls = [];
+    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-prune-runner-'))); store = new Store(join(directory, 'state')); calls = [];
     // 400 lines x ~90 chars: read_file's numbered output hits its 32768-char cap,
     // far over the 8192 prune threshold; the sentinel sits mid-output so pruning
     // must remove it while head and tail survive.

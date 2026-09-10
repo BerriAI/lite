@@ -37,7 +37,7 @@ function child(command: string, args: string[], cwd: string): Promise<void> {
   });
 }
 export async function editDraft(renderer: CliRenderer, text: string, workspace: string): Promise<string> {
-  const directory = await mkdtemp(join(tmpdir(), 'lite-draft-')), path = join(directory, 'message.md');
+  const directory = await mkdtemp(join(tmpdir(), 'speedrail-draft-')), path = join(directory, 'message.md');
   await writeFile(path, text, { mode: 0o600 });
   let keep = false;
   try {
@@ -52,7 +52,7 @@ export async function editDraft(renderer: CliRenderer, text: string, workspace: 
   } finally { if (!keep) await rm(directory, { recursive: true, force: true }); }
 }
 export async function openShell(renderer: CliRenderer, workspace: string) {
-  await withTerminal(renderer, async () => { process.stdout.write('Lite shell · type exit to return to your session.\n'); await child(process.env.SHELL || '/bin/sh', ['-i'], workspace); });
+  await withTerminal(renderer, async () => { process.stdout.write('Speedrail shell · type exit to return to your session.\n'); await child(process.env.SHELL || '/bin/sh', ['-i'], workspace); });
 }
 export function suspendTerminal(renderer: CliRenderer) {
   renderer.suspend();

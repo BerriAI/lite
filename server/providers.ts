@@ -430,7 +430,7 @@ async function getCodexCredential(provider: Provider): Promise<CodexCredential> 
 }
 function codexHeaders(credential: CodexCredential): Record<string, string> {
   return {
-    Authorization: `Bearer ${credential.accessToken}`, 'User-Agent': 'lite/0.1.0', originator: 'lite',
+    Authorization: `Bearer ${credential.accessToken}`, 'User-Agent': 'speedrail/0.1.0', originator: 'speedrail',
     ...(credential.accountId ? { 'ChatGPT-Account-Id': credential.accountId } : {}),
     ...(credential.residency ? { 'x-openai-internal-codex-residency': credential.residency } : {}),
   };

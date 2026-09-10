@@ -7,7 +7,7 @@ import { captureProjectHooksFile, projectHooksFileExists, shellEnvironment } fro
 
 // Lifecycle hooks (design note 4.3). Two sources, both CAPTURED AT ACCEPTANCE
 // into the RunPolicy like permission rules — later edits to Settings.hooks or
-// .lite/hooks.json never change a running turn. Project hooks execute only for
+// .speedrail/hooks.json never change a running turn. Project hooks execute only for
 // a workspace the user marked trusted (Settings.trustedWorkspaces, canonical
 // paths); an untrusted workspace with a hooks file present gets a visible
 // advisory instead of silent skipping. Hooks NEVER run for researcher children
@@ -36,7 +36,7 @@ const hookSchema = z.object({
   matcher: z.string().min(1).max(HOOK_LIMITS.matcherChars).optional(),
 }).strict();
 export const hooksArraySchema = z.array(hookSchema).max(HOOK_LIMITS.hooks);
-// The project file wraps the array like .lite/permissions.json wraps rules.
+// The project file wraps the array like .speedrail/permissions.json wraps rules.
 const projectHooksSchema = z.object({ version: z.literal(1), hooks: hooksArraySchema }).strict();
 
 export function validateHooks(value: unknown): HookConfig[] {
@@ -53,7 +53,7 @@ export class Hooks {
 
   /** Acceptance-time capture, mirroring Runner.captureRules: app hooks from the
    * settings snapshot plus project hooks from a guarded bounded read of
-   * .lite/hooks.json — the latter ONLY when the canonical workspace is in
+   * .speedrail/hooks.json — the latter ONLY when the canonical workspace is in
    * trustedWorkspaces. Invalid or unsafe configuration is ignored with an
    * advisory; capture never throws and never blocks the turn. */
   captureHooks(workspace: string, settings: Pick<Settings, 'hooks' | 'trustedWorkspaces'>): CapturedHooks {
@@ -81,7 +81,7 @@ export class Hooks {
         const parsed = projectHooksSchema.safeParse(JSON.parse(source.text.replace(/^﻿/, '')));
         if (!parsed.success) throw new Error();
         hooks.push(...parsed.data.hooks);
-      } catch { advisory = [advisory, 'Project hooks in .lite/hooks.json are invalid and were ignored for this turn.'].filter(Boolean).join(' '); }
+      } catch { advisory = [advisory, 'Project hooks in .speedrail/hooks.json are invalid and were ignored for this turn.'].filter(Boolean).join(' '); }
     }
     return { hooks, ...(advisory ? { advisory } : {}) };
   }

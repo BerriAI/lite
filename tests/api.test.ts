@@ -17,7 +17,7 @@ describe('local API and agent loop',()=>{
   async function request(path:string,body?:unknown,method?:string){const response=await fetch(base+'/api'+path,{method:method||(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:response.status,data:await response.json()};}
   async function session(extra:Record<string,unknown>={}){return(await request('/sessions',extra)).data;}
   beforeEach(async()=>{
-    dir=await mkdtemp(join(tmpdir(),'lite-api-'));store=new Store(join(dir,'state'));calls=[];mode='text';
+    dir=await mkdtemp(join(tmpdir(),'speedrail-api-'));store=new Store(join(dir,'state'));calls=[];mode='text';
     provider=createServer(async(req,res)=>{
       if(req.url==='/v1/models'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'}]}));return;}
       const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const data=JSON.parse(Buffer.concat(chunks).toString());calls.push(data);
@@ -286,7 +286,7 @@ describe('local API and agent loop',()=>{
     expect(JSON.stringify(calls[1])).toContain('SNAPSHOT_ORIGINAL');expect(JSON.stringify(calls[1])).not.toContain('NEW_UNSELECTED_CONTENT');
   });
   it('reads commands safely without exposing protected symlink targets',async()=>{
-    await mkdir(join(dir,'.lite','commands'),{recursive:true});await writeFile(join(dir,'.lite','commands','safe.md'),'# Review\nRead the tests.');await writeFile(join(dir,'.env'),'COMMAND_SECRET_SENTINEL');await symlink('../../.env',join(dir,'.lite','commands','unsafe.md'));
+    await mkdir(join(dir,'.speedrail','commands'),{recursive:true});await writeFile(join(dir,'.speedrail','commands','safe.md'),'# Review\nRead the tests.');await writeFile(join(dir,'.env'),'COMMAND_SECRET_SENTINEL');await symlink('../../.env',join(dir,'.speedrail','commands','unsafe.md'));
     const result=await request('/commands');expect(result.status).toBe(200);expect(result.data.commands.map((c:any)=>c.name)).toEqual(['safe']);expect(JSON.stringify(result)).not.toContain('COMMAND_SECRET_SENTINEL');
   });
   it('refuses undo redirected to a protected file and preserves the snapshot',async()=>{

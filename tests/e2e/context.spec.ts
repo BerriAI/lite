@@ -5,11 +5,11 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Provider, Session, SessionDetail, Settings } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 const indicator = (page: Page) => page.getByLabel('Context estimate', { exact: true }).last();
 let workspace: string, settings: Settings, provider: Provider, sessions: Session[];
 test.beforeEach(async ({ request }) => {
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-context-browser-'))); sessions = [];
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-context-browser-'))); sessions = [];
   settings = await (await request.get('/api/settings')).json();
   provider = { id: `budget-${randomUUID().slice(0, 8)}`, name: 'Context test gateway', kind: 'openai', baseUrl: settings.providers.find(item => item.id === 'fixture')!.baseUrl };
   expect((await request.patch('/api/settings', { data: { providers: [...settings.providers, provider] } })).ok()).toBe(true);

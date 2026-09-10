@@ -7,8 +7,8 @@ import { readFile, readProfileSource } from '../server/tools.js';
 
 let directory: string;
 const manifest = () => ({ version: 1, profiles: [{ id: 'review', name: 'Review', description: 'Read-only review', instructions: 'Follow the project review checklist.', tools: ['read_file', 'grep'], defaultModel: { providerId: 'test', model: 'review-model' }, defaultMode: 'plan', skills: ['testing'] }], skills: [{ id: 'testing', name: 'Testing', description: 'Useful tests' }] });
-const save = async (value: unknown = manifest(), body: string | Buffer = 'Exact skill body\r\nno final newline') => { await mkdir(join(directory, '.lite/skills/testing'), { recursive: true }); await writeFile(join(directory, '.lite/profiles.json'), JSON.stringify(value)); await writeFile(join(directory, '.lite/skills/testing/SKILL.md'), body); };
-beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-profiles-'))); });
+const save = async (value: unknown = manifest(), body: string | Buffer = 'Exact skill body\r\nno final newline') => { await mkdir(join(directory, '.speedrail/skills/testing'), { recursive: true }); await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify(value)); await writeFile(join(directory, '.speedrail/skills/testing/SKILL.md'), body); };
+beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-profiles-'))); });
 afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
 describe('explicit project profile catalog and safe sources', () => {
@@ -23,7 +23,7 @@ describe('explicit project profile catalog and safe sources', () => {
     await saveProjectProfile(directory, { create: true, catalogRevision: catalog.revision, profile: { ...profile, tools: [...profile.tools] } });
     const review = await readEditableProfile(directory, 'review');
     await saveProjectProfile(directory, { create: false, catalogRevision: review.catalogRevision, profile: { ...review.profile, instructions: 'New instructions.' } });
-    const manifest = JSON.parse(await readNativeFile(join(directory, '.lite/profiles.json'), 'utf8'));
+    const manifest = JSON.parse(await readNativeFile(join(directory, '.speedrail/profiles.json'), 'utf8'));
     expect(manifest.profiles).toHaveLength(2); expect(manifest.skills).toEqual([{ id: 'testing', name: 'Testing', description: 'Useful tests' }]);
     expect(pinned.snapshot?.instructions).toBe('Follow the project review checklist.');
     expect((await profileSourceStatus(directory, pinned.snapshot!)).status).toBe('changed');
@@ -33,9 +33,9 @@ describe('explicit project profile catalog and safe sources', () => {
   it('profile editing refuses invalid manifests and redirected configuration directories', async () => {
     await save();
     const profile = (await readEditableProfile(directory, 'review')).profile;
-    await writeFile(join(directory, '.lite/profiles.json'), '{ invalid');
+    await writeFile(join(directory, '.speedrail/profiles.json'), '{ invalid');
     await expect(saveProjectProfile(directory, { create: true, catalogRevision: (await readProfileCatalog(directory)).revision, profile })).rejects.toThrow(/invalid/);
-    await rm(join(directory, '.lite'), { recursive: true }); await mkdir(join(directory, 'elsewhere')); await symlink(join(directory, 'elsewhere'), join(directory, '.lite'));
+    await rm(join(directory, '.speedrail'), { recursive: true }); await mkdir(join(directory, 'elsewhere')); await symlink(join(directory, 'elsewhere'), join(directory, '.speedrail'));
     await expect(saveProjectProfile(directory, { create: true, catalogRevision: (await readProfileCatalog(directory)).revision, profile })).rejects.toThrow();
     await expect(readNativeFile(join(directory, 'elsewhere/profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
@@ -53,7 +53,7 @@ describe('explicit project profile catalog and safe sources', () => {
   });
 
   it('missing manifest is diagnostic only and explicit empty selection never needs a manifest', async () => {
-    expect((await readProfileCatalog(directory)).diagnostics).toEqual([{ path: '.lite/profiles.json', code: 'missing', message: 'Profile source is missing.' }]);
+    expect((await readProfileCatalog(directory)).diagnostics).toEqual([{ path: '.speedrail/profiles.json', code: 'missing', message: 'Profile source is missing.' }]);
     expect((await resolveProfileChoice(directory, { profileId: null, skillIds: [] })).snapshot).toBeNull();
     await expect(resolveProfileChoice(directory, { profileId: 'review', skillIds: [] })).rejects.toThrow(/missing or invalid/);
   });
@@ -77,31 +77,31 @@ describe('explicit project profile catalog and safe sources', () => {
 
   it('hash revision catches same-size skill and manifest edits, old snapshots stay pinned', async () => {
     await save(); const catalog = await readProfileCatalog(directory), resolved = await resolveProfileChoice(directory, { profileId: 'review', skillIds: ['testing'], catalogRevision: catalog.revision });
-    await writeFile(join(directory, '.lite/skills/testing/SKILL.md'), 'Equal skill body\r\nno final newline');
+    await writeFile(join(directory, '.speedrail/skills/testing/SKILL.md'), 'Equal skill body\r\nno final newline');
     expect((await readProfileCatalog(directory)).revision).not.toBe(catalog.revision);
     await expect(resolveProfileChoice(directory, { profileId: 'review', skillIds: [], catalogRevision: catalog.revision })).rejects.toThrow(/changed/);
     expect((await profileSourceStatus(directory, resolved.snapshot!)).status).toBe('changed'); expect(resolved.snapshot?.skills[0].body).toContain('Exact');
-    await rm(join(directory, '.lite/skills/testing/SKILL.md')); expect((await profileSourceStatus(directory, resolved.snapshot!)).status).toBe('missing');
+    await rm(join(directory, '.speedrail/skills/testing/SKILL.md')); expect((await profileSourceStatus(directory, resolved.snapshot!)).status).toBe('missing');
     const value = manifest(); value.profiles[0].name = 'Rename'; await save(value); expect((await readProfileCatalog(directory)).revision).not.toBe(catalog.revision);
   });
 
   it('unavailable recommended skill does not disable the profile but explicit activation fails closed', async () => {
-    await save(); await rm(join(directory, '.lite/skills/testing/SKILL.md'));
+    await save(); await rm(join(directory, '.speedrail/skills/testing/SKILL.md'));
     const catalog = await readProfileCatalog(directory); expect(catalog.profiles).toHaveLength(1); expect(catalog.diagnostics[0].code).toBe('missing');
     expect((await resolveProfileChoice(directory, { profileId: 'review', skillIds: [] })).snapshot?.active.tools).toEqual(['read_file', 'grep']);
     await expect(resolveProfileChoice(directory, { profileId: 'review', skillIds: ['testing'] })).rejects.toThrow(/missing or invalid/);
   });
 
   it.each(['file-link', 'directory-link', 'hardlink', 'directory-file', 'escape', 'credential-alias'])('guarded config reader refuses %s without weakening regular tools', async kind => {
-    await save(); const target = join(directory, '.lite/skills/testing/SKILL.md');
+    await save(); const target = join(directory, '.speedrail/skills/testing/SKILL.md');
     if (kind === 'file-link') { await rm(target); await writeFile(join(directory, 'other.md'), 'Other'); await symlink(join(directory, 'other.md'), target); }
-    if (kind === 'directory-link') { await rm(join(directory, '.lite/skills/testing'), { recursive: true }); await mkdir(join(directory, 'alias')); await writeFile(join(directory, 'alias/SKILL.md'), 'Other'); await symlink(join(directory, 'alias'), join(directory, '.lite/skills/testing')); }
+    if (kind === 'directory-link') { await rm(join(directory, '.speedrail/skills/testing'), { recursive: true }); await mkdir(join(directory, 'alias')); await writeFile(join(directory, 'alias/SKILL.md'), 'Other'); await symlink(join(directory, 'alias'), join(directory, '.speedrail/skills/testing')); }
     if (kind === 'hardlink') await link(target, join(directory, 'alias.md'));
     if (kind === 'directory-file') { await rm(target); await mkdir(target); }
     if (kind === 'credential-alias') { await rm(target); await writeFile(join(directory, '.env'), 'fixture-not-real-secret'); await symlink(join(directory, '.env'), target); }
-    await expect(readProfileSource(directory, kind === 'escape' ? '../outside/SKILL.md' : '.lite/skills/testing/SKILL.md', 32768)).rejects.toThrow();
-    await expect(readFile(directory, '.lite/profiles.json')).rejects.toThrow(/Protected/);
-    await expect(readFile(directory, '.lite/skills/testing/SKILL.md')).rejects.toThrow();
+    await expect(readProfileSource(directory, kind === 'escape' ? '../outside/SKILL.md' : '.speedrail/skills/testing/SKILL.md', 32768)).rejects.toThrow();
+    await expect(readFile(directory, '.speedrail/profiles.json')).rejects.toThrow(/Protected/);
+    await expect(readFile(directory, '.speedrail/skills/testing/SKILL.md')).rejects.toThrow();
   });
 
   it.each(['truncated-utf8', 'nul', 'oversized'])('rejects %s skill source, never silently truncates', async kind => {
@@ -117,7 +117,7 @@ describe('explicit project profile catalog and safe sources', () => {
 
   it('enforces explicit skill uniqueness, active count and aggregate instruction bounds', async () => {
     const value = manifest(); value.skills = Array.from({ length: 9 }, (_, i) => ({ id: `skill-${i}`, name: `Skill ${i}`, description: '' })); value.profiles[0].skills = [];
-    await save(value); for (const skill of value.skills) { await mkdir(join(directory, `.lite/skills/${skill.id}`), { recursive: true }); await writeFile(join(directory, `.lite/skills/${skill.id}/SKILL.md`), 'x'.repeat(32768)); }
+    await save(value); for (const skill of value.skills) { await mkdir(join(directory, `.speedrail/skills/${skill.id}`), { recursive: true }); await writeFile(join(directory, `.speedrail/skills/${skill.id}/SKILL.md`), 'x'.repeat(32768)); }
     await expect(resolveProfileChoice(directory, { profileId: null, skillIds: ['skill-0', 'skill-0'] })).rejects.toThrow(/Invalid/);
     await expect(resolveProfileChoice(directory, { profileId: null, skillIds: value.skills.map(skill => skill.id) })).rejects.toThrow(/Invalid/);
     await expect(resolveProfileChoice(directory, { profileId: null, skillIds: value.skills.slice(0, 4).map(skill => skill.id) })).rejects.toThrow(/96 KiB/);
@@ -126,12 +126,12 @@ describe('explicit project profile catalog and safe sources', () => {
 
   it.each(['oversized', 'bad-json', 'manifest-link', 'state-directory-link'])('rejects %s manifest without expanding the config exception', async kind => {
     await save();
-    if (kind === 'oversized') await writeFile(join(directory, '.lite/profiles.json'), ' '.repeat(128 * 1024 + 1));
-    if (kind === 'bad-json') await writeFile(join(directory, '.lite/profiles.json'), '{invalid SECRET_EXCERPT');
-    if (kind === 'manifest-link') { await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest())); await rm(join(directory, '.lite/profiles.json')); await symlink(join(directory, 'manifest.json'), join(directory, '.lite/profiles.json')); }
-    if (kind === 'state-directory-link') { await rm(join(directory, '.lite'), { recursive: true }); await mkdir(join(directory, 'redirected')); await writeFile(join(directory, 'redirected/profiles.json'), JSON.stringify(manifest())); await symlink(join(directory, 'redirected'), join(directory, '.lite')); }
+    if (kind === 'oversized') await writeFile(join(directory, '.speedrail/profiles.json'), ' '.repeat(128 * 1024 + 1));
+    if (kind === 'bad-json') await writeFile(join(directory, '.speedrail/profiles.json'), '{invalid SECRET_EXCERPT');
+    if (kind === 'manifest-link') { await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest())); await rm(join(directory, '.speedrail/profiles.json')); await symlink(join(directory, 'manifest.json'), join(directory, '.speedrail/profiles.json')); }
+    if (kind === 'state-directory-link') { await rm(join(directory, '.speedrail'), { recursive: true }); await mkdir(join(directory, 'redirected')); await writeFile(join(directory, 'redirected/profiles.json'), JSON.stringify(manifest())); await symlink(join(directory, 'redirected'), join(directory, '.speedrail')); }
     const catalog = await readProfileCatalog(directory); expect(catalog.profiles).toEqual([]); expect(catalog.skills).toEqual([]); expect(catalog.diagnostics).toHaveLength(1); expect(JSON.stringify(catalog.diagnostics)).not.toContain('SECRET_EXCERPT');
-    for (const path of ['.lite/lite.db', '.lite/other.json', '.lite/skills/testing/OTHER.md', '.lite/skills/../profiles.json', '.env']) await expect(readProfileSource(directory, path, 32768)).rejects.toThrow(/Invalid profile source path/);
+    for (const path of ['.speedrail/speedrail.db', '.speedrail/other.json', '.speedrail/skills/testing/OTHER.md', '.speedrail/skills/../profiles.json', '.env']) await expect(readProfileSource(directory, path, 32768)).rejects.toThrow(/Invalid profile source path/);
   });
 
   it('propagates cancellation instead of converting it into catalog diagnostics', async () => {

@@ -7,7 +7,7 @@
  * the last known state until the stream re-establishes and replays. */
 import type { RunEvent, SessionDetail } from '../shared/types.js';
 import { applyEvent } from '../shared/events.js';
-import { LiteClient } from './client.js';
+import { SpeedrailClient } from './client.js';
 
 export type SyncPhase = 'loading' | 'ready' | 'error';
 
@@ -35,7 +35,7 @@ export class SessionSync {
   private attempts = 0;
   private refreshSequence = 0;
 
-  constructor(readonly client: LiteClient, readonly sessionId: string) {}
+  constructor(readonly client: SpeedrailClient, readonly sessionId: string) {}
 
   getState(): SyncState { return this.state; }
 

@@ -18,7 +18,7 @@ The implementation retained OpenTUI and the existing backend. It did not add a t
 | Models and navigation | Four architectures with short explanations; searchable models by role; reasoning, planner, styles, concurrency; revision-safe saves; session create/switch/rename/archive/delete/fork/import/export | `models.tsx`, `sessions.tsx`, `app.tsx` |
 | Conversation and Fusion | Shared root-turn grouping; one work log and family footer; historical routing; worker brief/report/tool evidence and scoped transcript; parent changes and history review | `conversation.ts`, `transcript.tsx`, `inspectors.tsx`, `sessionPanels.tsx` |
 | Everyday editing and Settings | Persistent drafts/history; references and attachments; project command templates; external editor and shell; providers, profiles, permissions, MCP, usage, memory, goals and task lists | `storage.ts`, `files.tsx`, `projectCommands.ts`, `terminalIO.ts`, `settings.tsx` and related panels |
-| Cutover | One `tui/` entry; bundled Bun; automatic local startup with attachment/ownership safeguards; reproducible PTY suite; production launcher smoke; README and terminal guide | `bin/lite.mjs`, `bin/tui-server.mjs`, `scripts/test-tui*.mjs` |
+| Cutover | One `tui/` entry; bundled Bun; automatic local startup with attachment/ownership safeguards; reproducible PTY suite; production launcher smoke; README and terminal guide | `bin/speedrail.mjs`, `bin/tui-server.mjs`, `scripts/test-tui*.mjs` |
 
 The retired `deriveRows` presentation logic and its obsolete footer assertions were also removed. Tests now cover the shared conversation semantics used by the actual renderer. Existing transport/config/theme/syntax tests moved alongside the single client. The unowned early phase scripts were replaced by `npm run test:tui`.
 
@@ -55,7 +55,7 @@ File Pipeline remains a separate architecture experiment. The TUI uses the same 
 
 ## Main integration verification (2026-09-10)
 
-Integrated `main` through `ab49d19`, including live worker activity and approved external-path access. Bare `lite` now launches from any project directory. Terminal model settings preserve automatic parallel execution and explicit concurrency limits for both Team and Expert. The browser workspace panel closes on narrow layouts while preserving its desktop preference.
+Integrated `main` through `ab49d19`, including live worker activity and approved external-path access. Bare `speedrail` now launches from any project directory. Terminal model settings preserve automatic parallel execution and explicit concurrency limits for both Team and Expert. The browser workspace panel closes on narrow layouts while preserving its desktop preference.
 
 - TypeScript and production builds passed. The full unit/integration run passed 1,630 tests with one opt-in runtime test skipped; after the responsive-layout fix, all 117 affected client tests passed again.
 - Both terminal PTY suites passed, including real command discovery on PATH, automatic backend startup, caller workspace, suspend/foreground, and model-setting persistence.

@@ -6,7 +6,7 @@ import type { McpServerConfig, Session, SessionDetail, Settings } from '../../sh
 import type { McpServerStatus } from '../../shared/mcp';
 
 let directory: string, controlPath: string, journalPath: string, settings: Settings, sessions: Session[], control: Record<string, unknown>;
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 const panel = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
 const card = (page: Page) => panel(page).getByRole('region', { name: 'MCP server demo', exact: true });
 // advertise:true — these browser scenarios exercise DIRECT advertisement, which
@@ -36,7 +36,7 @@ async function send(page: Page, session: Session, prompt: string) { await compos
 async function done(request: APIRequestContext, session: Session) { await expect.poll(async () => (await detail(request, session.id)).session.status).not.toMatch(/running|waiting/); return detail(request, session.id); }
 
 test.beforeEach(async ({ request }) => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-mcp-browser-'))); controlPath = join(directory, 'control.json'); journalPath = join(directory, 'journal.jsonl'); sessions = []; control = { version: 1 };
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-mcp-browser-'))); controlPath = join(directory, 'control.json'); journalPath = join(directory, 'journal.jsonl'); sessions = []; control = { version: 1 };
   await writeFile(controlPath, JSON.stringify(control)); settings = await (await request.get('/api/settings')).json(); await configure(request, { demo: config() });
 });
 test.afterEach(async ({ request }) => {

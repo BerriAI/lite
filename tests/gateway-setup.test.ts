@@ -12,7 +12,7 @@ const listen=(server:Server)=>new Promise<string>(resolve=>server.listen(0,'127.
 async function request(path:string,body?:unknown,method?:string){const response=await fetch(base+'/api'+path,{method:method||(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:response.status,data:await response.json()};}
 beforeEach(async()=>{
   vi.stubEnv('LITELLM_BASE_URL','');vi.stubEnv('LITELLM_API_KEY','');
-  directory=await mkdtemp(join(tmpdir(),'lite-gateway-'));store=new Store(directory);seen=[];status=200;empty=false;hold=false;
+  directory=await mkdtemp(join(tmpdir(),'speedrail-gateway-'));store=new Store(directory);seen=[];status=200;empty=false;hold=false;
   gateway=createServer(async(req,res)=>{seen.push({url:req.url,authorization:req.headers.authorization});if(hold)await new Promise<void>(resolve=>{release=resolve;});res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(status===200?{data:empty?[]:[{id:'gateway-model'}]}:{error:{message:'invalid key: synthetic-private-key'}}));});
   url=await listen(gateway);server=createServer(createApp({store}).app);base=await listen(server);
 });

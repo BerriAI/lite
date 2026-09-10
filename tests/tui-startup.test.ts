@@ -9,10 +9,10 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 async function address() { const server = createServer(); await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve)); const port = (server.address() as { port: number }).port; await new Promise<void>(resolve => server.close(() => resolve())); return `http://127.0.0.1:${port}`; }
 describe('terminal server startup', () => {
   it('starts only one owned backend for simultaneous launches and leaves it available for attachments', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'lite-start-test-')); cleanups.push(() => rm(root, { recursive: true, force: true }));
+    const root = await mkdtemp(join(tmpdir(), 'speedrail-start-test-')); cleanups.push(() => rm(root, { recursive: true, force: true }));
     await mkdir(join(root, 'dist/server'), { recursive: true });
-    await writeFile(join(root, 'dist/server/index.js'), `require('node:http').createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,version:'test'}))}).listen(Number(process.env.LITE_PORT),'127.0.0.1')`);
-    const base = await address(), options = { base, root, workspace: root, explicit: false, env: { ...process.env, LITE_DATA_DIR: join(root, 'state') } };
+    await writeFile(join(root, 'dist/server/index.js'), `require('node:http').createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(JSON.stringify({ok:true,name:'speedrail',version:'test'}))}).listen(Number(process.env.SPEEDRAIL_PORT),'127.0.0.1')`);
+    const base = await address(), options = { base, root, workspace: root, explicit: false, env: { ...process.env, SPEEDRAIL_DATA_DIR: join(root, 'state') } };
     const results = await Promise.all([ensureTuiServer(options), ensureTuiServer(options)]);
     const started = results.find(result => result)!; cleanups.push(async () => { process.kill(started.pid, 'SIGTERM'); });
     expect(results.filter(Boolean)).toHaveLength(1);

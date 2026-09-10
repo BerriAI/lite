@@ -13,7 +13,7 @@ Explicit ask rules still require approval each time, so those prompts offer **Al
 ## Where rules live
 
 - **App rules** — Settings → Permissions. Stored with your other app settings.
-- **Project rules** — a `.lite/permissions.json` file in the workspace, with the same shape:
+- **Project rules** — a `.speedrail/permissions.json` file in the workspace, with the same shape:
 
 ```json
 {
@@ -53,7 +53,7 @@ A rule with no patterns matches every call of its tool. Patterns match the tool'
 
 ## Access outside the workspace
 
-File tools accept absolute paths and parent-relative paths such as `../lite/package.json`. In Ask mode, even an external read asks for approval in the main conversation, including calls from researchers and sidekicks. Plan mode permits these reads but continues to block writes and shell commands. Auto mode and matching allow rules can approve external access; explicit ask and deny rules retain precedence.
+File tools accept absolute paths and parent-relative paths such as `../speedrail/package.json`. In Ask mode, even an external read asks for approval in the main conversation, including calls from researchers and sidekicks. Plan mode permits these reads but continues to block writes and shell commands. Auto mode and matching allow rules can approve external access; explicit ask and deny rules retain precedence.
 
 The prompt shows the resolved external target. “Always allow at this path” remembers that tool and target in this session; it does not grant access to other external paths or reuse a workspace-only grant. Search grants bind to the selected directory for that search tool. File rules are also checked against the resolved external path, so symlink aliases cannot bypass a matching deny. A target that changes while approval is pending must be submitted again.
 

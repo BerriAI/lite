@@ -32,7 +32,7 @@ describe('capability gateway: stable connected-tool surface',()=>{
   const toolResult=(id:string)=>store.messages(id).filter(m=>m.role==='tool').at(-1)?.content??'';
   const lastCache=(id:string)=>store.messages(id).filter(m=>m.role==='assistant').at(-1)?.context?.cache;
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'lite-capability-')));store=new Store(join(directory,'state'));calls=[];executions=[];generation=1;
+    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-capability-')));store=new Store(join(directory,'state'));calls=[];executions=[];generation=1;
     gatewayDefs=[definition(gw1,'Click an element on the page'),definition(gw2,'Scrape page text\nSecond line never shown in list')];
     directDefs=[definition(direct,'Echo text back')];
     gatewayServer=(name:string)=>name===gw2?'other':'browser';
@@ -180,8 +180,8 @@ describe('capability gateway: stable connected-tool surface',()=>{
   });
 
   it('a profile allowlist excludes capability along with the lease itself',async()=>{
-    await mkdir(join(directory,'.lite'));
-    await writeFile(join(directory,'.lite','profiles.json'),JSON.stringify({version:1,profiles:[{id:'safe',name:'Safe',instructions:'Only read',tools:['read_file']}],skills:[]}));
+    await mkdir(join(directory,'.speedrail'));
+    await writeFile(join(directory,'.speedrail','profiles.json'),JSON.stringify({version:1,profiles:[{id:'safe',name:'Safe',instructions:'Only read',tools:['read_file']}],skills:[]}));
     const catalog=(await api('/profiles')).body;
     const s=await create({mode:'build',profile:{profileId:'safe',skillIds:[],catalogRevision:catalog.revision}});
     await run(s.id);

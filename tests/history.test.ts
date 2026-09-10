@@ -21,7 +21,7 @@ async function edit(path: string, content: string) {
 }
 async function turn(content: string, file?: string) { history.accept(id, user(content)); if (file !== undefined) await edit('file.txt', file); store.saveMessage(answer(content)); history.seal(id); }
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-history-')));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-history-')));
   workspace = join(directory, 'workspace'); await mkdir(workspace);
   store = new Store(join(directory, 'data'));
   store.saveSettings({ workspace });

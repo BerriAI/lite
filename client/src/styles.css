@@ -74,12 +74,12 @@ kbd { border: 1px solid var(--border); background: var(--surface); border-radius
 .sidebar { width: 244px; min-width: 244px; height: 100%; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: relative; z-index: 30; }
 .sidebar-brand { display: flex; align-items: center; justify-content: space-between; padding: 26px 23px 26px; height: 90px; }
 .brand { display: flex; align-items: center; gap: 8px; padding: 0; }
-.brand > span:last-child { font-size: 30px; font-weight: 680; letter-spacing: -1.8px; line-height: 1; }
+.brand > span:last-child { font-size: 26px; font-weight: 680; letter-spacing: -1.2px; line-height: 1; }
 .brand-period { color: var(--blue); }
 .local-label { border: 1px solid var(--border-strong); color: var(--muted); font-size: 8px; padding: 3px 5px; border-radius: 4px; letter-spacing: 1.1px; line-height: 1; }
-.lite-logo { display: inline-flex; color: var(--blue); width: 36px; height: 30px; flex-shrink: 0; }
-.lite-logo svg { width: 100%; height: 100%; }
-.lite-logo.small { width: 25px; height: 22px; }
+.speedrail-logo { display: inline-flex; color: var(--blue); width: 36px; height: 30px; flex-shrink: 0; }
+.speedrail-logo svg { width: 100%; height: 100%; }
+.speedrail-logo.small { width: 25px; height: 22px; }
 .sidebar-top { padding: 0 14px; }
 .new-session { display: flex; gap: 10px; align-items: center; width: 100%; height: 39px; border: 1px solid var(--border-strong); background: var(--surface); border-radius: 7px; padding: 0 11px; box-shadow: 0 1px 2px #15213505; color: var(--text); font-size: 12px; }
 .new-session svg { color: var(--blue); }
@@ -273,7 +273,7 @@ summary::-webkit-details-marker { display: none; }
 .setup-hint:hover { text-decoration: underline; }
 .app-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; flex: 1; color: var(--muted); padding: 80px 20px; }
 .app-loading p { font-size: 12px; }
-.app-loading > .lite-logo { margin-bottom: 10px; }
+.app-loading > .speedrail-logo { margin-bottom: 10px; }
 .main-stage > .empty-state { margin: auto; max-width: 420px; }
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 45px 24px; text-align: center; color: var(--muted); }
 .empty-state > svg { color: var(--faint); margin-bottom: 4px; }
@@ -420,7 +420,7 @@ summary::-webkit-details-marker { display: none; }
 .message-attachments a { max-width: 180px; font-size: 10px; display: flex; flex-direction: column; gap: 4px; }
 .message-attachments img { max-height: 150px; border-radius: 5px; object-fit: contain; max-width: 100%; }
 .session-empty { padding: 70px 15px; text-align: center; }
-.session-empty .lite-logo { margin-bottom: 18px; }
+.session-empty .speedrail-logo { margin-bottom: 18px; }
 .session-empty h2 { font-size: 23px; font-weight: 500; letter-spacing: -.7px; }
 .session-empty p { color: var(--muted); font-size: 12px; }
 .question-card { border: 1px solid color-mix(in srgb, var(--blue) 28%, var(--border)); border-radius: 11px; background: var(--surface); padding: 18px; margin: 22px 0 20px 29px; min-width: 0; box-shadow: var(--shadow); }

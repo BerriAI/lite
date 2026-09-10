@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 const question = (page: Page) => page.getByRole('region', { name: 'Question from agent', exact: true });
 let workspace: string;
 let sessions: Session[];
-test.beforeEach(async () => { workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-question-browser-'))); sessions = []; });
+test.beforeEach(async () => { workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-question-browser-'))); sessions = []; });
 test.afterEach(async ({ request }) => {
   for (const session of sessions) {
     await request.post(`/api/sessions/${session.id}/cancel`, { data: {} });

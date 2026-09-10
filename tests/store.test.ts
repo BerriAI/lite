@@ -7,7 +7,7 @@ import type { Attachment, Message, QueuedMessage, ToolCall } from '../shared/typ
 
 describe('local persistence',()=>{
   let directory:string,store:Store;
-  beforeEach(()=>{directory=mkdtempSync(join(tmpdir(),'lite-store-'));store=new Store(directory);});
+  beforeEach(()=>{directory=mkdtempSync(join(tmpdir(),'speedrail-store-'));store=new Store(directory);});
   afterEach(()=>{store.close();rmSync(directory,{recursive:true,force:true});});
   it('persists sessions, messages, and todos across restarts',()=>{
     const session=store.createSession({title:'Implement search'});

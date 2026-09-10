@@ -12,7 +12,7 @@ for (const [kind, role, concurrency, width] of [
     const pending = async () => (await (await request.get('/fixture/delegations')).json()).pending;
     try {
       await page.goto(`/#session/${session.id}`);
-      await page.getByRole('textbox', { name: 'Message Lite', exact: true }).fill('WORKERS_BROWSER inspect two assignments');
+      await page.getByRole('textbox', { name: 'Message Speedrail', exact: true }).fill('WORKERS_BROWSER inspect two assignments');
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect.poll(pending).toBe(concurrency === 1 ? 1 : 2);
       const cards = page.locator('.worker-task');
@@ -33,7 +33,7 @@ for (const [kind, role, concurrency, width] of [
         expect(bounds[1].y).toBe(bounds[0].y);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await page.screenshot({ path: `/tmp/lite-live-${role}-${width}.png`, animations: 'disabled' });
+      await page.screenshot({ path: `/tmp/speedrail-live-${role}-${width}.png`, animations: 'disabled' });
       await request.post('/fixture/delegations/release');
       if (concurrency === 1) {
         await expect(cards.nth(1)).toContainText('beta progress');
@@ -58,7 +58,7 @@ test('tool rounds remain visible and compact until prose collapses their combine
   const session = await (await request.post('/api/sessions', { data: { permissionMode: 'auto', architecture: null } })).json();
   try {
     await page.goto(`/#session/${session.id}`);
-    await page.getByRole('textbox', { name: 'Message Lite', exact: true }).fill('LIVE_STEPS_BROWSER inspect files');
+    await page.getByRole('textbox', { name: 'Message Speedrail', exact: true }).fill('LIVE_STEPS_BROWSER inspect files');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     await expect.poll(async () => (await (await request.get('/fixture/delegations')).json()).pending).toBe(1);
     await expect(page.locator('.work-log')).toHaveCount(1);
@@ -69,7 +69,7 @@ test('tool rounds remain visible and compact until prose collapses their combine
       expect(rows[i].y - rows[i - 1].y - rows[i - 1].height).toBeLessThanOrEqual(2);
       expect(rows[i].height).toBeLessThanOrEqual(30);
     }
-    await page.screenshot({ path: '/tmp/lite-live-tool-spacing.png', animations: 'disabled' });
+    await page.screenshot({ path: '/tmp/speedrail-live-tool-spacing.png', animations: 'disabled' });
     await request.post('/fixture/delegations/release');
     await expect(page.getByText('The five file reads are complete.', { exact: true })).toBeVisible();
     await expect(page.locator('.work-log')).not.toHaveAttribute('open');
@@ -102,7 +102,7 @@ test('narrowing the window closes the workspace overlay without changing the des
   await expect(panel).toBeVisible();
   await page.reload();
   await expect(panel).toHaveCount(0);
-  expect(await page.evaluate(() => localStorage.getItem('lite.workspace-panel-open'))).toBe('true');
+  expect(await page.evaluate(() => localStorage.getItem('speedrail.workspace-panel-open'))).toBe('true');
   await page.setViewportSize({ width: 1440, height: 1000 });
   await expect(panel).toBeVisible();
   await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();

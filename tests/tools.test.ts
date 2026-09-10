@@ -22,7 +22,7 @@ let changes: FileChange[];
 let todos: Todo[];
 
 beforeEach(async () => {
-  temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lite-tools-')));
+  temporary = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'speedrail-tools-')));
   workspace = path.join(temporary, 'workspace');
   outside = path.join(temporary, 'outside');
   await fs.mkdir(workspace);
@@ -146,7 +146,7 @@ describe('workspace resolution and discovery', () => {
     await expect(readFile(workspace, '.env')).rejects.toThrow(/Protected/);
   });
   it('blocks protected state, credentials, symlink aliases and hard links, but permits source dotfiles', async () => {
-    const protectedFiles = ['.env', '.env.production', '.lite/auth.json', '.lite/state.sqlite', '.ssh/id_ed25519', 'id_rsa', 'private_key.pem'];
+    const protectedFiles = ['.env', '.env.production', '.speedrail/auth.json', '.speedrail/state.sqlite', '.ssh/id_ed25519', 'id_rsa', 'private_key.pem'];
     for (const file of protectedFiles) {
       await put(file, 'SYNTHETIC_SECRET_NEVER_RETURN');
       await expect(readFile(workspace, file)).rejects.toThrow(/Protected/);
@@ -159,11 +159,11 @@ describe('workspace resolution and discovery', () => {
     expect(await tool('grep', { pattern: 'SYNTHETIC_SECRET' })).not.toContain('SYNTHETIC_SECRET_NEVER_RETURN');
     await put('.env.example', 'KEY=your-key');
     await put('.config/source.ts', 'source');
-    await put('.lite/instructions.md', 'Project instructions');
+    await put('.speedrail/instructions.md', 'Project instructions');
     expect((await readFile(workspace, '.env.example')).content).toBe('KEY=your-key');
     expect((await readFile(workspace, '.config/source.ts')).content).toBe('source');
-    expect((await readFile(workspace, '.lite/instructions.md')).content).toBe('Project instructions');
-    expect(await assertReadablePath(workspace, path.join(workspace, '.lite/instructions.md'))).toBe(path.join(workspace, '.lite/instructions.md'));
+    expect((await readFile(workspace, '.speedrail/instructions.md')).content).toBe('Project instructions');
+    expect(await assertReadablePath(workspace, path.join(workspace, '.speedrail/instructions.md'))).toBe(path.join(workspace, '.speedrail/instructions.md'));
   });
   it('bounds discovery results and rejects traversing glob patterns', async () => {
     await Promise.all(Array.from({ length: 205 }, (_, index) => put(`files/file-${String(index).padStart(3, '0')}.txt`, 'x')));
@@ -275,19 +275,19 @@ describe('file reads and reversible edits', () => {
 
 describe('safe command loading and undo', () => {
   it('reads bounded command text without allowing secret aliases or arbitrary state', async () => {
-    await put('.lite/commands/review.md', '# Review\nCheck the changes.');
-    expect(await readCommand(workspace, '.lite/commands/review.md')).toContain('Check the changes.');
+    await put('.speedrail/commands/review.md', '# Review\nCheck the changes.');
+    expect(await readCommand(workspace, '.speedrail/commands/review.md')).toContain('Check the changes.');
     await put('.env', 'SYNTHETIC_SECRET');
-    await put('.lite/token.md', 'SYNTHETIC_SECRET');
-    await expect(readCommand(workspace, '.lite/token.md')).rejects.toThrow(/command/);
-    await fs.symlink(path.join(workspace, '.env'), path.join(workspace, '.lite/commands/secret.md'));
-    await expect(readCommand(workspace, '.lite/commands/secret.md')).rejects.toThrow(/protected/i);
-    await fs.link(path.join(workspace, '.env'), path.join(workspace, '.lite/commands/hard.md'));
-    await expect(readCommand(workspace, '.lite/commands/hard.md')).rejects.toThrow(/Hard-linked/);
-    await put('.lite/commands/.env.md', 'SYNTHETIC_SECRET');
-    await expect(readCommand(workspace, '.lite/commands/.env.md')).rejects.toThrow(/protected/i);
-    await put('.lite/commands/large.md', 'x'.repeat(70_000));
-    await expect(readCommand(workspace, '.lite/commands/large.md')).rejects.toThrow(/too large/);
+    await put('.speedrail/token.md', 'SYNTHETIC_SECRET');
+    await expect(readCommand(workspace, '.speedrail/token.md')).rejects.toThrow(/command/);
+    await fs.symlink(path.join(workspace, '.env'), path.join(workspace, '.speedrail/commands/secret.md'));
+    await expect(readCommand(workspace, '.speedrail/commands/secret.md')).rejects.toThrow(/protected/i);
+    await fs.link(path.join(workspace, '.env'), path.join(workspace, '.speedrail/commands/hard.md'));
+    await expect(readCommand(workspace, '.speedrail/commands/hard.md')).rejects.toThrow(/Hard-linked/);
+    await put('.speedrail/commands/.env.md', 'SYNTHETIC_SECRET');
+    await expect(readCommand(workspace, '.speedrail/commands/.env.md')).rejects.toThrow(/protected/i);
+    await put('.speedrail/commands/large.md', 'x'.repeat(70_000));
+    await expect(readCommand(workspace, '.speedrail/commands/large.md')).rejects.toThrow(/too large/);
     await put('.config/commands/review.md', 'source command');
     expect(await readCommand(workspace, '.config/commands/review.md')).toBe('source command');
   });
@@ -313,7 +313,7 @@ describe('safe command loading and undo', () => {
     expect(callback).not.toHaveBeenCalled();
     await fs.symlink(path.join(workspace, 'first'), path.join(workspace, 'alias'));
     await expect(restoreChanges(workspace, [{ path: 'alias', before: 'bad', after: 'after' }], callback)).rejects.toThrow(/Symlink/);
-    for (const file of ['.env', '.git/config', '.lite/auth.json']) {
+    for (const file of ['.env', '.git/config', '.speedrail/auth.json']) {
       await put(file, 'protected');
       await expect(restoreChanges(workspace, [{ path: file, before: 'bad', after: 'protected' }], callback)).rejects.toThrow(/Protected|\.git/);
     }
@@ -396,9 +396,9 @@ describe('bash', () => {
     await expect(tool('bash', { command: 'pwd', cwd: '../outside' })).rejects.toThrow(/outside/);
   });
   it('does not pass harness/provider credentials or startup hooks to the shell', async () => {
-    for (const key of ['LITELLM_API_KEY', 'LITE_AUTH_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'BASH_ENV']) vi.stubEnv(key, 'SYNTHETIC_CREDENTIAL_VALUE');
+    for (const key of ['LITELLM_API_KEY', 'SPEEDRAIL_AUTH_TOKEN', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'BASH_ENV']) vi.stubEnv(key, 'SYNTHETIC_CREDENTIAL_VALUE');
     vi.stubEnv('NORMAL_PROJECT_OPTION', 'normal-value');
-    const result = await tool('bash', { command: 'printf "%s|%s|%s|%s|%s|%s" "$LITELLM_API_KEY" "$LITE_AUTH_TOKEN" "$OPENAI_API_KEY" "$ANTHROPIC_API_KEY" "$BASH_ENV" "$NORMAL_PROJECT_OPTION"' });
+    const result = await tool('bash', { command: 'printf "%s|%s|%s|%s|%s|%s" "$LITELLM_API_KEY" "$SPEEDRAIL_AUTH_TOKEN" "$OPENAI_API_KEY" "$ANTHROPIC_API_KEY" "$BASH_ENV" "$NORMAL_PROJECT_OPTION"' });
     expect(result).not.toContain('SYNTHETIC_CREDENTIAL_VALUE');
     expect(result).toContain('|||||normal-value');
   });
@@ -483,7 +483,7 @@ describe('public HTTP fetching', () => {
 });
 
 describe('web search', () => {
-  // Captured-shape DDG lite/html markup: result__a anchors with /l/?uddg=
+  // Captured-shape DDG speedrail/html markup: result__a anchors with /l/?uddg=
   // redirect hrefs (entity-encoded &amp;) and result__snippet elements.
   const ddgPage = (results: { title: string; target: string; snippet?: string }[]) => `<html><body>${results.map(r => `<div class="result"><h2 class="result__title"><a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=${encodeURIComponent(r.target)}&amp;rut=abc123">${r.title}</a></h2>${r.snippet === undefined ? '' : `<a class="result__snippet" href="//duckduckgo.com/l/?uddg=x">${r.snippet}</a>`}</div>`).join('')}</body></html>`;
   beforeEach(() => { resetWebSearchCourtesy(); });

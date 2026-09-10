@@ -1,4 +1,4 @@
-// Bounded, opt-in live comparison using providers already configured in Lite.
+// Bounded, opt-in live comparison using providers already configured in Speedrail.
 // Credentials stay on the server. Every arrangement gets the same fresh fixture.
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,15 +15,15 @@ const { values } = parseArgs({ options: {
   architecture: { type: 'string', default: 'all' },
   output: { type: 'string' },
 } });
-for (const name of ['strong-provider', 'strong-model', 'cheap-provider', 'cheap-model']) if (!values[name]) throw new Error(`Provide --${name}. Provider IDs refer to Lite Settings; never pass credentials.`);
+for (const name of ['strong-provider', 'strong-model', 'cheap-provider', 'cheap-model']) if (!values[name]) throw new Error(`Provide --${name}. Provider IDs refer to Speedrail Settings; never pass credentials.`);
 const timeout = Number(values['timeout-seconds']) * 1000;
 if (!Number.isFinite(timeout) || timeout < 10_000 || timeout > 600_000) throw new Error('Use a timeout from 10 to 600 seconds.');
 const base = new URL(values.server);
-if (!['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)) throw new Error('Use a local Lite server.');
+if (!['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)) throw new Error('Use a local Speedrail server.');
 const strong = { providerId: values['strong-provider'], model: values['strong-model'] };
 const cheap = { providerId: values['cheap-provider'], model: values['cheap-model'] };
 if (!['all', 'single', 'sidekick-fusion', 'team-fusion', 'expert-fusion'].includes(values.architecture)) throw new Error('Choose all, single, sidekick-fusion, team-fusion, or expert-fusion.');
-const output = values.output ?? join(await mkdtemp(join(tmpdir(), 'lite-fusion-comparison-')), 'results.json');
+const output = values.output ?? join(await mkdtemp(join(tmpdir(), 'speedrail-fusion-comparison-')), 'results.json');
 async function api(path, data, method = data === undefined ? 'GET' : 'POST') {
   const response = await fetch(new URL(`/api${path}`, base), { method, headers: { 'content-type': 'application/json' }, ...(data === undefined ? {} : { body: JSON.stringify(data) }), signal: AbortSignal.timeout(15_000) });
   const result = await response.json();
@@ -46,7 +46,7 @@ const prompt = 'Implement parseCsvLine in parse.js, preserving its exported name
 const results = [];
 for (const [architecture, route] of [[null, strong], [{ kind: 'sidekick-fusion', sidekick: cheap }, strong], [{ kind: 'team-fusion', worker: cheap }, strong], [{ kind: 'expert-fusion', expert: strong }, cheap]]) {
   if (values.architecture !== 'all' && values.architecture !== (architecture?.kind ?? 'single')) continue;
-  const workspace = await mkdtemp(join(tmpdir(), `lite-live-${architecture?.kind ?? 'single'}-`));
+  const workspace = await mkdtemp(join(tmpdir(), `speedrail-live-${architecture?.kind ?? 'single'}-`));
   await writeFile(join(workspace, 'package.json'), JSON.stringify({ type: 'module', scripts: { test: 'node --test parse.test.js' } }));
   await writeFile(join(workspace, 'parse.js'), 'export function parseCsvLine(line) { throw new Error("Not implemented"); }\n');
   await writeFile(join(workspace, 'parse.test.js'), tests);

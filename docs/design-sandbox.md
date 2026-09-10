@@ -1,6 +1,6 @@
 # Design note: optional OS-level command sandbox
 
-Status: proposed. No code yet. Today Lite documents plainly that approval is not a sandbox; this note is the path to making that sentence weaker.
+Status: proposed. No code yet. Today Speedrail documents plainly that approval is not a sandbox; this note is the path to making that sentence weaker.
 
 ## Shape
 

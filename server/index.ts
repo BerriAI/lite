@@ -27,10 +27,10 @@ if (production) {
   vite = await createServer({ server:{ middlewareMode:true }, appType:'spa' });
   app.use(vite.middlewares);
 }
-const port = Number(process.env.LITE_PORT || 3210);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('LITE_PORT must be a valid port number.');
+const port = Number(process.env.SPEEDRAIL_PORT || 3210);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('SPEEDRAIL_PORT must be a valid port number.');
 const server = app.listen(port,'127.0.0.1', () => {
-  console.log(`\n  ≋ Lite\n  Your ideas, up to speed.\n\n  http://localhost:${port}\n  Workspace: ${store.settings().workspace}\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  ≋ Speedrail\n  Your ideas, up to speed.\n\n  http://localhost:${port}\n  Workspace: ${store.settings().workspace}\n  Press Ctrl+C to stop.\n`);
 });
 const terminals = attachTerminals(server,store);
 server.on('error',error => { console.error(error.message); process.exitCode=1; });

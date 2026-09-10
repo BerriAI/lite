@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test';
 
-async function fresh(page:any){await page.goto('/');await expect(page.getByRole('textbox',{name:'Message Lite'})).toBeVisible();}
-async function send(page:any,text:string){await page.getByRole('textbox',{name:'Message Lite'}).fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();}
+async function fresh(page:any){await page.goto('/');await expect(page.getByRole('textbox',{name:'Message Speedrail'})).toBeVisible();}
+async function send(page:any,text:string){await page.getByRole('textbox',{name:'Message Speedrail'}).fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();}
 
 test('welcome is usable, keyboard palette works, and layout fits desktop',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await fresh(page);
-  await expect(page.getByRole('heading',{name:'Lite.'})).toBeVisible();
+  await expect(page.getByRole('heading',{name:'Speedrail.'})).toBeVisible();
   await expect(page.getByRole('button',{name:'Send message',exact:true})).toBeDisabled();
   await page.keyboard.press('Control+k');await expect(page.getByRole('dialog')).toBeVisible();await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);expect(errors).toEqual([]);
@@ -13,10 +13,10 @@ test('welcome is usable, keyboard palette works, and layout fits desktop',async(
 });
 
 test('streams a message once, persists on reload, shows code and model usage',async({page})=>{
-  await fresh(page);await send(page,'hello browser');await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('Hello from Lite.');
+  await fresh(page);await send(page,'hello browser');await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('Hello from Speedrail.');
   await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
   await expect(page.getByRole('button',{name:'Copy code'})).toBeVisible();
-  expect(await page.getByRole('article',{name:'Assistant message'}).last().innerText()).not.toContain('Hello from Lite.Hello');
+  expect(await page.getByRole('article',{name:'Assistant message'}).last().innerText()).not.toContain('Hello from Speedrail.Hello');
   const url=page.url();await page.reload();await expect(page.getByRole('article',{name:'Assistant message'})).toHaveCount(1);await expect(page.getByRole('article',{name:'Assistant message'})).toContainText('Your workspace is ready.');expect(page.url()).toBe(url);
   await page.screenshot({path:'test-results/conversation-desktop.png',fullPage:true,animations:'disabled'});
 });
@@ -42,7 +42,7 @@ test('stops a live stream and sends a follow-up',async({page})=>{
 
 test('surfaces provider errors and remains navigable',async({page})=>{
   await fresh(page);await send(page,'provider failure');await expect(page.getByRole('alert').first()).toContainText('HTTP 401');await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
-  await page.getByRole('button',{name:/New session/}).first().click();await expect(page.getByRole('heading',{name:'Lite.'})).toBeVisible();
+  await page.getByRole('button',{name:/New session/}).first().click();await expect(page.getByRole('heading',{name:'Speedrail.'})).toBeVisible();
 });
 
 test('discovers models and attaches workspace context',async({page})=>{
@@ -61,17 +61,17 @@ test('terminal executes real commands, persists on hide and reload, and ends exp
   async function content(){const res=await request.get(fileUrl);return res.ok()?(await res.json()).content:'';}
   await page.getByRole('button',{name:'Open terminal',exact:true}).click();
   const pane=page.getByRole('region',{name:'Session terminal'});await expect(pane.getByRole('status')).toHaveText('Connected');
-  await command("export LITE_BROWSER_VALUE=kept; printf '%s' first > terminal-browser.txt");await expect.poll(content).toBe('first');
+  await command("export SPEEDRAIL_BROWSER_VALUE=kept; printf '%s' first > terminal-browser.txt");await expect.poll(content).toBe('first');
   await page.getByRole('button',{name:'Hide terminal',exact:true}).click();await expect(pane).toHaveCount(0);
   await page.reload();await expect(page.getByRole('button',{name:'Open terminal',exact:true})).toBeVisible();await page.getByRole('button',{name:'Open terminal',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Connected');
-  await command('printf "%s" "$LITE_BROWSER_VALUE" > terminal-browser.txt');await expect.poll(content).toBe('kept');
+  await command('printf "%s" "$SPEEDRAIL_BROWSER_VALUE" > terminal-browser.txt');await expect.poll(content).toBe('kept');
   await command("printf '\\nTerminal is ready. State survived reconnection.\\n'");
   await page.screenshot({path:'test-results/terminal-desktop.png',fullPage:true,animations:'disabled'});
   await page.getByRole('button',{name:'Close workspace',exact:true}).click();
   await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await page.screenshot({path:'test-results/terminal-mobile.png',fullPage:true,animations:'disabled'});
   await pane.getByRole('button',{name:'End shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Shell ended.');
   await pane.getByRole('button',{name:'Reconnect / new shell',exact:true}).click();await expect(pane.getByRole('status')).toHaveText('Connected');
-  await command('printf "%s" "${LITE_BROWSER_VALUE:-fresh}" > terminal-browser.txt');await expect.poll(content).toBe('fresh');
+  await command('printf "%s" "${SPEEDRAIL_BROWSER_VALUE:-fresh}" > terminal-browser.txt');await expect.poll(content).toBe('fresh');
   await pane.getByRole('button',{name:'End shell',exact:true}).click();expect(errors).toEqual([]);
 });
 

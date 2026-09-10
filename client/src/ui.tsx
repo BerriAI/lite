@@ -3,7 +3,7 @@ import { Check, Copy, X } from 'lucide-react';
 import { useState } from 'react';
 
 export function Logo({ small = false }: { small?: boolean }) {
-  return <span className={`lite-logo ${small ? 'small' : ''}`} aria-hidden="true"><svg viewBox="0 0 40 32" fill="none"><path d="M5 7h15c6 0 11 5 15 12 1.4 2.5-.2 5-3 5H5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M19 11h2c3 0 6 3 8 6H18l1-6Z" fill="currentColor" /><path d="M2 12h9M1 18h11M9 29h23" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg></span>;
+  return <span className={`speedrail-logo ${small ? 'small' : ''}`} aria-hidden="true"><svg viewBox="0 0 40 32" fill="none"><path d="M5 7h15c6 0 11 5 15 12 1.4 2.5-.2 5-3 5H5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M19 11h2c3 0 6 3 8 6H18l1-6Z" fill="currentColor" /><path d="M2 12h9M1 18h11M9 29h23" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg></span>;
 }
 export function SpeedRail({ active = false, compact = false }: { active?: boolean; compact?: boolean }) {
   return <div className={`speed-rail ${active ? 'active' : ''} ${compact ? 'compact' : ''}`} aria-hidden="true"><span><i /></span></div>;

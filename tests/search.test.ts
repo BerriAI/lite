@@ -9,7 +9,7 @@ import type { Message, Session, ToolCall } from '../shared/types.js';
 
 let directory: string, store: Store, search: SearchIndex;
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-search-')));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-search-')));
   store = new Store(join(directory, 'data'));
   store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Fixture', kind: 'openai', baseUrl: 'http://127.0.0.1:1' }], defaultProvider: 'test', defaultModel: 'model' });
   search = new SearchIndex(store);

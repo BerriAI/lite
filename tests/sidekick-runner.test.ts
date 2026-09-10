@@ -24,7 +24,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
   const create=async(extra:Record<string,unknown>={})=>{const result=await api('/sessions',{permissionMode:'auto',architecture:ARCHITECTURE,...extra});expect(result.status).toBe(201);return result.body;};
   const run=async(id:string,prompt='ROOT delegate')=>{runner.start(id,prompt);await runner.whenIdle();};
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'lite-sidekick-runner-')));store=new Store(join(directory,'state'));calls=[];
+    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-sidekick-runner-')));store=new Store(join(directory,'state'));calls=[];
     respond=(body,res)=>{if(side(body)){if(body.messages.at(-1)?.role==='tool')text(res,'Sidekick report: wrote the file');else tools(res,[{name:'write_file',args:{path:'note.txt',content:`turn ${body.messages.filter((m:any)=>m.role==='user').length}`}}]);}else if(body.messages.at(-1)?.role==='tool')text(res);else tools(res,[{name:'sidekick',args:{description:'Write the note',prompt:`SIDE task ${body.messages.filter((m:any)=>m.role==='user').length}`}}]);};
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
     store.saveSettings({workspace:directory,providers:[{id:'test',name:'Test',kind:'openai',baseUrl:await listen(provider),apiKey:'fake-accepted-key'}],defaultProvider:'test',defaultModel:'model'});
@@ -342,7 +342,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
   it('gives the sidekick the interface of the parent user input',async()=>{
     const session=await create();runner.start(session.id,'ROOT delegate',[],undefined,'web');await runner.whenIdle();
     expect(calls.filter(side).length).toBeGreaterThan(0);
-    for(const call of calls.filter(side))expect(JSON.stringify(call.messages)).toContain('Interface: Lite web UI');
+    for(const call of calls.filter(side))expect(JSON.stringify(call.messages)).toContain('Interface: Speedrail web UI');
   });
 
   it('returns steering to the driver immediately while the sidekick provider is still streaming',async()=>{

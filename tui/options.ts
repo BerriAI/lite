@@ -13,7 +13,7 @@ export interface Options {
 export function parseOptions(args: string[], env: Record<string, string | undefined> = process.env, cwd = process.cwd()): Options {
   const value = (name: string) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : undefined; };
   return {
-    url: (value('--url') ?? env.LITE_URL ?? `http://localhost:${env.LITE_PORT || 3210}`).replace(/\/+$/, ''),
+    url: (value('--url') ?? env.SPEEDRAIL_URL ?? `http://localhost:${env.SPEEDRAIL_PORT || 3210}`).replace(/\/+$/, ''),
     workspace: value('--workspace') ?? cwd,
     sessionId: value('--session'),
     model: value('--model'),

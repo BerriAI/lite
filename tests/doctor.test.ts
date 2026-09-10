@@ -9,7 +9,7 @@ import { createApp } from '../server/app.js';
 
 describe('doctor diagnostics report', () => {
   let directory: string, store: Store;
-  beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'lite-doctor-')); store = new Store(join(directory, 'state')); });
+  beforeEach(() => { directory = mkdtempSync(join(tmpdir(), 'speedrail-doctor-')); store = new Store(join(directory, 'state')); });
   afterEach(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
 
   it('reports the full shape with integrity ok on a healthy store', () => {
@@ -21,7 +21,7 @@ describe('doctor diagnostics report', () => {
     expect(report.version).toMatch(/^\d+\.\d+\.\d+$/); // Read from package.json, not hardcoded.
     expect(report.database).toMatchObject({ exists: true, sessions: 1, messages: 1, integrity: 'ok' });
     expect(report.database.sizeBytes).toBeGreaterThan(0);
-    expect(report.database.path).toBe(join(directory, 'state', 'lite.db'));
+    expect(report.database.path).toBe(join(directory, 'state', 'speedrail.db'));
     expect(report.settings).toMatchObject({ memoryEnabled: false, hookCount: 0, sidecarCount: 0, pluginCount: 0, permissionRuleCount: 0 });
     expect(report.workspace.path).toBe(store.settings().workspace);
   });
@@ -71,7 +71,7 @@ describe('doctor API', () => {
   let directory: string, store: Store, server: Server, url: string, runner: ReturnType<typeof createApp>['runner'];
   const listen = (server: Server) => new Promise<string>(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
   beforeEach(async () => {
-    directory = mkdtempSync(join(tmpdir(), 'lite-doctor-api-'));
+    directory = mkdtempSync(join(tmpdir(), 'speedrail-doctor-api-'));
     store = new Store(join(directory, 'state'));
     store.saveSettings({ workspace: directory, providers: [{ id: 'p', name: 'P', kind: 'openai', baseUrl: 'https://api.example.com/v1', apiKey: 'secret-api-key' }], defaultProvider: 'p' });
     const app = createApp({ store }); runner = app.runner; server = createServer(app.app); url = await listen(server);

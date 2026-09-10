@@ -9,7 +9,7 @@ import { createApp } from '../server/app.js';
 import { attachTerminals } from '../server/terminal.js';
 import { McpManager } from '../server/mcp.js';
 
-const root=await realpath(await mkdtemp(join(tmpdir(),'lite-e2e-')));
+const root=await realpath(await mkdtemp(join(tmpdir(),'speedrail-e2e-')));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
 let providerRequests=0;
 const profileRequests:{model:string;messages:any[];tools:any[]}[]=[];
@@ -154,7 +154,7 @@ const mock=createServer(async(req,res)=>{
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'result.txt',content:`Created by the browser test.\n${prompt}\n`})}}]});
   }else{
     emit({reasoning_content:'Checking the request and preparing a clear response.'});
-    const text=prompt.includes('ask fixture question')?'Your answer is saved. Continuing with your choice.':prompt.includes('create fixture')?'The file operation is complete. Check the activity card for its result.':prompt.includes('Summarize this coding session')?'The user asked for a fixture response. A small test workspace is available. Continue from here.':'Hello from Lite.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
+    const text=prompt.includes('ask fixture question')?'Your answer is saved. Continuing with your choice.':prompt.includes('create fixture')?'The file operation is complete. Check the activity card for its result.':prompt.includes('Summarize this coding session')?'The user asked for a fixture response. A small test workspace is available. Continue from here.':'Hello from Speedrail.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
     for(const part of text.match(/.{1,12}|\n/g)||[]){if(res.destroyed)return;emit({content:part});await new Promise(r=>setTimeout(r,prompt.includes('slow response')?150:15));}
   }
   emit({},toolCall?'tool_calls':'stop');res.write(`data: ${JSON.stringify({choices:[],usage:{prompt_tokens:25,completion_tokens:35}})}\n\n`);res.end('data: [DONE]\n\n');
@@ -162,7 +162,7 @@ const mock=createServer(async(req,res)=>{
 await new Promise<void>(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
-new WorkspacePreferences(store).save(root,{providerId:'fixture',model:'test-model',setupComplete:process.env.LITE_E2E_ONBOARDING !== '1'});
+new WorkspacePreferences(store).save(root,{providerId:'fixture',model:'test-model',setupComplete:process.env.SPEEDRAIL_E2E_ONBOARDING !== '1'});
 const mcp=new McpManager(()=>store.settings().mcpServers);
 const{app,runner}=createApp({store,external:mcp});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));
@@ -171,9 +171,9 @@ app.get('/fixture/delegations',(_req,res)=>res.json({requests:delegationRequests
 app.post('/fixture/delegations/release',(_req,res)=>{for(const release of [...pendingDelegations])release();res.json({ok:true});});
 app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
 app.post('/fixture/summaries/release',(_req,res)=>{for(const release of [...pendingSummaries])release();res.json({ok:true});});
-const vite=process.env.LITE_E2E_NO_VITE ? undefined : await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});if(vite)app.use(vite.middlewares);
-const fixturePort=Number(process.env.LITE_E2E_PORT || 3211);
-const server=app.listen(fixturePort,'127.0.0.1',()=>console.log(`Lite E2E ready at http://127.0.0.1:${(server.address() as {port:number}).port}`));
+const vite=process.env.SPEEDRAIL_E2E_NO_VITE ? undefined : await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});if(vite)app.use(vite.middlewares);
+const fixturePort=Number(process.env.SPEEDRAIL_E2E_PORT || 3211);
+const server=app.listen(fixturePort,'127.0.0.1',()=>console.log(`Speedrail E2E ready at http://127.0.0.1:${(server.address() as {port:number}).port}`));
 const terminals=attachTerminals(server,store);
 let closing=false;
 async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close(),mcp.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite?.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}

@@ -10,11 +10,11 @@ import type { Message } from '../shared/types.js';
 
 let directory: string, store: Store, resolved: ResolvedProfile;
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-profile-store-'))); store = new Store(join(directory, 'data'));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-profile-store-'))); store = new Store(join(directory, 'data'));
   store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Test', kind: 'openai', baseUrl: 'http://127.0.0.1:1' }], defaultProvider: 'test', defaultModel: 'model' });
-  await mkdir(join(directory, '.lite/skills/check'), { recursive: true });
-  await writeFile(join(directory, '.lite/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'review', name: 'Review', tools: ['read_file'], instructions: 'Pinned profile instructions' }], skills: [{ id: 'check', name: 'Check' }] }));
-  await writeFile(join(directory, '.lite/skills/check/SKILL.md'), 'Pinned skill bytes\r\nno final newline');
+  await mkdir(join(directory, '.speedrail/skills/check'), { recursive: true });
+  await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'review', name: 'Review', tools: ['read_file'], instructions: 'Pinned profile instructions' }], skills: [{ id: 'check', name: 'Check' }] }));
+  await writeFile(join(directory, '.speedrail/skills/check/SKILL.md'), 'Pinned skill bytes\r\nno final newline');
   resolved = await resolveProfileChoice(directory, { profileId: 'review', skillIds: ['check'] });
 });
 afterEach(async () => { store.close(); await rm(directory, { recursive: true, force: true }); });
@@ -66,7 +66,7 @@ describe('transactional pinned profile storage', () => {
   it('fork, compaction, restart and exact history moves use pinned snapshots without rereading project files', async () => {
     const session = store.createSession({}, resolved), history = new History(store), user = message(session.id);
     history.accept(session.id, user); store.saveMessage(message(session.id, 'assistant')); history.seal(session.id);
-    await rm(join(directory, '.lite'), { recursive: true });
+    await rm(join(directory, '.speedrail'), { recursive: true });
     store.grantTool(session.id, 'bash', 'scope'); const fork = store.fork(session.id); expect(store.profileSnapshot(fork.id)).toEqual(resolved.snapshot); expect(store.toolGrants(fork.id)).toEqual([]);
     const archive = history.compact(session.id, [message(session.id, 'system')]); expect(store.profileSnapshot(archive.id)).toEqual(resolved.snapshot);
     const after = store.messages(session.id); await history.undo(session.id, history.state(session.id).undoId!); expect(store.profileSnapshot(session.id)).toEqual(resolved.snapshot);

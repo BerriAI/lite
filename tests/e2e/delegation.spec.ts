@@ -6,7 +6,7 @@ import type { Session, SessionDetail } from '../../shared/types';
 import type { DelegationSummary } from '../../shared/delegation';
 
 async function expandSteps(page: Page) { const log = page.locator('.conversation-shell').first().locator(':scope > .conversation-scroll > .conversation-content > article > .message-body > .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
 const taskCard = (page: Page) => page.getByRole('region', { name: 'Research task', exact: true, includeHidden: true });
 const transcript = (page: Page) => page.getByRole('region', { name: 'Research transcript', exact: true });
 const permission = (page: Page) => page.getByRole('region', { name: 'Permission requested', exact: true });
@@ -15,7 +15,7 @@ const fixtureText = 'RESEARCH_FILE_VERIFIED: this project uses a local SQLite da
 
 test.beforeEach(async ({ page }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-delegation-browser-'))); sessions = [];
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-delegation-browser-'))); sessions = [];
   await writeFile(join(workspace, 'research.txt'), fixtureText);
 });
 test.afterEach(async ({ request }) => {
@@ -71,7 +71,7 @@ for (const mode of ['build', 'plan'] as const) test(`${mode} requires deliberate
   expect(research.messages.some(message => message.role === 'tool' && message.content.includes('RESEARCH_FILE_VERIFIED'))).toBe(true);
   expect(completed.messages.filter(message => message.role === 'tool')).toHaveLength(1); expect(await calls(request, session)).toHaveLength(4);
   await expect(taskCard(page)).toContainText('Inspect fixture project'); await expandSteps(page);
-  await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED'); await expect(transcript(page).getByRole('textbox', { name: 'Message Lite', exact: true })).toHaveCount(0);
+  await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED'); await expect(transcript(page).getByRole('textbox', { name: 'Message Speedrail', exact: true })).toHaveCount(0);
   await expect(transcript(page).getByRole('button', { name: 'Fork session', exact: true })).toHaveCount(0); await assertUnchanged();
 });
 
@@ -157,14 +157,14 @@ test('private children are hidden and every public mutation is rejected before e
 });
 
 test('named profiles exclude task while explicitly selected instruction skills remain pinned in a child', async ({ page, request }) => {
-  await mkdir(join(workspace, '.lite', 'skills', 'research'), { recursive: true });
-  await writeFile(join(workspace, '.lite', 'profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'inspector', name: 'Inspector', tools: ['read_file'] }], skills: [{ id: 'research', name: 'Research checklist' }] }));
-  await writeFile(join(workspace, '.lite', 'skills', 'research', 'SKILL.md'), 'DELEGATION_SKILL_PINNED: Report facts from the actual file.');
+  await mkdir(join(workspace, '.speedrail', 'skills', 'research'), { recursive: true });
+  await writeFile(join(workspace, '.speedrail', 'profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'inspector', name: 'Inspector', tools: ['read_file'] }], skills: [{ id: 'research', name: 'Research checklist' }] }));
+  await writeFile(join(workspace, '.speedrail', 'skills', 'research', 'SKILL.md'), 'DELEGATION_SKILL_PINNED: Report facts from the actual file.');
   const catalog = await (await request.get('/api/profiles', { params: { workspace } })).json();
   const profiled = await create(request, { profile: { profileId: 'inspector', skillIds: [], catalogRevision: catalog.revision }, permissionMode: 'auto' });
   await open(page, profiled); await send(page, profiled, 'ADVERTISE_ONLY'); expect((await done(request, profiled)).messages.at(-1)?.content).toContain('unavailable');
   const skilled = await create(request, { profile: { profileId: null, skillIds: ['research'], catalogRevision: catalog.revision }, permissionMode: 'auto' });
-  await writeFile(join(workspace, '.lite', 'skills', 'research', 'SKILL.md'), 'UNPINNED_REPLACEMENT must not silently activate.');
+  await writeFile(join(workspace, '.speedrail', 'skills', 'research', 'SKILL.md'), 'UNPINNED_REPLACEMENT must not silently activate.');
   await open(page, skilled); await send(page, skilled); await done(request, skilled);
   const childRequests = (await calls(request, skilled)).filter(call => call.messages.some(message => message.role === 'user' && String(message.content).includes('DELEGATE_CHILD')));
   expect(childRequests.length).toBe(2); for (const call of childRequests) { const system = call.messages.filter(message => message.role === 'system').map(message => String(message.content)).join('\n'); expect(system).toContain('DELEGATION_SKILL_PINNED'); expect(system).not.toContain('UNPINNED_REPLACEMENT'); }

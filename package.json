@@ -1,18 +1,23 @@
 {
-  "name": "@litellm/lite",
+  "name": "@litellm/speedrail",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A thoughtful, local-first coding harness for LiteLLM and your favorite models.",
+  "description": "Speedrail — a local coding agent with multi-model workflows for your terminal and browser.",
+  "repository": { "type": "git", "url": "git+https://github.com/BerriAI/speedrail.git" },
+  "homepage": "https://github.com/BerriAI/speedrail#readme",
+  "bugs": { "url": "https://github.com/BerriAI/speedrail/issues" },
   "engines": {
     "node": ">=22.13.0"
   },
   "bin": {
-    "lite": "bin/lite.mjs"
+    "speedrail": "bin/speedrail.mjs"
   },
   "scripts": {
     "postinstall": "node scripts/prepare-terminal.mjs",
     "dev": "tsx watch server/index.ts",
+    "tui": "node bin/speedrail.mjs",
+    "migrate": "node scripts/migrate-state.mjs",
     "build": "vite build && tsup",
     "start": "node dist/server/index.js",
     "typecheck": "tsc --noEmit",

@@ -12,7 +12,7 @@ const close = (server: Server) => new Promise<void>(resolve => { server.closeAll
 describe('plugin API: plan/install/list/remove round trip', () => {
   let dir: string, workspace: string, pkg: string, store: Store, server: Server, base: string;
   beforeEach(async () => {
-    dir = await realpath(await mkdtemp(join(tmpdir(), 'lite-plugins-api-')));
+    dir = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-plugins-api-')));
     workspace = join(dir, 'workspace'); pkg = join(dir, 'pkg');
     await mkdir(workspace); await mkdir(pkg);
     store = new Store(join(dir, 'state'));
@@ -30,7 +30,7 @@ describe('plugin API: plan/install/list/remove round trip', () => {
     await mkdir(join(pkg, 'skills'), { recursive: true });
     await writeFile(join(pkg, 'skills', 'audit.md'), 'AUDIT SKILL BODY\n');
     await writeFile(join(pkg, 'release.md'), '# Release\nChecklist.\n');
-    await writeFile(join(pkg, 'lite-plugin.json'), JSON.stringify({
+    await writeFile(join(pkg, 'speedrail-plugin.json'), JSON.stringify({
       name: 'kit', version: '1.0.0', description: 'API test kit.',
       skills: [{ id: 'audit', path: 'skills/audit.md' }],
       commands: [{ name: 'release', path: 'release.md' }],
@@ -49,14 +49,14 @@ describe('plugin API: plan/install/list/remove round trip', () => {
     for (const action of plan.data.plan.actions) { expect(action.content).toBeUndefined(); expect(action.preview.length).toBeLessThanOrEqual(500); }
     expect(plan.data.applied).toBeUndefined(); // Plan alone never applies.
     expect((await request('/plugins')).data.plugins).toEqual({});
-    await expect(readFile(join(workspace, '.lite', 'skills', 'audit', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.speedrail', 'skills', 'audit', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
 
     const install = await request('/plugins/install', { source: pkg, workspace });
     expect(install.status).toBe(200);
     expect(install.data.applied).toBe(true);
     expect(install.data.plugin.name).toBe('kit');
-    expect(await readFile(join(workspace, '.lite', 'skills', 'audit', 'SKILL.md'), 'utf8')).toBe('AUDIT SKILL BODY\n');
-    expect(await readFile(join(workspace, '.lite', 'commands', 'release.md'), 'utf8')).toBe('# Release\nChecklist.\n');
+    expect(await readFile(join(workspace, '.speedrail', 'skills', 'audit', 'SKILL.md'), 'utf8')).toBe('AUDIT SKILL BODY\n');
+    expect(await readFile(join(workspace, '.speedrail', 'commands', 'release.md'), 'utf8')).toBe('# Release\nChecklist.\n');
     expect(store.settings().mcpServers.search).toEqual({ url: 'https://mcp.example.com/sse', enabled: false });
     expect(store.settings().hooks).toEqual([{ event: 'Stop', command: 'echo done' }]);
 
@@ -70,7 +70,7 @@ describe('plugin API: plan/install/list/remove round trip', () => {
     expect(removed.data.removed).toHaveLength(4);
     expect(removed.data.warnings).toEqual([]);
     expect((await request('/plugins')).data.plugins).toEqual({});
-    await expect(readFile(join(workspace, '.lite', 'commands', 'release.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.speedrail', 'commands', 'release.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(store.settings().mcpServers.search).toBeUndefined();
     expect(store.settings().hooks).toEqual([]);
   });
@@ -87,13 +87,13 @@ describe('plugin API: plan/install/list/remove round trip', () => {
 
   it('a conflicting foreign file is skipped with the warning surfaced in the install response', async () => {
     await writePackage();
-    await mkdir(join(workspace, '.lite', 'commands'), { recursive: true });
-    await writeFile(join(workspace, '.lite', 'commands', 'release.md'), 'USER COMMAND');
+    await mkdir(join(workspace, '.speedrail', 'commands'), { recursive: true });
+    await writeFile(join(workspace, '.speedrail', 'commands', 'release.md'), 'USER COMMAND');
     const install = await request('/plugins/install', { source: pkg, workspace });
     expect(install.status).toBe(200);
-    expect(install.data.plan.warnings.join(' ')).toContain('Command "release" conflicts with an existing .lite/commands/release.md');
+    expect(install.data.plan.warnings.join(' ')).toContain('Command "release" conflicts with an existing .speedrail/commands/release.md');
     expect(install.data.plan.actions.find((action: any) => action.kind === 'command').conflict).toBe('exists');
-    expect(await readFile(join(workspace, '.lite', 'commands', 'release.md'), 'utf8')).toBe('USER COMMAND');
+    expect(await readFile(join(workspace, '.speedrail', 'commands', 'release.md'), 'utf8')).toBe('USER COMMAND');
     // Provenance excludes the skipped command.
     expect(store.settings().plugins?.kit?.items.map((item: any) => item.kind).sort()).toEqual(['hook', 'mcp', 'skill']);
   });
@@ -109,7 +109,7 @@ describe('plugin API: plan/install/list/remove round trip', () => {
   });
 
   it('returns 400 for a hostile package through the API (traversal), and 404 removing an unknown plugin', async () => {
-    await writeFile(join(pkg, 'lite-plugin.json'), JSON.stringify({ name: 'hostile', version: '1', commands: [{ name: 'steal', path: '../outside.md' }] }));
+    await writeFile(join(pkg, 'speedrail-plugin.json'), JSON.stringify({ name: 'hostile', version: '1', commands: [{ name: 'steal', path: '../outside.md' }] }));
     const plan = await request('/plugins/plan', { source: pkg, workspace });
     expect(plan.status).toBe(400);
     expect(plan.data.error).toContain('must stay inside the package directory');
@@ -120,9 +120,9 @@ describe('plugin API: plan/install/list/remove round trip', () => {
     await writePackage();
     const install = await request('/plugins/install', { source: pkg });
     expect(install.status).toBe(200);
-    expect(await readFile(join(workspace, '.lite', 'skills', 'audit', 'SKILL.md'), 'utf8')).toBe('AUDIT SKILL BODY\n');
+    expect(await readFile(join(workspace, '.speedrail', 'skills', 'audit', 'SKILL.md'), 'utf8')).toBe('AUDIT SKILL BODY\n');
     const removed = await request('/plugins/kit', undefined, 'DELETE');
     expect(removed.status).toBe(200);
-    await expect(readFile(join(workspace, '.lite', 'skills', 'audit', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.speedrail', 'skills', 'audit', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

@@ -24,7 +24,7 @@ describe('external paths use normal tool permissions', () => {
   const start = (id:string) => runner.start(id,'Inspect the requested project');
   const approve = async (id:string,decision:'allow'|'always'|'deny'='allow') => { await until(()=>runner.permissions(id).length===1); const prompt=runner.permissions(id)[0]; runner.decide(id,prompt.id,decision); await runner.whenIdle(); return prompt; };
   beforeEach(async () => {
-    directory=await realpath(await mkdtemp(join(tmpdir(),'lite-external-access-'))); workspace=join(directory,'workspace'); outside=join(directory,'outside');
+    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-external-access-'))); workspace=join(directory,'workspace'); outside=join(directory,'outside');
     await mkdir(workspace); await mkdir(outside); await writeFile(join(outside,'package.json'),'external evidence'); await writeFile(join(workspace,'inside.txt'),'inside');
     store=new Store(join(directory,'state')); respond=(_body,res)=>reply(res);
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);respond(JSON.parse(Buffer.concat(chunks).toString()),res);});

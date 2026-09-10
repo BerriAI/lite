@@ -37,7 +37,7 @@ function pageAll(store: Store, sessionId: string, callId: string, limit = 8192):
 describe('lossless tool-output paging', () => {
   let directory: string, store: Store, sessionId: string;
   beforeEach(() => {
-    directory = mkdtempSync(path.join(tmpdir(), 'lite-paging-'));
+    directory = mkdtempSync(path.join(tmpdir(), 'speedrail-paging-'));
     store = new Store(directory);
     sessionId = store.createSession({ title: 'Paging' }).id;
   });
@@ -57,7 +57,7 @@ describe('lossless tool-output paging', () => {
   });
 
   it('truncates executeTool results with a receipt naming total bytes, hash prefix and tool_output_page', async () => {
-    const workspace = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'lite-paging-ws-')));
+    const workspace = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'speedrail-paging-ws-')));
     try {
       let todos: Todo[] = [];
       const callId = 'call-bash-1';

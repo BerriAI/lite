@@ -13,8 +13,8 @@ import { fusionCases } from './tui-fusion-cases.mjs';
 const root = resolve(import.meta.dirname, '..');
 const artifacts = join(root, 'test-results-tui');
 await mkdir(artifacts, { recursive: true });
-const localConfig = await mkdtemp(join(tmpdir(), 'lite-tui-test-'));
-const server = spawn(process.execPath, ['--import', 'tsx', 'scripts/e2e-server.ts'], { cwd: root, env: { ...process.env, LITE_E2E_PORT: '0', LITE_E2E_NO_VITE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+const localConfig = await mkdtemp(join(tmpdir(), 'speedrail-tui-test-'));
+const server = spawn(process.execPath, ['--import', 'tsx', 'scripts/e2e-server.ts'], { cwd: root, env: { ...process.env, SPEEDRAIL_E2E_PORT: '0', SPEEDRAIL_E2E_NO_VITE: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '', terminal, exit, raw = '', emulator;
 server.stdout.on('data', data => { log += data; });
 server.stderr.on('data', data => { log += data; });
@@ -33,8 +33,8 @@ try {
     const data = await response.json(); if (!response.ok) throw new Error(JSON.stringify(data)); return data;
   };
   const settings = await api('/settings');
-  await mkdir(join(settings.workspace, '.lite', 'commands'), { recursive: true });
-  await writeFile(join(settings.workspace, '.lite', 'commands', 'terminal-review.md'), 'Review $1; arguments: $ARGUMENTS');
+  await mkdir(join(settings.workspace, '.speedrail', 'commands'), { recursive: true });
+  await writeFile(join(settings.workspace, '.speedrail', 'commands', 'terminal-review.md'), 'Review $1; arguments: $ARGUMENTS');
   const editorPath = join(localConfig, 'editor.sh');
   await writeFile(editorPath, '#!/bin/sh\nprintf \"%s\" \"Draft returned from external editor\" > \"$1\"\n');
   const session = await api('/sessions', { workspace: settings.workspace, permissionMode: 'ask' });
@@ -42,7 +42,7 @@ try {
   emulator = new xterm.Terminal({ cols: 100, rows: 32, allowProposedApi: true });
   const launch = () => {
   emulator.reset(); emulator.resize(100, 32);
-  terminal = pty.spawn(process.execPath, ['bin/lite.mjs', 'tui', '--url', base, '--session', session.id, '--workspace', settings.workspace], { cwd: root, cols: 100, rows: 32, name: 'xterm-256color', env: { ...process.env, TERM: 'xterm-256color', SHELL: '/bin/sh', VISUAL: `/bin/sh '${editorPath}'`, LITE_DISABLE_PROJECT_CONFIG: '1', LITE_CONFIG_DIR: localConfig, XDG_CONFIG_HOME: localConfig, XDG_STATE_HOME: localConfig } });
+  terminal = pty.spawn(process.execPath, ['bin/speedrail.mjs', 'tui', '--url', base, '--session', session.id, '--workspace', settings.workspace], { cwd: root, cols: 100, rows: 32, name: 'xterm-256color', env: { ...process.env, TERM: 'xterm-256color', SHELL: '/bin/sh', VISUAL: `/bin/sh '${editorPath}'`, SPEEDRAIL_DISABLE_PROJECT_CONFIG: '1', SPEEDRAIL_CONFIG_DIR: localConfig, XDG_CONFIG_HOME: localConfig, XDG_STATE_HOME: localConfig } });
   exit = new Promise(resolve => terminal.onExit(resolve));
   terminal.onData(data => { raw += data; emulator.write(data); });
   };
@@ -61,7 +61,7 @@ try {
   terminal.write('1');
   await waitFor(async () => (await detail()).session.status === 'idle', 'approved write completes');
   assert((await api(`/sessions/${session.id}/changes`)).changes?.length > 0, 'approved change is reviewable');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'idle composer');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'idle composer');
   terminal.write('ask fixture question\r');
   await waitFor(() => screen().includes('Which storage'), 'question prompt');
   await save('03-question');
@@ -129,17 +129,17 @@ try {
   await waitFor(() => screen().includes('hello.ts') && !screen().includes('Matching files'), 'file attached');
   terminal.write('Review the attached source\r');
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'user' && message.attachments?.some(file => file.path === 'src/hello.ts' && file.content?.includes('world'))), 'file snapshot accepted');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'attachment response completes');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'attachment response completes');
   terminal.write('create fixture denied\r');
   await waitFor(() => screen().includes('Permission requested'), 'deny approval prompt');
   terminal.write('3');
   await waitFor(async () => (await detail()).messages.some(message => message.toolCalls?.some(call => call.status === 'denied')), 'denied tool recorded');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'denied turn settles');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'denied turn settles');
   terminal.write('create fixture always\r');
   await waitFor(() => screen().includes('Permission requested'), 'always approval prompt');
   terminal.write('2');
   await waitFor(async () => (await api(`/sessions/${session.id}/tool-grants`)).tools.includes('write_file'), 'always grant recorded');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'always turn settles');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'always turn settles');
   const written = (await api(`/file?workspace=${encodeURIComponent(settings.workspace)}&path=result.txt`)).content;
   terminal.write('/undo\r');
   await waitFor(async () => (await detail()).history.canRedo, 'undo from terminal');
@@ -158,7 +158,7 @@ try {
   await waitFor(() => screen().includes('Resume queue'), 'queue manager');
   terminal.write('\r');
   await waitFor(async () => (await detail()).queue.items.length === 0, 'queue resumed');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'queued turn completes');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'queued turn completes');
   await api(`/sessions/${session.id}/queue/pause`, {});
   await api(`/sessions/${session.id}/queue`, { content: 'remove this queued message' });
   await waitFor(() => screen().includes('1 queued'), 'queued item visible');
@@ -168,8 +168,8 @@ try {
   await waitFor(() => screen().includes('Steer driver now'), 'queued message actions');
   terminal.write('\x1b[B\r');
   await waitFor(async () => (await detail()).queue.items.length === 0, 'queued item removed');
-  await waitFor(() => screen().includes('Ask Lite to do'), 'composer after queue removal');
-  await waitFor(() => !screen().includes('×') && !screen().includes('Updating queue') && screen().includes('Ask Lite to do'), 'queue action finished');
+  await waitFor(() => screen().includes('Ask Speedrail to do'), 'composer after queue removal');
+  await waitFor(() => !screen().includes('×') && !screen().includes('Updating queue') && screen().includes('Ask Speedrail to do'), 'queue action finished');
   terminal.write('slow response steering fixture');
   await waitFor(() => screen().includes('slow response steering fixture') && screen().includes('Enter send'), 'steering task ready to send');
   terminal.write('\r');
@@ -181,11 +181,11 @@ try {
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'system' && message.content.startsWith('[Steering]') && message.content.endsWith('driver steering from terminal')), 'steering reaches driver');
   await waitFor(() => !screen().includes('×'), 'steering palette closed');
   terminal.write('\x1b'); await new Promise(done => setTimeout(done, 180)); terminal.write('\x1b');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'steered task stops');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'steered task stops');
   await fusionCases({ api, terminal, screen, waitFor, save, settings, session, detail });
   terminal.write('/terminal-review "source files" tests\r');
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'user' && message.content === 'Review source files; arguments: "source files" tests'), 'project template expanded');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'project command settles');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'project command settles');
   terminal.write('/goal\r');
   await waitFor(() => screen().includes('New objective'), 'goal editor'); terminal.write('\r');
   await waitFor(() => screen().includes('Goal objective'), 'goal text field');
@@ -200,11 +200,11 @@ try {
   assert(!(await detail()).messages.some(message => message.content === 'Draft returned from external editor'), 'editing does not submit');
   terminal.write('\r');
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'user' && message.content === 'Draft returned from external editor'), 'editor draft sent');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'edited turn settles');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'edited turn settles');
   terminal.write('/shell\r');
-  await waitFor(() => screen().includes('Lite shell'), 'shell owns terminal');
+  await waitFor(() => screen().includes('Speedrail shell'), 'shell owns terminal');
   terminal.write('printf \"shell handoff verified\\n\"; exit\r');
-  await waitFor(() => screen().includes('Ctrl+P Commands') && screen().includes('Ask Lite to do'), 'shell returns terminal to composer');
+  await waitFor(() => screen().includes('Ctrl+P Commands') && screen().includes('Ask Speedrail to do'), 'shell returns terminal to composer');
   // Bracketed paste retains Unicode and newlines without sending on newline.
   const beforePaste = (await detail()).messages.length;
   terminal.write('\x1b[200~Hello 世界 👩🏽‍💻\nSecond pasted line\x1b[201~');
@@ -212,7 +212,7 @@ try {
   assert.equal((await detail()).messages.length, beforePaste);
   terminal.write('\r');
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'user' && message.content.includes('Hello 世界 👩🏽‍💻\nSecond pasted line')), 'Unicode paste sent intact');
-  await waitFor(() => screen().includes('idle') && screen().includes('Ask Lite to do'), 'paste turn settles');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do'), 'paste turn settles');
   terminal.write('unfinished draft');
   await waitFor(() => screen().includes('unfinished draft'), 'draft typed');
   terminal.write('\x18'); await new Promise(done => setTimeout(done, 100)); terminal.write('l');

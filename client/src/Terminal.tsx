@@ -143,7 +143,7 @@ export function Terminal({ sessionId, onClose }: { sessionId: string; onClose?: 
           setStatus(reason); terminal.write(`\r\n[${reason}]\r\n`);
         }
       };
-      current.onerror = () => { if (currentConnection()) setError('Cannot connect to the terminal. Check that Lite is running and this session still exists.'); };
+      current.onerror = () => { if (currentConnection()) setError('Cannot connect to the terminal. Check that Speedrail is running and this session still exists.'); };
       current.onclose = event => {
         if (!currentConnection()) return;
         clearTimeout(healthyTimer); clearTimeout(connectTimer);

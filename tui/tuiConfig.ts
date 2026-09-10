@@ -1,10 +1,10 @@
-/** Terminal-client configuration loader. Config lives in `lite-tui.json` /
- * `lite-tui.jsonc` and merges, later wins:
- *   1. global config dir (~/.config/lite)
- *   2. LITE_TUI_CONFIG explicit path
+/** Terminal-client configuration loader. Config lives in `speedrail-tui.json` /
+ * `speedrail-tui.jsonc` and merges, later wins:
+ *   1. global config dir (~/.config/speedrail)
+ *   2. SPEEDRAIL_TUI_CONFIG explicit path
  *   3. project files walking up from cwd, applied root-first so the closest
- *      file wins (suppressed by LITE_DISABLE_PROJECT_CONFIG)
- *   4. every `.lite` directory from cwd upward, plus LITE_CONFIG_DIR
+ *      file wins (suppressed by SPEEDRAIL_DISABLE_PROJECT_CONFIG)
+ *   4. every `.speedrail` directory from cwd upward, plus SPEEDRAIL_CONFIG_DIR
  *
  * Files are JSONC (comments + trailing commas), with `{env:VAR}` and
  * `{file:path}` substitution (missing → empty string). A file that fails to
@@ -20,7 +20,7 @@ import { KEYBIND_DEFAULTS, LEADER_TIMEOUT_DEFAULT } from './keybinds.js';
 import type { ThemeJson } from './theme.js';
 import { isThemeJson } from './theme.js';
 
-export const CONFIG_BASENAMES = ['lite-tui.json', 'lite-tui.jsonc'] as const;
+export const CONFIG_BASENAMES = ['speedrail-tui.json', 'speedrail-tui.jsonc'] as const;
 
 export interface AttentionConfig {
   enabled: boolean;
@@ -132,7 +132,7 @@ export function normalizeShape(raw: Record<string, unknown>): Record<string, unk
   return mergeDeep(tui as Record<string, unknown>, top);
 }
 
-/** Drop keybind names that no build of Lite defines; the rest still applies. */
+/** Drop keybind names that no build of Speedrail defines; the rest still applies. */
 export function dropUnknownKeybinds(keybinds: Record<string, unknown>, warn: (message: string) => void): Record<string, BindingValue> {
   const out: Record<string, BindingValue> = {};
   const unknown: string[] = [];
@@ -206,7 +206,7 @@ export interface LoadOptions {
 
 function defaultGlobalConfigDir(env: Record<string, string | undefined>): string {
   const xdg = env.XDG_CONFIG_HOME;
-  return xdg && xdg.length > 0 ? join(xdg, 'lite') : join(homedir(), '.config', 'lite');
+  return xdg && xdg.length > 0 ? join(xdg, 'speedrail') : join(homedir(), '.config', 'speedrail');
 }
 
 function firstConfigIn(dir: string, exists: (path: string) => boolean): string[] {
@@ -235,13 +235,13 @@ export function configFilePaths(options: LoadOptions = {}): string[] {
   });
   const paths: string[] = [];
   paths.push(...firstConfigIn(options.globalConfigDir ?? defaultGlobalConfigDir(env), exists));
-  const explicit = env.LITE_TUI_CONFIG;
+  const explicit = env.SPEEDRAIL_TUI_CONFIG;
   if (explicit && exists(explicit)) paths.push(explicit);
-  if (!env.LITE_DISABLE_PROJECT_CONFIG) {
+  if (!env.SPEEDRAIL_DISABLE_PROJECT_CONFIG) {
     for (const dir of ancestors(cwd)) paths.push(...firstConfigIn(dir, exists));
   }
-  for (const dir of ancestors(cwd)) paths.push(...firstConfigIn(join(dir, '.lite'), exists));
-  const extra = env.LITE_CONFIG_DIR;
+  for (const dir of ancestors(cwd)) paths.push(...firstConfigIn(join(dir, '.speedrail'), exists));
+  const extra = env.SPEEDRAIL_CONFIG_DIR;
   if (extra) paths.push(...firstConfigIn(extra, exists));
   // The same file reachable twice keeps only its highest-priority position.
   return paths.filter((path, i) => paths.lastIndexOf(path) === i);
@@ -249,7 +249,7 @@ export function configFilePaths(options: LoadOptions = {}): string[] {
 
 /** Load, merge, validate, and platform-resolve the effective TUI config. */
 export function loadTuiConfig(options: LoadOptions = {}): TuiConfig {
-  const warn = options.warn ?? ((message: string) => process.stderr.write(`[lite-tui] ${message}\n`));
+  const warn = options.warn ?? ((message: string) => process.stderr.write(`[speedrail-tui] ${message}\n`));
   const read = options.readFile ?? ((path: string) => readFileSync(path, 'utf8'));
   const env = options.env ?? process.env;
   let merged: Record<string, unknown> = {};
@@ -278,14 +278,14 @@ export function loadTuiConfig(options: LoadOptions = {}): TuiConfig {
 // ---------------------------------------------------------------------------
 // Custom theme discovery: <config dir>/themes/*.json, non-recursive, dotfiles
 // and symlinks included, .jsonc NOT discovered. Later directories overwrite
-// earlier ones, so the deepest .lite/themes/ (nearest cwd) wins.
+// earlier ones, so the deepest .speedrail/themes/ (nearest cwd) wins.
 
 export function themeDirectories(options: LoadOptions = {}): string[] {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
   const dirs: string[] = [options.globalConfigDir ?? defaultGlobalConfigDir(env)];
-  for (const dir of ancestors(cwd)) dirs.push(join(dir, '.lite'));
-  const extra = env.LITE_CONFIG_DIR;
+  for (const dir of ancestors(cwd)) dirs.push(join(dir, '.speedrail'));
+  const extra = env.SPEEDRAIL_CONFIG_DIR;
   if (extra) dirs.push(extra);
   return dirs;
 }

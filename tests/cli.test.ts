@@ -11,7 +11,7 @@ import type { Message, RunEvent, Session, SessionDetail } from '../shared/types'
 import type { QuestionAnswer, QuestionRequest } from '../shared/questions';
 import type { ProfileCatalog, ProfileDetail } from '../shared/profiles';
 
-const cli = fileURLToPath(new URL('../bin/lite.mjs', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/speedrail.mjs', import.meta.url));
 const fixtureEntry = fileURLToPath(new URL('./fixtures/cli-server.ts', import.meta.url));
 const loader = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
 const fixtureSecret = 'CLI_FIXTURE_KEY_DO_NOT_PRINT';
@@ -26,7 +26,7 @@ async function until(check: () => boolean | Promise<boolean>, timeout = 5000) {
   }
 }
 
-// Never inherit NODE_OPTIONS, .env contents, provider keys, HOME, or an existing LITE_URL.
+// Never inherit NODE_OPTIONS, .env contents, provider keys, HOME, or an existing SPEEDRAIL_URL.
 function environment(workspace: string, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(workspace, 'home'),
@@ -57,16 +57,16 @@ function events(result: Result): RunEvent[] {
   return result.stdout.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
 }
 
-describe('spawned lite executable against a real local provider', () => {
+describe('spawned speedrail executable against a real local provider', () => {
   let workspace: string, base: string, fixture: Process;
   const children = new Set<Process>();
   const gateways = new Set<HttpServer>();
   const terminals = new Set<{ pty: IPty; exited: () => boolean; result: Promise<Result> }>();
   beforeEach(async () => {
-    workspace = await realpath(await mkdtemp(join(tmpdir(), 'lite-cli-')));
+    workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-cli-')));
     await mkdir(join(workspace, 'home'));
     // A real user .env must never influence this boundary harness or spawned commands.
-    await writeFile(join(workspace, '.env'), 'LITE_URL=http://invalid.invalid\nOPENAI_API_KEY=DOTENV_SENTINEL_DO_NOT_LOAD\n');
+    await writeFile(join(workspace, '.env'), 'SPEEDRAIL_URL=http://invalid.invalid\nOPENAI_API_KEY=DOTENV_SENTINEL_DO_NOT_LOAD\n');
     fixture = start(['--import', loader, fixtureEntry], workspace, environment(workspace, { CLI_TEST_WORKSPACE: workspace }));
     await until(() => {
       if (fixture.child.exitCode !== null) throw new Error(`CLI fixture exited: ${fixture.stderr()}`);
@@ -172,33 +172,33 @@ describe('spawned lite executable against a real local provider', () => {
   }
 
   it.each(['help', '--help', '-h'])('prints %s without connecting or creating a session', async command => {
-    const result = await run([command], { LITE_URL: 'http://127.0.0.1:1' }, false);
+    const result = await run([command], { SPEEDRAIL_URL: 'http://127.0.0.1:1' }, false);
     expect(result.code).toBe(0); expect(result.stderr).toBe('');
-    for (const usage of ['lite run', 'lite sessions', 'lite models', 'lite profiles', 'lite export', '--profile', '--skills', '--build', 'NONE', '--auto', 'not a sandbox']) expect(result.stdout).toContain(usage);
+    for (const usage of ['speedrail run', 'speedrail sessions', 'speedrail models', 'speedrail profiles', 'speedrail export', '--profile', '--skills', '--build', 'NONE', '--auto', 'not a sandbox']) expect(result.stdout).toContain(usage);
     expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]);
     expect(await requests()).toEqual([]);
   });
 
   it.each([
-    { label: 'bare lite', args: [] },
-    { label: 'options-only lite', args: ['--model', 'cli-default'] },
+    { label: 'bare speedrail', args: [] },
+    { label: 'options-only speedrail', args: ['--model', 'cli-default'] },
     { label: 'explicit tui alias', args: ['tui'] },
   ])('requires an interactive terminal for $label without starting a session', async ({ args }) => {
-    const result = await run(args, { LITE_URL: base }, false);
+    const result = await run(args, { SPEEDRAIL_URL: base }, false);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('needs an interactive terminal');
     expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]);
     expect(await requests()).toEqual([]);
   });
 
-  it('lists discovered models with explicit provider and LITE_URL configuration', async () => {
+  it('lists discovered models with explicit provider and SPEEDRAIL_URL configuration', async () => {
     const models = await run(['models']);
     expect(models.code).toBe(0); expect(models.stderr).toBe('');
     expect(models.stdout.trim().split('\n').sort()).toEqual(['cli-alternate  (fixture)', 'cli-default  (fixture)']);
-    const alternate = await run(['models', '--provider', 'alternate'], { LITE_URL: base }, false);
+    const alternate = await run(['models', '--provider', 'alternate'], { SPEEDRAIL_URL: base }, false);
     expect(alternate.code).toBe(0);
     expect(alternate.stdout.trim().split('\n').sort()).toEqual(['cli-alternate  (alternate)', 'cli-default  (alternate)']);
-    const override = await run(['models'], { LITE_URL: 'http://127.0.0.1:1' });
+    const override = await run(['models'], { SPEEDRAIL_URL: 'http://127.0.0.1:1' });
     expect(override.code).toBe(0); expect(override.stdout).toContain('(fixture)');
   });
 
@@ -215,10 +215,10 @@ describe('spawned lite executable against a real local provider', () => {
       ],
     };
     for (const id of ['testing', 'style']) {
-      await mkdir(join(root, '.lite', 'skills', id), { recursive: true });
-      await writeFile(join(root, '.lite', 'skills', id, 'SKILL.md'), `SKILL_${id.toUpperCase()}_PRIVATE_BODY\n`);
+      await mkdir(join(root, '.speedrail', 'skills', id), { recursive: true });
+      await writeFile(join(root, '.speedrail', 'skills', id, 'SKILL.md'), `SKILL_${id.toUpperCase()}_PRIVATE_BODY\n`);
     }
-    await writeFile(join(root, '.lite', 'profiles.json'), JSON.stringify(manifest));
+    await writeFile(join(root, '.speedrail', 'profiles.json'), JSON.stringify(manifest));
     return manifest;
   }
 
@@ -230,7 +230,7 @@ describe('spawned lite executable against a real local provider', () => {
     for (const text of [workspace, 'Careful Review', 'plan', 'alternate/cli-alternate', 'Recommended only (not selected): testing', 'Testing', 'Style', 'never grant tool approval']) expect(result.stdout).toContain(text);
     expect(result.stdout).not.toContain('PRIVATE_BODY');
     expect(proxy.captured).toEqual([{ method: 'GET', path: `/api/profiles?workspace=${encodeURIComponent(workspace)}` }]);
-    const json = await run(['profiles', '--json'], { LITE_URL: base }, false);
+    const json = await run(['profiles', '--json'], { SPEEDRAIL_URL: base }, false);
     expect(json.code).toBe(0); expect(json.stderr).toBe('');
     const catalog: ProfileCatalog = JSON.parse(json.stdout);
     expect(catalog).toMatchObject({ workspace, profiles: [{ id: 'review', skills: ['testing'] }, { id: 'writer' }], skills: [{ id: 'testing' }, { id: 'style' }], diagnostics: [] });
@@ -244,15 +244,15 @@ describe('spawned lite executable against a real local provider', () => {
   it('uses a canonical explicit workspace and reports missing-source diagnostics without activation', async () => {
     const other = join(workspace, 'other project');
     await projectProfiles(other);
-    await rm(join(other, '.lite', 'skills', 'style', 'SKILL.md'));
+    await rm(join(other, '.speedrail', 'skills', 'style', 'SKILL.md'));
     const result = await run(['profiles', '--workspace', './other project/../other project', '--json']);
     expect(result.code).toBe(0); expect(result.stderr).toBe('');
     const catalog = JSON.parse(result.stdout);
     expect(catalog.workspace).toBe(await realpath(other));
     expect(catalog.skills.map((skill: { id: string }) => skill.id)).toEqual(['testing']);
-    expect(catalog.diagnostics).toEqual([{ path: '.lite/skills/style/SKILL.md', code: 'missing', message: 'Profile source is missing.' }]);
+    expect(catalog.diagnostics).toEqual([{ path: '.speedrail/skills/style/SKILL.md', code: 'missing', message: 'Profile source is missing.' }]);
     const text = await run(['profiles', '--workspace', other]);
-    expect(text.code).toBe(0); expect(text.stderr).toContain('Profile catalog: .lite/skills/style/SKILL.md (missing)');
+    expect(text.code).toBe(0); expect(text.stderr).toContain('Profile catalog: .speedrail/skills/style/SKILL.md (missing)');
     expect(text.stdout).not.toContain('Profile source is missing');
     expect(await requests()).toEqual([]);
   });
@@ -335,7 +335,7 @@ describe('spawned lite executable against a real local provider', () => {
     const manifest = await projectProfiles();
     const proxy = await gateway({ beforeCreate: async () => {
       manifest.profiles[0].instructions = 'CHANGED_AFTER_CATALOG';
-      await writeFile(join(workspace, '.lite', 'profiles.json'), JSON.stringify(manifest));
+      await writeFile(join(workspace, '.speedrail', 'profiles.json'), JSON.stringify(manifest));
     } });
     const result = await run(['run', 'Stale selection', '--profile', 'review', '--json', '--url', proxy.url], {}, false);
     expect(result.code).toBe(1); expect(result.stdout).toBe(''); expect(result.stderr).toContain('Project profiles changed');
@@ -486,7 +486,7 @@ describe('spawned lite executable against a real local provider', () => {
     expect(result.code).toBe(1); expect(result.stdout).toBe('');
     expect(sessionId(result)).toBe(session.id);
     expect(result.stderr).toContain('did not return an accepted message ID');
-    expect(result.stderr).toContain('Update the server and check the session in Lite before retrying');
+    expect(result.stderr).toContain('Update the server and check the session in Speedrail before retrying');
     await until(async () => (await api<SessionDetail>(`/sessions/${session.id}`)).session.status === 'idle');
     const detail = await api<SessionDetail>(`/sessions/${session.id}`);
     expect(detail.messages.filter(message => message.role === 'user')).toHaveLength(1);
@@ -546,10 +546,10 @@ describe('spawned lite executable against a real local provider', () => {
 
   it.each([
     { args: ['unknown-command'], message: 'Unknown command' },
-    { args: ['run'], message: 'Usage: lite run' },
-    { args: ['run', '--json'], message: 'Usage: lite run' },
-    { args: ['run', ''], message: 'Usage: lite run' },
-    { args: ['export'], message: 'Usage: lite export' },
+    { args: ['run'], message: 'Usage: speedrail run' },
+    { args: ['run', '--json'], message: 'Usage: speedrail run' },
+    { args: ['run', ''], message: 'Usage: speedrail run' },
+    { args: ['export'], message: 'Usage: speedrail export' },
     { args: ['export', 'missing-session'], message: 'Session not found' },
     { args: ['models', '--provider', 'missing-provider'], message: 'Provider not found' },
     { args: ['run', 'Hello', '--provider', 'missing-provider'], message: 'Provider not found' },
@@ -584,7 +584,7 @@ describe('spawned lite executable against a real local provider', () => {
     { args: ['run', 'Hello', '--profile', 'review', '--provider', 'fixture', '--model', ' '], message: 'must both be nonblank' },
     { args: ['profiles', '--workspace', ' '], message: 'nonblank path' },
     { args: ['run', 'Hello', '--unknown'], message: 'Unknown option' },
-    { args: ['run', 'Hello', 'extra argument'], message: 'Usage: lite run' },
+    { args: ['run', 'Hello', 'extra argument'], message: 'Usage: speedrail run' },
     { args: ['models', '--auto'], message: 'not supported' },
     { args: ['models', '--provider', 'fixture', '--provider', 'alternate'], message: 'Duplicate option' },
     { args: ['models', '--url', 'not-a-url'], message: 'valid HTTP or HTTPS URL' },
@@ -640,16 +640,16 @@ describe('spawned lite executable against a real local provider', () => {
         reservation.close(() => resolve(value));
       });
     });
-    const result = await run(['sessions'], { LITE_URL: `http://127.0.0.1:${port}` }, false);
+    const result = await run(['sessions'], { SPEEDRAIL_URL: `http://127.0.0.1:${port}` }, false);
     expect(result.code).toBe(1); expect(result.stdout).toBe('');
-    expect(result.stderr).toContain('Start the local server with lite serve first.');
+    expect(result.stderr).toContain('Start the local server with speedrail serve first.');
   });
 
   it.each([{ json: false, auto: false }, { json: true, auto: false }, { json: false, auto: true }, { json: true, auto: true }])('cancels unanswered non-TTY questions without guessing (JSON=$json, auto=$auto)', async ({ json, auto }) => {
     const result = await run(['run', 'question-fixture noninteractive', ...(json ? ['--json'] : []), ...(auto ? ['--auto'] : [])]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('Non-interactive input cannot answer questions, even with --auto');
-    expect(result.stderr).toContain('use the Lite app or rerun in an interactive terminal');
+    expect(result.stderr).toContain('use the Speedrail app or rerun in an interactive terminal');
     const id = sessionId(result);
     await until(async () => (await api<SessionDetail>(`/sessions/${id}`)).session.status === 'idle');
     const state = await api<SessionDetail & { questions?: QuestionRequest[] }>(`/sessions/${id}`);

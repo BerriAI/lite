@@ -50,7 +50,7 @@ describe('persistent terminal manager', () => {
   let dir: string, store: Store, manager: TerminalManager;
   let ptys: FakePty[], factory: ReturnType<typeof vi.fn>;
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'lite-terminal-manager-'));
+    dir = await mkdtemp(join(tmpdir(), 'speedrail-terminal-manager-'));
     store = new Store(join(dir, 'state')); store.saveSettings({ workspace: dir });
     ptys = [];
     factory = vi.fn(() => { const pty = new FakePty(); ptys.push(pty); return pty as IPty; });
@@ -60,7 +60,7 @@ describe('persistent terminal manager', () => {
   const output = (socket: FakeSocket) => socket.sent.filter(m => m.type === 'output').map(m => m.data).join('');
 
   it('spawns lazily in the stored workspace with a minimal credential-free environment', () => {
-    vi.stubEnv('LITELLM_API_KEY', 'hidden-provider-key'); vi.stubEnv('LITE_DATA_DIR', '/secret/app-state');
+    vi.stubEnv('LITELLM_API_KEY', 'hidden-provider-key'); vi.stubEnv('SPEEDRAIL_DATA_DIR', '/secret/app-state');
     vi.stubEnv('OPENAI_API_KEY', 'hidden-other-key'); vi.stubEnv('NODE_OPTIONS', '--inspect');
     vi.stubEnv('BASH_ENV', '/secret/initialization'); vi.stubEnv('ARBITRARY_SECRET', 'hidden');
     const session = store.createSession();
@@ -70,7 +70,7 @@ describe('persistent terminal manager', () => {
     expect(shell.startsWith('/')).toBe(true); expect(args).toEqual(['-l', '-i']);
     expect(options.cwd).toBe(realpathSync(dir));
     expect(Object.keys(options.env).sort()).toEqual(expect.arrayContaining(['HOME', 'PATH', 'USER', 'SHELL', 'TERM']));
-    for (const key of ['LITELLM_API_KEY', 'LITE_DATA_DIR', 'OPENAI_API_KEY', 'NODE_OPTIONS', 'BASH_ENV', 'ARBITRARY_SECRET']) expect(options.env[key]).toBeUndefined();
+    for (const key of ['LITELLM_API_KEY', 'SPEEDRAIL_DATA_DIR', 'OPENAI_API_KEY', 'NODE_OPTIONS', 'BASH_ENV', 'ARBITRARY_SECRET']) expect(options.env[key]).toBeUndefined();
     expect(JSON.stringify(socket.sent)).not.toContain('hidden-provider-key');
   });
 
@@ -229,7 +229,7 @@ describe('terminal WebSocket transport', () => {
   let dir: string, store: Store, server: Server, base: string, transport: ReturnType<typeof attachTerminals>;
   const sockets: WebSocket[] = [];
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'lite-terminal-wire-')); store = new Store(join(dir, 'state')); store.saveSettings({ workspace: dir });
+    dir = await mkdtemp(join(tmpdir(), 'speedrail-terminal-wire-')); store = new Store(join(dir, 'state')); store.saveSettings({ workspace: dir });
     server = createServer((_req, res) => { res.writeHead(404); res.end(); }); transport = attachTerminals(server, store);
     base = await new Promise<string>(resolve => server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${(server.address() as { port: number }).port}`)));
   });
@@ -299,7 +299,7 @@ describe('terminal WebSocket transport', () => {
     await new Promise<void>(resolve => { probe.onExit(() => resolve()); probe.write('exit\r'); });
     const session = store.createSession(), first = await connect(session.id);
     expect(first.messages.find(m => m.type === 'error')).toBeUndefined();
-    first.socket.send(JSON.stringify({ type: 'input', data: "printf '__CWD_%s__\\n' \"$PWD\"; export LITE_TERMINAL_TEST_STATE=kept\r" }));
+    first.socket.send(JSON.stringify({ type: 'input', data: "printf '__CWD_%s__\\n' \"$PWD\"; export SPEEDRAIL_TERMINAL_TEST_STATE=kept\r" }));
     await until(() => first.output().includes(`__CWD_${realpathSync(dir)}__`));
     const terminalId = first.messages.find(m => m.type === 'ready')?.terminalId;
     first.socket.close(); await until(() => first.socket.readyState === WebSocket.CLOSED);
@@ -307,7 +307,7 @@ describe('terminal WebSocket transport', () => {
     expect(second.messages.find(m => m.type === 'ready')?.terminalId).toBe(terminalId);
     expect(second.output()).toContain(`__CWD_${realpathSync(dir)}__`);
     second.socket.send(JSON.stringify({ type: 'resize', cols: 101, rows: 33 }));
-    second.socket.send(JSON.stringify({ type: 'input', data: "printf '__STATE_%s__\\n' \"$LITE_TERMINAL_TEST_STATE\"; stty size\r" }));
+    second.socket.send(JSON.stringify({ type: 'input', data: "printf '__STATE_%s__\\n' \"$SPEEDRAIL_TERMINAL_TEST_STATE\"; stty size\r" }));
     await until(() => second.output().includes('__STATE_kept__') && second.output().includes('33 101'));
     second.socket.send(JSON.stringify({ type: 'input', data: 'sleep 30\r' }));
     await new Promise(resolve => setTimeout(resolve, 100));

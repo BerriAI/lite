@@ -37,7 +37,7 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
   /** Lifecycle hooks configured at the app level (design note 4.3). */
   hooks?: HookConfig[];
   /** Canonical (realpath) workspace paths the user marked trusted. Project
-   * .lite/hooks.json only runs for a workspace listed here. */
+   * .speedrail/hooks.json only runs for a workspace listed here. */
   trustedWorkspaces?: string[];
   /** Installed plugin registry (design note 4.4): per-plugin provenance so
    * uninstall removes exactly the items an install recorded. */
@@ -70,7 +70,7 @@ export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProf
    * exactly like changing the model. */
   architecture?: ArchitectureSelection;
   /** Output style (5.7): a built-in name (shared/styles.ts OUTPUT_STYLES) or a
-   * workspace .lite/styles/<name>.md file name. Resolved at turn ACCEPTANCE
+   * workspace .speedrail/styles/<name>.md file name. Resolved at turn ACCEPTANCE
    * into the captured policy (like guidance); appended to the system prompt
    * tail so it stays in the cached prefix. Changing it is an idle-only config
    * change with a revision bump, exactly like changing the model. */
@@ -98,7 +98,7 @@ export interface RunEvent { id?: number; type: 'session' | 'delegation' | 'messa
 export interface ToolDefinition { type: 'function'; function: { name: string; description: string; parameters: Record<string,unknown> }; }
 export interface StreamChunk { type: 'text' | 'reasoning' | 'tool' | 'usage' | 'metadata'; metadata?: Record<string,unknown>; text?: string; tool?: { index: number; id?: string; name?: string; arguments?: string }; usage?: Usage; }
 /** One provider-reported usage record (5.1). Token counts are whatever the
- * provider stream reported — Lite never estimates here, and no cost is
+ * provider stream reported — Speedrail never estimates here, and no cost is
  * computed (there is no rate card in v1; document, don't guess). cachedTokens
  * is absent when the provider did not report it, never invented as 0. */
 export interface UsageLogEntry { sessionId: string; providerId: string; model: string; inputTokens: number; outputTokens: number; cachedTokens?: number; }

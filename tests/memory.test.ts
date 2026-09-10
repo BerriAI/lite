@@ -9,7 +9,7 @@ import { MEMORY_HEADER, MEMORY_LIMITS } from '../shared/memory.js';
 let directory: string, store: Store, memory: Memory;
 const A = '/workspace/alpha', B = '/workspace/beta';
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-memory-')));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-memory-')));
   store = new Store(join(directory, 'data')); memory = new Memory(store);
 });
 afterEach(async () => { vi.useRealTimers(); store.close(); await rm(directory, { recursive: true, force: true }); });

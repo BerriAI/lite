@@ -9,7 +9,7 @@ import { ParallelWorkers } from '../server/parallel-workers.js';
 describe('isolated worker publication', () => {
   let directory: string, store: Store, history: History, id: string;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'lite-isolated-publish-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-isolated-publish-')));
     store = new Store(join(directory, 'state')); history = new History(store);
     id = store.createSession({ workspace: directory }).id;
     await writeFile(join(directory, 'a.txt'), 'before'); await writeFile(join(directory, 'b.txt'), 'before');

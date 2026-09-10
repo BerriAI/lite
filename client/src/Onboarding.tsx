@@ -35,7 +35,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
     catch (error) { setError(errorMessage(error)); } finally { setSaving(false); }
   }
   if (providers) return renderProviders(() => { const next = setupGateway(settings, settings.defaultProvider); setGateway(next); setBaseUrl(next.baseUrl); setApiKey(''); setProviders(false); });
-  return <Modal title="Set up Lite" onClose={() => { if (!saving) onClose(); }}>
+  return <Modal title="Set up Speedrail" onClose={() => { if (!saving) onClose(); }}>
     <div className="setup-intro"><Logo /><div><p>{step === 0 ? 'Connect your LiteLLM gateway' : step === 1 ? 'How would you like to work?' : 'Choose your models'}</p><small>{simple ? step === 0 ? 'Enter your connection to get started.' : 'Pick a model and start chatting.' : `${step + 1} of 3 · You can change this later.`}</small></div></div>
     <div className="setup-content">
       {step === 0 ? <form id="gateway-setup" className="setup-gateway" onSubmit={event => { event.preventDefault(); if (!saving) void connect(); }}>

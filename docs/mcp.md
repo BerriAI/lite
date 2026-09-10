@@ -1,6 +1,6 @@
 # MCP connections and tool snapshots
 
-MCP connects Lite to tools supplied by another process or service. These tools may read or change data outside your project. Configure only commands and endpoints you trust. Tool approval is not a sandbox, and cancellation cannot prove that a remote side effect did not happen.
+MCP connects Speedrail to tools supplied by another process or service. These tools may read or change data outside your project. Configure only commands and endpoints you trust. Tool approval is not a sandbox, and cancellation cannot prove that a remote side effect did not happen.
 
 ## Configure, then connect
 
@@ -41,17 +41,17 @@ Changes made in another Settings window cannot be adopted by a status refresh al
 
 At acceptance, a Build-mode turn captures a read-only snapshot of available MCP definitions and their original connections. Plan mode and named project profiles do not capture or advertise MCP tools. Selecting instruction skills alone retains ordinary Build-mode tool policy.
 
-A tool call cannot be redirected to a replacement server merely because it has the same name. Changing configuration, disconnecting, reconnecting, starting a refresh, or receiving a tool-list-change notification invalidates the old snapshot. Lite checks it before approval and immediately before dispatch. Stale calls fail without using a replacement connection; review the change and start a new turn when ready.
+A tool call cannot be redirected to a replacement server merely because it has the same name. Changing configuration, disconnecting, reconnecting, starting a refresh, or receiving a tool-list-change notification invalidates the old snapshot. Speedrail checks it before approval and immediately before dispatch. Stale calls fail without using a replacement connection; review the change and start a new turn when ready.
 
 Remembered approvals bind the workspace, server configuration, and advertised catalog identity. Changing those invalidates the approval. Reconnecting with identical configuration and catalog can retain the remembered permission, but never revives an old turn's connection snapshot. Auto approval does not bypass stale-snapshot checks.
 
-A call already sent may have changed remote data even if its response is lost, cancelled, or interrupted by a connection change. Lite does not automatically repeat such calls. Undo/redo restores recorded conversation state, not external effects, and does not call the server again.
+A call already sent may have changed remote data even if its response is lost, cancelled, or interrupted by a connection change. Speedrail does not automatically repeat such calls. Undo/redo restores recorded conversation state, not external effects, and does not call the server again.
 
 ## Bounds and lifecycle
 
 Catalog discovery is bounded: up to 20 pages, 1,000 tools, and 1 MiB of validated tool catalog data per server. Duplicate names, malformed schemas, repeated cursors, or exceeded limits reject the catalog rather than silently truncating it. A connection/catalog operation has a total deadline of 30 seconds and individual discovery requests are limited to 15 seconds. Tool calls have a 60-second deadline and return at most 60,000 bytes of text; non-text resource/media bodies are omitted. Individual protocol frames are limited to 2 MiB before parsing. At most eight lifecycle operations run concurrently, with one per server and at most 30 configured servers.
 
-A disconnected lifecycle HTTP request or app shutdown cancels its preparation. A late result cannot publish a catalog after cancellation or replace a newer configuration. Shutdown closes connections and waits for tracked lifecycle cleanup. New server processes require an explicit connection after restarting Lite.
+A disconnected lifecycle HTTP request or app shutdown cancels its preparation. A late result cannot publish a catalog after cancellation or replace a newer configuration. Shutdown closes connections and waits for tracked lifecycle cleanup. New server processes require an explicit connection after restarting Speedrail.
 
 ## Current scope
 

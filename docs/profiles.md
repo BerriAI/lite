@@ -6,7 +6,7 @@ A profile is an explicitly selected set of project instructions and built-in too
 
 Open **Settings → Project profiles → New profile** to set a name, description, and instructions. **Tools and defaults** configures available tools, an optional model/mode default, and recommended skills. Save, then choose **Use profile** to apply it. **Edit profile** changes an existing definition without replacing active snapshots. Stale saves are rejected and retain your draft.
 
-The editor saves `.lite/profiles.json` in the project workspace. You can also maintain that file directly:
+The editor saves `.speedrail/profiles.json` in the project workspace. You can also maintain that file directly:
 
 ```json
 {
@@ -32,7 +32,7 @@ The editor saves `.lite/profiles.json` in the project workspace. You can also ma
 }
 ```
 
-Create `.lite/skills/verification/SKILL.md`:
+Create `.speedrail/skills/verification/SKILL.md`:
 
 ```markdown
 Check the relevant edge cases before reporting a finding.
@@ -48,7 +48,7 @@ The optional `defaultModel` is an inseparable provider/model pair:
 { "providerId": "litellm", "model": "your-coding-model" }
 ```
 
-Use a provider ID already configured in Lite. Model discovery can be incomplete, so an explicit model ID need not appear in its catalog. These defaults do not create a provider or store credentials.
+Use a provider ID already configured in Speedrail. Model discovery can be incomplete, so an explicit model ID need not appear in its catalog. These defaults do not create a provider or store credentials.
 
 ## Select deliberately
 
@@ -66,16 +66,16 @@ Changes to an existing session hold queued work for explicit Resume. An active r
 
 ## CLI selection
 
-Run from the project directory against a running Lite server:
+Run from the project directory against a running Speedrail server:
 
 ```sh
-node /path/to/lite/bin/lite.mjs profiles
-node /path/to/lite/bin/lite.mjs run "Review the parser" --profile reviewer --skills verification
-node /path/to/lite/bin/lite.mjs run "Review without extra skills" --profile reviewer --skills none
-node /path/to/lite/bin/lite.mjs run "Inspect edge cases" --skills verification --plan
+node /path/to/speedrail/bin/speedrail.mjs profiles
+node /path/to/speedrail/bin/speedrail.mjs run "Review the parser" --profile reviewer --skills verification
+node /path/to/speedrail/bin/speedrail.mjs run "Review without extra skills" --profile reviewer --skills none
+node /path/to/speedrail/bin/speedrail.mjs run "Inspect edge cases" --skills verification --plan
 ```
 
-`lite profiles --workspace /path/to/project --json` lists the canonical workspace, catalog revision, metadata, and diagnostics. It does not activate anything. `run` uses the current working directory; inspect or change an existing session's project configuration in the app instead of passing profile overrides with `--session`.
+`speedrail profiles --workspace /path/to/project --json` lists the canonical workspace, catalog revision, metadata, and diagnostics. It does not activate anything. `run` uses the current working directory; inspect or change an existing session's project configuration in the app instead of passing profile overrides with `--session`.
 
 Omitting `--skills` selects **no skills**, including recommendations. Select up to eight unique comma-separated IDs; `none` explicitly selects none. A selected profile can supply provider/model and mode defaults. Override its model with **both** `--provider` and `--model`. `--plan` or `--build` explicitly overrides its mode; these flags cannot be combined. A stale catalog fails rather than silently selecting changed instructions.
 
@@ -89,13 +89,13 @@ A named profile requires a `tools` array. Supported entries are:
 
 An empty array means no operational tools. `ask_user` remains available as an interaction for asking a decision; it is not listed in the allowlist. Named profiles exclude MCP tools and delegation in this version.
 
-Lite intersects the profile allowlist with the session's mode, both when advertising tools and before executing an emitted tool call. A profile cannot enable mutable tools in Plan mode. Auto approval and remembered grants cannot authorize an excluded tool. Existing permission mode and remembered approvals are not changed by switching profiles.
+Speedrail intersects the profile allowlist with the session's mode, both when advertising tools and before executing an emitted tool call. A profile cannot enable mutable tools in Plan mode. Auto approval and remembered grants cannot authorize an excluded tool. Existing permission mode and remembered approvals are not changed by switching profiles.
 
 **This is not a sandbox.** Allowing `bash` grants access to a shell governed by the ordinary approval policy; shell commands retain the local user's capabilities. The terminal is direct user input and is independent of the model's profile. Profile text never overrides harness constraints.
 
 ## Pinned configuration
 
-Lite reads and validates the selected files, then saves a private instruction/tool snapshot for the session. Future turns use that snapshot without rereading its skill files. Instructions and selected skill bodies are included in context estimates and sent to the chosen provider when a turn runs.
+Speedrail reads and validates the selected files, then saves a private instruction/tool snapshot for the session. Future turns use that snapshot without rereading its skill files. Instructions and selected skill bodies are included in context estimates and sent to the chosen provider when a turn runs.
 
 Editing or deleting a source file does not silently alter or weaken an active profile. The dialog shows changed, missing, or invalid source status. Review the current files and explicitly reload, select a replacement, or clear the profile.
 
@@ -122,4 +122,4 @@ Configuration uses a strict version 1 JSON schema. Unknown properties, duplicate
 
 Sources must be complete UTF-8 regular files within the canonical workspace. Symlink components, hard links, nonregular files, unsafe aliases, and oversized reads are rejected. Diagnostics describe the problem without echoing file contents. This special reader accepts only the exact manifest and derived skill paths; it does not relax ordinary file-tool restrictions.
 
-In this repository `.lite/` is ignored because it also stores local state and credentials. To share project instructions through Git, review and explicitly stage only the intended manifest/skill files according to your project's ignore rules. Never broadly force-add `.lite/`, which can include databases and subscription tokens.
+In this repository `.speedrail/` is ignored because it also stores local state and credentials. To share project instructions through Git, review and explicitly stage only the intended manifest/skill files according to your project's ignore rules. Never broadly force-add `.speedrail/`, which can include databases and subscription tokens.

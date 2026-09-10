@@ -8,7 +8,7 @@ import type { Draft, DraftStorage } from './controller.js';
 export class TerminalStorage implements DraftStorage {
   private pending = new Map<string, Draft>();
   private timer: ReturnType<typeof setTimeout> | undefined;
-  constructor(readonly directory = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'lite', 'tui')) {}
+  constructor(readonly directory = join(process.env.XDG_STATE_HOME || join(homedir(), '.local', 'state'), 'speedrail', 'tui')) {}
   private path(key: string) { return join(this.directory, `${createHash('sha256').update(key).digest('hex')}.json`); }
   load(key: string): Draft {
     if (this.pending.has(key)) return this.pending.get(key)!;
