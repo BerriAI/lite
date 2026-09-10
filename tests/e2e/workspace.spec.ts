@@ -89,3 +89,29 @@ test('mobile welcome, sidebar and composer stay within viewport',async({page})=>
   await send(page,'hello mobile');await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('Your workspace is ready.');await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:'test-results/conversation-mobile.png',fullPage:true,animations:'disabled'});
 });
+
+test('desktop session entry opens the workspace panel while compact layouts keep it closed', async ({ page, request }) => {
+  const first = await (await request.post('/api/sessions', { data: { title: 'Panel first', providerId: 'fixture', model: 'test-model' } })).json();
+  const second = await (await request.post('/api/sessions', { data: { title: 'Panel second', providerId: 'fixture', model: 'test-model' } })).json();
+  await page.addInitScript(() => localStorage.setItem('speedrail.workspace-panel-open', 'false'));
+  await fresh(page);
+  await expect(page.locator('.welcome h1 .speedrail-logo')).toBeVisible();
+  await page.getByRole('button', { name: 'Panel first', exact: true }).click();
+  await expect(page.locator('.workspace-panel')).toBeVisible();
+  await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
+  await expect(page.locator('.workspace-panel')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Panel second', exact: true }).click();
+  await expect(page.locator('.workspace-panel')).toBeVisible();
+  await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
+  await page.reload();
+  await expect(page.locator('.workspace-panel')).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.workspace-panel')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Show workspace panel', exact: true }).click();
+  await expect(page.locator('.workspace-panel')).toBeVisible();
+  await page.goto(`/#session/${first.id}`);
+  await expect(page.locator('.workspace-panel')).toHaveCount(0);
+  await page.goto(`/#session/${second.id}`);
+  await expect(page.locator('.workspace-panel')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

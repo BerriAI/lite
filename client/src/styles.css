@@ -163,8 +163,8 @@ summary::-webkit-details-marker { display: none; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes enter { from { transform: translateY(7px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.welcome h1 { font-size: clamp(30px, 3.3vw, 44px); letter-spacing: -1.75px; line-height: 1.18; font-weight: 530; margin: 0 0 15px; }
-.welcome h1 > span { color: var(--blue); }
+.welcome h1 { display: flex; align-items: center; gap: 10px; font-size: clamp(30px, 3.3vw, 44px); letter-spacing: -1.75px; line-height: 1.18; font-weight: 530; margin: 0 0 15px; }
+.welcome h1 .speedrail-logo { width: 1em; height: .8em; }
 .welcome-input { margin-bottom: 27px; }
 .composer { border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: var(--shadow); position: relative; background: var(--surface); padding: 16px 16px 12px; transition: border-color .18s, box-shadow .18s; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--blue) 40%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 4%, transparent), var(--shadow); }
