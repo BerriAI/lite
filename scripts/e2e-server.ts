@@ -17,6 +17,7 @@ const pendingSummaries=new Set<()=>void>();
 const delegationRequests:{model:string;messages:any[];tools:any[]}[]=[];
 const pendingDelegations=new Set<()=>void>();
 const mock=createServer(async(req,res)=>{
+  if(req.url?.startsWith('/setup-auth/')&&req.headers.authorization!=='Bearer fixture-key'){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Invalid API key'}}));return;}
   if(req.url?.endsWith('/models')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({data:[{id:'test-model'},{id:'test-fast'},{id:'budget-model',context_window:16384}]}));return;}
   const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);let data:any;
   try{data=JSON.parse(Buffer.concat(chunks).toString());}catch{res.writeHead(400);res.end();return;}

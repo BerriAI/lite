@@ -25,7 +25,7 @@ lite
 
 That directory becomes your workspace. Lite starts its local backend automatically. Keep the cloned checkout in place: `npm link` points the command to it.
 
-1. Follow **Set up Lite** to choose an architecture and its models. Connect a provider there if needed.
+1. Follow **Set up Lite**: enter your **LiteLLM gateway base URL** and **API key** (a virtual key or gateway key). Lite checks the connection and loads the models available to your key. Then choose your architecture and models.
 2. Choose **Ask first** or **Allow all tools**. Setup is remembered for this workspace in both clients; reopen it from the web sidebar or `/setup`.
 3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. **Ctrl+P** opens terminal commands and navigation.
 

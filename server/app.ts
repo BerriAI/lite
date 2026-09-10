@@ -1,3 +1,4 @@
+import { gatewayBaseUrl } from '../shared/setup.js';
 import { clientSurface } from '../shared/client.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { WorkspacePreferences } from './workspace-preferences.js';
@@ -23,7 +24,7 @@ import { HOOK_LIMITS } from '../shared/hooks.js';
 import type { ProfileDetail } from '../shared/profiles.js';
 import { listFiles, listWorkspaceStyles, readFile, readCommand, restoreChanges, searchFiles, gitStatus, resolveWorkspacePath } from './tools.js';
 import { collectDiagnostics } from './doctor.js';
-import type { Message, Session, Settings, UsageReport, UsageTotals } from '../shared/types.js';
+import type { Message, Provider, Session, Settings, UsageReport, UsageTotals } from '../shared/types.js';
 
 const providerSchema = z.object({id:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/),name:z.string().min(1).max(100),kind:z.enum(['openai','anthropic','codex']),baseUrl:z.url().refine(v=>['http:','https:'].includes(new URL(v).protocol)),apiKey:z.string().max(8192).optional(),models:z.array(z.string().max(200)).max(500).optional(),contextWindows:z.record(z.string().min(1).max(250),z.number().int().min(1024).max(10000000)).refine(value=>Object.keys(value).length<=100,'At most 100 model context windows may be configured.').optional()});
 const mcpSchema = z.object({command:z.string().max(1000).optional(),args:z.array(z.string().max(4000)).max(100).optional(),env:z.record(z.string(),z.string().max(8192)).optional(),url:z.url().optional(),enabled:z.boolean().optional(),advertise:z.boolean().optional()}).refine(v=>Boolean(v.command)!==Boolean(v.url),'Specify either a command or URL');
@@ -122,7 +123,7 @@ export function createApp(options:AppOptions = {}) {
     if(patch.workspace)patch.workspace=await workspace(patch.workspace);
     if(patch.mcpServers&&expectedMcpConfigRevision!==undefined&&expectedMcpConfigRevision!==mcpConfigRevision())throw httpError(409,'Saved MCP configuration changed. Review it before saving your changes.');
     const current=store.settings(),providers=patch.providers||current.providers;
-    if(!providers.some(p=>p.id===(patch.defaultProvider||current.defaultProvider)))throw httpError(400,'Default provider must be in the provider list.');
+    if(providers.length&&!providers.some(p=>p.id===(patch.defaultProvider||current.defaultProvider)))throw httpError(400,'Default provider must be in the provider list.');
     if(patch.mcpServers)for(const[name,config]of Object.entries(patch.mcpServers))if(config.env)for(const[key,value]of Object.entries(config.env))if(value==='••••••••')config.env[key]=current.mcpServers[name]?.env?.[key]||'';
     store.saveSettings(patch);options.external?.status?.();res.json(publicSettings());
   });
@@ -156,6 +157,23 @@ export function createApp(options:AppOptions = {}) {
     if(provider.kind==='codex')modelCatalog.clear(provider.id);
     try{const models=await listModels(provider,AbortSignal.timeout(30000));if(provider.kind!=='codex')modelCatalog.remember(provider,models);res.json({models});}
     catch(error){res.status(502).json({models:[],error:safeError(error,store)});}
+  });
+  app.post('/api/providers/connect',async(req,res)=>{
+    const input=z.object({providerId:providerSchema.shape.id,baseUrl:providerSchema.shape.baseUrl,apiKey:providerSchema.shape.apiKey}).strict().parse(req.body);
+    try{gatewayBaseUrl(input.baseUrl);}catch(error){throw httpError(400,(error as Error).message);}
+    const previous=store.settings().providers.find(p=>p.id===input.providerId);
+    if(previous&&previous.kind!=='openai')throw httpError(400,'Choose a different provider ID for this gateway.');
+    const provider:Provider={...previous,id:input.providerId,name:previous?.name||'LiteLLM',kind:'openai',baseUrl:input.baseUrl,apiKey:input.apiKey??(previous?.baseUrl===input.baseUrl?previous.apiKey:'')};
+    try{
+      const models=await listModels(provider,AbortSignal.timeout(15000));
+      if(!models.length)throw httpError(400,'Connected, but this key has no available models. Check its model access in your LiteLLM gateway.');
+      const current=store.settings(),latest=current.providers.find(p=>p.id===provider.id);
+      if(JSON.stringify(latest)!==JSON.stringify(previous))throw httpError(409,'This provider changed while connecting. Try again.');
+      if(!latest&&current.providers.length>=30)throw httpError(400,'Remove a provider before adding another.');
+      store.saveSettings({providers:latest?current.providers.map(p=>p.id===provider.id?provider:p):[...current.providers,provider],...(!current.providers.some(p=>p.id===current.defaultProvider)?{defaultProvider:provider.id}:{})});
+      modelCatalog.remember(provider,models);
+      res.json({settings:publicSettings(),models,providerId:provider.id});
+    }catch(error){res.status((error as {status?:number}).status||502).json({error:safeError(error,store)});}
   });
   app.post('/api/providers/test',async(req,res)=>{
     const{providerId}=z.object({providerId:z.string()}).parse(req.body);

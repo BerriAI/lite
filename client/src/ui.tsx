@@ -10,7 +10,8 @@ export function SpeedRail({ active = false, compact = false }: { active?: boolea
 }
 export function Modal({ title, children, onClose, wide = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const id = useId();
-  const ref = useRef<HTMLDivElement>(null);
+  const ref = useRef<HTMLDivElement>(null), close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement;
     const bodyOverflow = document.body.style.overflow;
@@ -20,7 +21,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
       target?.focus();
     }, 40);
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      if (e.key === 'Escape') { e.preventDefault(); close.current(); }
       if (e.key === 'Tab') {
         const elements = Array.from(ref.current?.querySelectorAll<HTMLElement>('button:not([disabled]), summary, [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length);
         const first = elements[0], last = elements.at(-1);
@@ -31,7 +32,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
     }
     document.addEventListener('keydown', onKey);
     return () => { clearTimeout(timer); document.removeEventListener('keydown', onKey); document.body.style.overflow = bodyOverflow; previous?.focus(); };
-  }, [onClose]);
+  }, []);
   return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1}><div className="modal-header"><h2 id={id}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X size={18} /></button></div>{children}</div></div>;
 }
 export function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {

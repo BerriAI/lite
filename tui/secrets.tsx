@@ -7,7 +7,7 @@ import { useTheme } from './context.js';
 import { toHex } from './theme.js';
 
 /** Secret bytes never enter a renderable, transcript, input history, or draft. */
-export function SecretPrompt({ title, onSave, onClose }: { title: string; onSave: (value: string) => void; onClose: () => void }) {
+export function SecretPrompt({ title, onSave, onClose, description, submitLabel = 'Save key' }: { title: string; description?: string; submitLabel?: string; onSave: (value: string) => void; onClose: () => void }) {
   const value = useRef(''), [length, setLength] = useState(0), renderer = useRenderer(), theme = useTheme();
   const update = (text: string) => { value.current = text.slice(0, 8192); setLength(value.current.length); };
   useEffect(() => {
@@ -23,8 +23,9 @@ export function SecretPrompt({ title, onSave, onClose }: { title: string; onSave
     else if (key.ctrl && key.name === 'u') update('');
     else if (!key.ctrl && !key.meta && key.sequence && !/[\p{Cc}\p{Cf}]/u.test(key.sequence)) update(value.current + key.sequence);
   });
-  return <Dialog title={title} onClose={onClose} footer="Type or paste · Enter save · Ctrl+U clear · Esc cancel">
+  return <Dialog title={title} onClose={onClose} footer={`Type or paste · Enter ${submitLabel.toLowerCase()} · Ctrl+U clear · Esc cancel`}>
+    {description && <text marginBottom={1} fg={toHex(theme.textMuted)}>{description}</text>}
     <text fg={toHex(theme.text)}>{length ? '•'.repeat(Math.min(length, 48)) : 'API key…'}</text>
-    <Button onPress={() => onSave(value.current)}>Save key</Button>
+    <Button onPress={() => onSave(value.current)}>{submitLabel}</Button>
   </Dialog>;
 }

@@ -8,6 +8,8 @@ test('setup explains roles, saves a workspace default, and keeps advanced contro
     await page.goto('/');
     const dialog = page.getByRole('dialog', { name:'Set up Lite', exact:true });
     await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name:'Connect & continue', exact:true }).click();
+    await expect(dialog.getByText('Connected · 3 models available')).toBeVisible();
     await dialog.getByRole('button', { name:/Team Fusion/ }).click();
     await page.screenshot({ path:testInfo.outputPath('setup-architecture.png') });
     await dialog.getByRole('button', { name:'Continue', exact:true }).click();
@@ -46,4 +48,39 @@ test('Allow all tools resolves a live prompt and updates the visible session mod
   await page.getByRole('button',{name:/Ask before changes/}).click();
   await expect.poll(async()=>(await (await request.get(`/api/sessions/${session.id}`)).json()).session.permissionMode).toBe('ask');
   await request.post(`/api/sessions/${session.id}/cancel`,{data:{}});
+});
+
+
+test('gateway setup asks for the URL and key, handles failure inline, and then selects available models', async ({page,request},testInfo) => {
+  const settings=await (await request.get('/api/settings')).json();
+  const original=await (await request.get(`/api/workspace-preferences?workspace=${encodeURIComponent(settings.workspace)}`)).json();
+  try {
+    await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',setupComplete:false}});
+    await request.patch('/api/settings',{data:{providers:[]}});
+    await page.goto('/');
+    const dialog=page.getByRole('dialog',{name:'Set up Lite',exact:true});
+    const url=dialog.getByLabel('Gateway base URL'),key=dialog.getByLabel('API key',{exact:false});
+    await expect(url).toHaveValue('');await expect(key).toHaveAttribute('type','password');
+    await expect(dialog.getByRole('button',{name:'Connect & continue'})).toBeDisabled();
+    await page.setViewportSize({width:390,height:844});
+    await page.screenshot({path:testInfo.outputPath('gateway-mobile.png'),animations:'disabled'});
+    await expect(dialog.getByRole('button',{name:'Connect & continue'})).toBeInViewport();
+    await url.fill(settings.providers[0].baseUrl+'/setup-auth');await key.click();await key.pressSequentially('wrong-key',{delay:70});await expect(key).toHaveValue('wrong-key');
+    await dialog.getByRole('button',{name:'Connect & continue'}).click();
+    await expect(dialog.getByRole('alert')).toContainText('API key');
+    expect((await (await request.get('/api/settings')).json()).providers).toEqual([]);
+    await key.fill('fixture-key');await dialog.getByRole('button',{name:'Connect & continue'}).click();
+    await expect(dialog.getByRole('group',{name:'Architecture'})).toBeVisible();
+    await dialog.getByRole('button',{name:'Continue',exact:true}).click();
+    await dialog.getByRole('button',{name:'Model',exact:true}).click();
+    await dialog.getByRole('option',{name:'test-model',exact:true}).click();
+    await dialog.getByRole('button',{name:'Start with this setup'}).click();
+    await expect(dialog).toHaveCount(0);
+    const saved=await (await request.get('/api/settings')).json();
+    expect(saved.providers[0].baseUrl).toBe(settings.providers[0].baseUrl+'/setup-auth');expect(JSON.stringify(saved)).not.toContain('fixture-key');
+    await page.reload();await expect(dialog).toHaveCount(0);
+  } finally {
+    await request.patch('/api/settings',{data:{providers:settings.providers,defaultProvider:settings.defaultProvider}});
+    await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',setupComplete:true}});
+  }
 });

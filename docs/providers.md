@@ -4,7 +4,7 @@ Open **Settings → Providers** in the web app or terminal to add a provider, sa
 
 ## Providers and subscriptions
 
-**LiteLLM:** Connect any model or routing alias your proxy exposes. Set `LITELLM_BASE_URL` and `LITELLM_API_KEY` in `.env`, or configure them in Settings. Model discovery uses the provider's actual model endpoint; you can also enter a model ID manually.
+**LiteLLM:** Connect any model or routing alias your proxy exposes. Use **Set up Lite** in either client to enter the gateway base URL and API key (a virtual key or gateway key). Lite verifies model access before saving. New installs do not assume a gateway address. You can also set `LITELLM_BASE_URL` and `LITELLM_API_KEY` in `.env`, or configure them in Settings. Model discovery uses the provider's actual model endpoint; you can also enter a model ID manually.
 
 **API keys:** OpenAI-compatible providers and native Anthropic are supported. Keys are never returned to the browser. Local credential storage is protected by filesystem permissions; it is not encrypted at rest.
 

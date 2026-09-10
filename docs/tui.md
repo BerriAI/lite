@@ -36,7 +36,7 @@ lite --url http://localhost:3210
 ## Your first task
 
 1. Open **Settings → Providers** to connect an API or start ChatGPT device sign-in. Keys are masked. Save the provider and test its connection.
-2. Follow **Set up Lite** on your first visit, or use `/setup`. Choose an architecture, its models, and permissions. `/models` keeps the advanced settings, including reasoning, planner, and output style.
+2. Follow **Set up Lite** on your first visit, or use `/setup`. Enter your LiteLLM gateway base URL and API key, connect to load its models, then choose an architecture, models, and permissions. `/models` keeps the advanced settings, including reasoning, planner, and output style.
 3. Select models using the searchable picker. Reasoning is stored per provider/model. Beneath the divider, optionally enable a separate Planner model for Plan mode. Choose an output style if wanted, then **Save**.
 4. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will actually handle the next turn, including a separate planner.
 5. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Consecutive tools stay open while working and collapse at the next text response. Click a tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.

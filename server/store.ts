@@ -98,7 +98,7 @@ export class Store {
   settings(): Settings {
     const row = this.db.prepare('SELECT data FROM settings WHERE id=1').get() as { data: string } | undefined;
     const settings: Settings = row ? JSON.parse(row.data) : {
-      providers: [{ id: 'litellm', name: 'LiteLLM', kind: 'openai', baseUrl: process.env.LITELLM_BASE_URL || 'http://localhost:4000' }],
+      providers: process.env.LITELLM_BASE_URL ? [{ id: 'litellm', name: 'LiteLLM', kind: 'openai', baseUrl: process.env.LITELLM_BASE_URL }] : [],
       defaultProvider: 'litellm', defaultModel: process.env.LITE_MODEL || '', workspace: resolve(process.env.LITE_WORKSPACE || process.cwd()),
       permissionMode: 'ask', maxSteps: 40, theme: 'system', mcpServers: {},
     };

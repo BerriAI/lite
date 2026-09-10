@@ -43,7 +43,7 @@ export function Providers({ controller, onClose }: { controller: TerminalControl
     if (isNew && latest.providers.some(item => item.id === value.id)) throw new Error('This provider ID is already in use.');
     const provider = { ...value }; delete provider.configured;
     const providers = isNew ? [...latest.providers, provider] : latest.providers.map(item => item.id === value.id ? provider : item);
-    if (await controller.action('Saving provider', async () => { await controller.client.api('/settings', { providers }, 'PATCH'); await controller.settings(); })) { setEditing(null); back(); }
+    if (await controller.action('Saving provider', async () => { await controller.client.api('/settings', { providers, ...(!latest.providers.length ? {defaultProvider: provider.id} : {}) }, 'PATCH'); await controller.settings(); })) { setEditing(null); back(); }
   };
   if (editing && view === 'key') return <SecretPrompt title="Provider API key" onClose={back} onSave={apiKey => { setEditing({ ...editing, apiKey }); back(); }} />;
   if (editing && view.startsWith('field:')) {
