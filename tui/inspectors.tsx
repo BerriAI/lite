@@ -1,9 +1,10 @@
 /** @jsxImportSource @opentui/react */
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTerminalDimensions } from '@opentui/react';
 import { createTwoFilesPatch } from 'diff';
 import type { DelegationDetail, DelegationSummary, FileChange, Message, SessionDetail } from '../shared/types.js';
 import { terminalText } from './protocol.js';
+import { InvocationSync } from './invocation.js';
 import { TerminalController } from './controller.js';
 import { Menu, TextViewer, Dialog } from './ui.js';
 import { Transcript } from './transcript.js';
@@ -11,25 +12,12 @@ import { toHex } from './theme.js';
 import { useConfig, useTheme } from './context.js';
 
 export function WorkerInspector({ controller, invocation, onClose }: { controller: TerminalController; invocation: DelegationSummary; onClose: () => void }) {
-  const [detail, setDetail] = useState<DelegationDetail | null>(null), [error, setError] = useState(''), [view, setView] = useState('main');
-  const { width, height } = useTerminalDimensions(), theme = useTheme();
+  const [view, setView] = useState('main');
+  const { width, height } = useTerminalDimensions();
   const path = `/sessions/${encodeURIComponent(invocation.parentSessionId)}/delegations/${encodeURIComponent(invocation.id)}`;
-  useEffect(() => {
-    let live = true, timer: ReturnType<typeof setTimeout>; const abort = new AbortController();
-    const refresh = async () => {
-      try {
-        const next = await controller.client.api<DelegationDetail>(path, undefined, undefined, abort.signal);
-        if (!live) return;
-        if (!next.readOnly || next.delegation.id !== invocation.id || next.delegation.parentSessionId !== invocation.parentSessionId || next.session.id !== invocation.childSessionId || next.delegation.parentTurnId !== invocation.parentTurnId) throw new Error('The server returned a different invocation.');
-        setDetail(next); setError('');
-        if (next.delegation.status !== 'running') return;
-      } catch (error) { if (live) setError((error as Error).message); }
-      // Fetch the invocation-scoped transcript. A reused Sidekick context must
-      // never append messages from its next assignment to a sealed handoff.
-      if (live) timer = setTimeout(refresh, 1000);
-    };
-    void refresh(); return () => { live = false; abort.abort(); clearTimeout(timer); };
-  }, [path]);
+  const sync = useMemo(() => new InvocationSync(controller.client, invocation), [controller.client, path]);
+  const { detail, error } = useSyncExternalStore(sync.subscribe, sync.getState);
+  useEffect(() => { void sync.start(); return () => sync.stop(); }, [sync]);
   if (view === 'transcript' && detail) return <Dialog title={`${invocation.role || 'Research'} · ${detail.delegation.status}`} width={width - 2} onClose={() => setView('main')} footer={error || 'Read-only invocation transcript · PgUp PgDn scroll · Esc back'}><box height={Math.max(2, height - 10)}><Transcript detail={detail} width={width - 8} /></box></Dialog>;
   if (view === 'brief') return <TextViewer title="Assignment brief" text={detail?.messages.filter(message => message.role === 'user').map(message => message.content).join('\n\n') || 'No brief is available.'} onClose={() => setView('main')} />;
   if (view === 'report') return <TextViewer title="Worker report" text={detail?.messages.filter(message => message.role === 'assistant' && message.content).map(message => message.content).join('\n\n') || (detail?.delegation.status === 'running' ? 'The worker is still working.' : 'No report was produced.')} onClose={() => setView('main')} />;

@@ -28,7 +28,10 @@ export class LiteClient {
    * when the server closes the stream (caller reconnects), throws on transport
    * errors, and ends silently when `signal` aborts. */
   async *events(sessionId: string, after: number | undefined, signal: AbortSignal): AsyncGenerator<RunEvent> {
-    const response = await fetch(`${this.base}/api/sessions/${encodeURIComponent(sessionId)}/events`, {
+    yield* this.eventsAtPath(`/sessions/${encodeURIComponent(sessionId)}/events`, after, signal);
+  }
+  async *eventsAtPath(path: string, after: number | undefined, signal: AbortSignal): AsyncGenerator<RunEvent> {
+    const response = await fetch(`${this.base}/api${path}`, {
       headers: { Accept: 'text/event-stream', ...(after ? { 'Last-Event-ID': String(after) } : {}) },
       signal,
     });

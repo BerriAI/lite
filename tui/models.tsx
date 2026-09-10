@@ -7,7 +7,7 @@ import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, type MenuItem } from './ui.js';
 
 export function ModelChooser({ controller, settings, value, title, onChange, onClose }: { controller: TerminalController; settings: Settings; value: ModelRoute; title: string; onChange: (route: ModelRoute) => void; onClose: () => void }) {
-  const [provider, setProvider] = useState(value.providerId), [models, setModels] = useState<Model[]>([]);
+  const [provider, setProvider] = useState(settings.providers.some(provider => provider.id === value.providerId) ? value.providerId : settings.providers[0]?.id || ''), [models, setModels] = useState<Model[]>([]);
   const [view, setView] = useState<'models' | 'providers' | 'custom'>('models'), [error, setError] = useState(''), [loading, setLoading] = useState(true);
   useEffect(() => {
     let live = true; setLoading(true); setError(''); setModels([]);

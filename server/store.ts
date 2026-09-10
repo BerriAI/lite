@@ -23,7 +23,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS todos (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS changes (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, path TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id,path));
       CREATE TABLE IF NOT EXISTS queues (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));
+      CREATE TABLE IF NOT EXISTS tool_grants (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool,scope));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS events_session ON events(session_id,id);
       CREATE TABLE IF NOT EXISTS session_profiles (session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);
@@ -45,7 +45,7 @@ export class Store {
       -- riding the cascade) must never erase its usage record.
       CREATE TABLE IF NOT EXISTS usage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL, provider_id TEXT NOT NULL, model TEXT NOT NULL, day TEXT NOT NULL, input_tokens INTEGER NOT NULL, output_tokens INTEGER NOT NULL, cached_tokens INTEGER, created_at INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS usage_log_day ON usage_log(day);`);
-    try { this.migrateDelegations(); } catch (error) { this.db.close(); throw error; }
+    try { this.migrateDelegations(); this.migrateToolGrants(); } catch (error) { this.db.close(); throw error; }
     // An interrupted process must never leave a session stuck running.
     for (const session of this.sessions('', true).concat(this.sessions())) {
       if (session.status === 'running' || session.status === 'waiting') this.updateSession(session.id, { status: 'idle' });
@@ -83,6 +83,16 @@ export class Store {
         CREATE UNIQUE INDEX IF NOT EXISTS delegations_active_context ON delegations(child_session_id) WHERE status='running';
         INSERT INTO schema_migrations(version) VALUES(1);`);
     });
+  }
+  /** Keep each approved target; a later path must not replace an earlier grant. */
+  private migrateToolGrants(): void {
+    const columns = this.db.prepare('PRAGMA table_info(tool_grants)').all() as { name: string; pk: number }[];
+    if (columns.some(column => column.name === 'scope' && column.pk)) return;
+    this.atomic(() => this.db.exec(`
+      CREATE TABLE tool_grants_v2 (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool,scope));
+      INSERT INTO tool_grants_v2 SELECT session_id,tool,scope FROM tool_grants;
+      DROP TABLE tool_grants;
+      ALTER TABLE tool_grants_v2 RENAME TO tool_grants;`));
   }
   close() { this.db.close(); }
   settings(): Settings {
@@ -309,7 +319,7 @@ export class Store {
   }
   grantTool(id: string, tool: string, scope: string) {
     this.session(id);
-    this.db.prepare('INSERT INTO tool_grants(session_id,tool,scope) VALUES(?,?,?) ON CONFLICT(session_id,tool) DO UPDATE SET scope=excluded.scope').run(id,tool,scope);
+    this.db.prepare('INSERT INTO tool_grants(session_id,tool,scope) VALUES(?,?,?) ON CONFLICT(session_id,tool,scope) DO NOTHING').run(id,tool,scope);
   }
   clearToolGrants(id: string) { this.session(id); this.db.prepare('DELETE FROM tool_grants WHERE session_id=?').run(id); }
   event(event: RunEvent): RunEvent {

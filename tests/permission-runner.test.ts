@@ -172,4 +172,69 @@ describe('fine-grained permission rules Runner/API integration',()=>{
     expect(valid.status).toBe(200);
     expect((await api('/settings')).body.permissionRules).toEqual(rules([{tool:'bash',decision:'ask',patterns:['rm *']}]));
   });
+  it('changes only the requested live permission mode, resolves its wait, and persists it', async () => {
+    respond=oneCallThenText('write_file',{path:'live.txt',content:'allowed'});
+    const s=await create(); runner.start(s.id,'Write');
+    await until(()=>runner.permissions(s.id).length===1);
+    const revision=store.session(s.id).configRevision ?? 0;
+    expect((await api(`/sessions/${s.id}/permission-mode`,{permissionMode:'auto',expectedConfigRevision:revision+1},'PATCH')).status).toBe(409);
+    expect(runner.permissions(s.id)).toHaveLength(1);
+    expect((await api(`/sessions/${s.id}/permission-mode`,{permissionMode:'auto',expectedConfigRevision:revision},'PATCH')).status).toBe(200);
+    await runner.whenIdle();
+    expect(await readFile(join(directory,'live.txt'),'utf8')).toBe('allowed');
+    expect(store.session(s.id).permissionMode).toBe('auto');
+    await run(s.id); expect(prompts(s.id)).toHaveLength(1);
+  });
+
+  it('changing an idle session never changes another active session policy', async () => {
+    const held: ServerResponse[]=[];
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):held.push(res);
+    const idle=await create(), active=await create(); runner.start(active.id,'Write');
+    await until(()=>held.length===1);
+    runner.setPermissionMode(idle.id,'auto',store.session(idle.id).configRevision ?? 0);
+    tools(held[0],[{name:'write_file',args:{path:'other.txt',content:'must ask'}}]);
+    await until(()=>runner.permissions(active.id).length===1);
+    expect(store.session(active.id).permissionMode).toBe('ask');
+    runner.decide(active.id,runner.permissions(active.id)[0].id,'deny'); await runner.whenIdle();
+    expect(toolCalls(active.id)[0].status).toBe('denied');
+  });
+
+  it('an explicit ask rule cannot be remembered or bypassed by Allow all tools', async () => {
+    store.saveSettings({permissionRules:rules([{tool:'write_file',decision:'ask'}])});
+    respond=oneCallThenText('write_file',{path:'hello.txt',content:'hi'});
+    const s=await create();runner.start(s.id,'Write');await until(()=>runner.permissions(s.id).length===1);
+    const request=runner.permissions(s.id)[0];expect(request.ruleMatch?.decision).toBe('ask');
+    expect(()=>runner.decide(s.id,request.id,'always')).toThrow('explicit permission rule');
+    runner.setPermissionMode(s.id,'auto',store.session(s.id).configRevision ?? 0);
+    expect(runner.permissions(s.id)[0].id).toBe(request.id);
+    runner.decide(s.id,request.id,'allow');await runner.whenIdle();
+  });
+
+  it.each(['always','auto'] as const)('shares %s approval with parallel and fresh isolated workers', async decision => {
+    let batch=0;
+    respond=(body,res)=> {
+      if(body.model==='worker') {
+        if(body.messages.at(-1)?.role==='tool') text(res,'Worker done');
+        else tools(res,[{name:'write_file',args:{path:`worker-${++batch}.txt`,content:'worker edit'}}]);
+      } else if(body.messages.at(-1)?.role==='tool') text(res);
+      else tools(res,[{name:'delegate',args:{description:'First worker',prompt:'Write first'}},{name:'delegate',args:{description:'Second worker',prompt:'Write second'}}]);
+    };
+    const s=await create({architecture:{kind:'team-fusion',worker:{providerId:'test',model:'worker'}}});
+    runner.start(s.id,'First round');await until(()=>runner.permissions(s.id).length>0);
+    // Approving the delegation tool covers both sibling assignments.
+    runner.decide(s.id,runner.permissions(s.id)[0].id,'always');
+    await until(()=>runner.permissions(s.id).filter(p=>p.tool==='write_file').length===2);
+    const requests=runner.permissions(s.id);expect(requests.every(p=>Boolean(p.invocationId))).toBe(true);
+    if(decision==='auto') runner.setPermissionMode(s.id,'auto',store.session(s.id).configRevision ?? 0);
+    else runner.decide(s.id,requests[0].id,'always');
+    await runner.whenIdle();
+    expect(runner.delegations.list(s.id)).toHaveLength(2);
+    const count=prompts(s.id).length;
+    runner.start(s.id,'Fresh round');
+    await until(()=>!runner.active(s.id) || runner.permissions(s.id).length>0);
+    expect(runner.permissions(s.id)).toHaveLength(0);
+    await runner.whenIdle();expect(prompts(s.id)).toHaveLength(count);
+    expect(batch).toBe(4);
+  });
+
 });

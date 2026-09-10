@@ -9,7 +9,8 @@ describe('terminal conversation parity', () => {
     const groups = conversationGroups(detail(messages));
     expect(groups.filter(group => group.startsRun)).toHaveLength(1);
     expect(groups.filter(group => group.footer)).toHaveLength(1);
-    expect(groups[1].steps.map(step => step.id)).toEqual(['a', 'b']);
+    expect(groups[1].steps.map(step => step.id)).toEqual(['a']);
+    expect(groups.at(-1)?.steps.map(step => step.id)).toEqual(['b']);
     expect(groups.at(-1)?.runUsage?.inputTokens).toBe(110);
     expect(groups.some(group => group.message.id === 'notice')).toBe(true);
   });

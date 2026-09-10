@@ -4,7 +4,7 @@ import {
   collapseToolOutput, extractUnifiedDiff, filetypeOf, formatDuration,
   inlineArgs, outputBudget,
   questionAnswer, reasoningSummary, scannerFrame, stripAnsi, titlecase, toolRow,
-  SCANNER_HOLD_END, SCANNER_HOLD_START, SCANNER_WIDTH, SPINNER_FRAMES,
+  SCANNER_WIDTH, SPINNER_FRAMES,
 } from '../tui/transcriptModel.js';
 
 function call(overrides: Partial<ToolCall> & { name: string }): ToolCall {
@@ -239,19 +239,11 @@ describe('filetypeOf', () => {
 });
 
 describe('scannerFrame', () => {
-  it('holds at the left edge, sweeps, holds at the right edge, and returns', () => {
-    expect(scannerFrame(0)).toBe('■' + '⬝'.repeat(SCANNER_WIDTH - 1));
-    expect(scannerFrame(SCANNER_HOLD_START - 1)).toBe('■' + '⬝'.repeat(SCANNER_WIDTH - 1));
-    expect(scannerFrame(SCANNER_HOLD_START)).toBe('⬝■' + '⬝'.repeat(SCANNER_WIDTH - 2));
-    const atEnd = SCANNER_HOLD_START + (SCANNER_WIDTH - 1) - 1;
-    expect(scannerFrame(atEnd)).toBe('⬝'.repeat(SCANNER_WIDTH - 1) + '■');
-    expect(scannerFrame(atEnd + SCANNER_HOLD_END)).toBe('⬝'.repeat(SCANNER_WIDTH - 1) + '■');
-    const cycle = SCANNER_HOLD_START + (SCANNER_WIDTH - 1) + SCANNER_HOLD_END + (SCANNER_WIDTH - 1);
-    expect(scannerFrame(cycle)).toBe(scannerFrame(0));
-    for (let tick = 0; tick < cycle * 2; tick++) {
+  it('keeps a stable width and one visible segment through every frame', () => {
+    for (let tick = 0; tick < SCANNER_WIDTH * 2; tick++) {
       const frame = scannerFrame(tick);
       expect(frame.length).toBe(SCANNER_WIDTH);
-      expect(Array.from(frame).filter(glyph => glyph === '■')).toHaveLength(1);
+      expect(Array.from(frame).filter(glyph => glyph === '━')).toHaveLength(1);
     }
   });
   it('exposes ten braille spinner frames', () => {

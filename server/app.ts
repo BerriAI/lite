@@ -166,7 +166,7 @@ export function createApp(options:AppOptions = {}) {
   const preferences=new WorkspacePreferences(store);
   app.get('/api/workspace-preferences',async(req,res)=>res.json(preferences.get(await workspace(req.query.workspace))));
   app.post('/api/workspace-preferences',async(req,res)=>{
-    const input=sessionSchema.required({providerId:true,model:true}).parse(req.body), root=await workspace(input.workspace);
+    const input=sessionSchema.required({providerId:true,model:true}).extend({setupComplete:z.boolean().optional()}).parse(req.body), root=await workspace(input.workspace);
     checkProvider(input.providerId);if(input.architecture)checkProvider(architectureWorker(input.architecture).providerId);if(input.planner)checkProvider(input.planner.providerId);
     preferences.save(root,{...input,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined});res.json({ok:true});
   });
@@ -180,7 +180,8 @@ export function createApp(options:AppOptions = {}) {
       return {root,resolved:profile?await resolveProfileChoice(root,profile,signal):undefined};
     },({root,resolved})=>{
       const defaults=resolved?.defaults,pair=input.providerId&&input.model?{providerId:input.providerId,model:input.model}:nonempty?defaults?.model:undefined;
-      const selection={...(nonempty?{}:preferences.get(root)),...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
+      const {setupComplete: _setup, ...preferred}=preferences.get(root);
+      const selection={...(nonempty?{}:preferred),...input,...pair,mode:input.mode??(nonempty?defaults?.mode:undefined),workspace:root};
       if(selection.mode===undefined)delete selection.mode;
       // planner:null means "no planner" on create; a set planner needs a real provider.
       if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
@@ -304,10 +305,14 @@ export function createApp(options:AppOptions = {}) {
   app.post('/api/sessions/:id/queue/pause',(req,res)=>res.json(runner.pauseQueue(req.params.id)));
   app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});
+  app.patch('/api/sessions/:id/permission-mode',(req,res)=>{
+    const {permissionMode,expectedConfigRevision}=z.object({permissionMode:z.enum(['ask','auto']),expectedConfigRevision:configRevisionSchema}).strict().parse(req.body);
+    res.json(runner.setPermissionMode(req.params.id,permissionMode,expectedConfigRevision));
+  });
   app.post('/api/sessions/:id/permissions/:requestId',(req,res)=>{const{decision}=z.object({decision:z.enum(['allow','always','deny'])}).parse(req.body);runner.decide(req.params.id,req.params.requestId,decision);res.json({ok:true});});
   app.get('/api/sessions/:id/questions',(req,res)=>res.json({questions:runner.questions.pending(req.params.id)}));
   app.post('/api/sessions/:id/questions/:questionId/answer',(req,res)=>res.json(runner.questions.answer(req.params.id,req.params.questionId,req.body)));
-  app.get('/api/sessions/:id/tool-grants',(req,res)=>res.json({tools:store.toolGrants(req.params.id).map(g=>g.tool)}));
+  app.get('/api/sessions/:id/tool-grants',(req,res)=>res.json({tools:[...new Set(store.toolGrants(req.params.id).map(g=>g.tool))]}));
   app.delete('/api/sessions/:id/tool-grants',(req,res)=>{store.clearToolGrants(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/fork',(req,res)=>{runner.assertIdle(req.params.id);const input=z.object({messageId:z.string().optional()}).parse(req.body||{});res.status(201).json(store.fork(req.params.id,input.messageId));});
   app.post('/api/sessions/:id/compact',async(req,res)=>{await runner.compact(req.params.id);res.json({ok:true});});

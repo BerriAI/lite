@@ -92,9 +92,13 @@ export class TerminalController {
   decide(request: PermissionRequest, decision: 'allow' | 'always' | 'deny') {
     return this.action('Recording decision', () => this.client.api(this.path(`/permissions/${encodeURIComponent(request.id)}`), { decision }));
   }
+  permissionMode(permissionMode: Session['permissionMode']) {
+    return this.action('Updating permissions', () => this.client.api(this.path('/permission-mode'), { permissionMode, expectedConfigRevision: this.detail?.session.configRevision ?? 0 }, 'PATCH'));
+  }
   answer(request: QuestionRequest, answer: QuestionAnswer) {
     return this.action('Sending answer', () => this.client.api(`/sessions/${encodeURIComponent(request.sessionId)}/questions/${encodeURIComponent(request.id)}/answer`, answer));
   }
+  steerQueued(id: string) { return this.action('Steering driver', () => this.client.api(this.path(`/queue/${encodeURIComponent(id)}/steer`), {})); }
   queue(action: 'pause' | 'resume' | 'remove', id?: string) {
     return this.action('Updating queue', () => this.client.api(this.path(`/queue/${action === 'remove' ? encodeURIComponent(id!) : action}`), action === 'remove' ? undefined : {}, action === 'remove' ? 'DELETE' : 'POST'));
   }

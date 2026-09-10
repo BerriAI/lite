@@ -142,4 +142,16 @@ describe('external paths use normal tool permissions', () => {
     const prompt=await approve(s.id);expect(prompt.tool).toBe('read_file');expect(prompt.sessionId).toBe(s.id);
     const delegation=runner.delegations.list(s.id)[0];const result=runner.delegations.transcript(s.id,delegation.id).messages.find(message=>message.role==='tool');expect(result?.content).toContain('external evidence');
   });
+  it('remembers multiple external paths without replacing an earlier approval', async () => {
+    await writeFile(join(outside,'second.txt'),'second');
+    const s=create();
+    for(const path of ['../outside/package.json','../outside/second.txt']) { setCall('read_file',{path});start(s.id);await approve(s.id,'always'); }
+    for(const path of ['../outside/package.json','../outside/second.txt']) {
+      setCall('read_file',{path});start(s.id);
+      await until(()=>!runner.active(s.id) || runner.permissions(s.id).length>0);
+      expect(runner.permissions(s.id)).toHaveLength(0);await runner.whenIdle();
+      expect(calls(s.id).at(-1)?.status).toBe('completed');
+    }
+  });
+
 });

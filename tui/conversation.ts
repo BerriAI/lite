@@ -1,10 +1,11 @@
 import type { Message, SessionDetail, Usage } from '../shared/types.js';
-import { groupRuns } from '../shared/conversation.js';
+import { conversationBlocks } from '../shared/conversation-blocks.js';
 import { formatDuration } from './transcriptModel.js';
 
 export function conversationGroups(detail: SessionDetail) {
   const busy = detail.session.status === 'running' || detail.session.status === 'waiting';
-  return groupRuns(detail.messages).map(group => ({ ...group, live: busy && group.closesTranscript, footer: group.endsRun && !(busy && group.closesTranscript) }));
+  const groups = conversationBlocks(detail.messages);
+  return groups.map((group, index) => ({ ...group, live: busy && group.closesTranscript && index === groups.length - 1, footer: group.endsRun && !(busy && group.closesTranscript) }));
 }
 export function usageLabel(message: Message, usage?: Usage) {
   const family = message.turnUsage;

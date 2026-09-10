@@ -26,8 +26,8 @@ function moveOption(event: KeyboardEvent, selector = '[role="option"]') {
 }
 
 /** A model menu belongs to its role. Search never changes a different slot. */
-function ModelField({ label, value, settings, selection, onChange, onReasoning, open, onOpen }: {
-  label: string; value: ModelRoute | null; settings: Settings; selection: Selection;
+export function ModelField({ simple = false, label, value, settings, selection, onChange, onReasoning, open, onOpen }: {
+  simple?: boolean; label: string; value: ModelRoute | null; settings: Settings; selection: Selection;
   onChange: (route: ModelRoute) => void; onReasoning: (route: ModelRoute, effort: string) => void;
   open: boolean; onOpen: (open: boolean) => void;
 }) {
@@ -36,7 +36,11 @@ function ModelField({ label, value, settings, selection, onChange, onReasoning, 
   const [search, setSearch] = useState('');
   const [catalog, setCatalog] = useState<Record<string, Model[]>>({});
   const [loading, setLoading] = useState(false), [error, setError] = useState('');
-  useEffect(() => { if (value?.providerId) setProviderId(value.providerId); }, [value?.providerId]);
+  useEffect(() => {
+    const preferred = value?.providerId || providerId;
+    if (!settings.providers.some(provider => provider.id === preferred)) setProviderId(settings.providers[0]?.id || '');
+    else if (value?.providerId) setProviderId(value.providerId);
+  }, [value?.providerId, settings.providers]);
   useEffect(() => {
     let live = true;
     if (!providerId) return;
@@ -56,16 +60,16 @@ function ModelField({ label, value, settings, selection, onChange, onReasoning, 
   const efforts = supported ?? REASONING_EFFORTS;
   function close() { onOpen(false); trigger.current?.focus(); }
   function choose(model: string) { onChange({ providerId, model }); setSearch(''); close(); }
-  return <div className="model-field" onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); close(); } }}>
+  return <div className={`model-field ${simple ? 'simple' : ''}`} onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); close(); } }}>
     <div className="model-field-row">
-      <span className="model-field-label" id={`${id}-label`}>{label}</span><span className="model-effort-mobile" aria-hidden="true">Reasoning</span>
+      <span className="model-field-label" id={`${id}-label`}>{label}</span>{!simple && <span className="model-effort-mobile" aria-hidden="true">Reasoning</span>}
       <button ref={trigger} type="button" className="model-select-trigger" aria-label={label === 'Model' ? 'Model' : `${label} model`} aria-expanded={open} aria-controls={`${id}-menu`} onClick={() => { setSearch(''); onOpen(!open); }}>
         <span title={value?.model}>{value?.model.split('/').at(-1) || 'Select a model'}</span><ChevronDown size={15} />
       </button>
-      <select aria-label={`${label} reasoning`} title="Reasoning effort, saved per model" disabled={!value} value={effort} onChange={event => { if (value) onReasoning(value, event.target.value); }}>
+      {!simple && <select aria-label={`${label} reasoning`} title="Reasoning effort, saved per model" disabled={!value} value={effort} onChange={event => { if (value) onReasoning(value, event.target.value); }}>
         <option value="">Default</option>{efforts.map(level => <option key={level} value={level}>{level === 'xhigh' ? 'Extra high' : level[0].toUpperCase() + level.slice(1)}</option>)}
         {effort && !efforts.includes(effort) && <option value={effort}>{effort} · unsupported</option>}
-      </select>
+      </select>}
     </div>
     {open && <div id={`${id}-menu`} className="model-select-menu" onKeyDown={event => moveOption(event)}>
       {settings.providers.length > 1 && <label className="model-provider">Provider<select aria-label={`${label} provider`} value={providerId} onChange={event => { setProviderId(event.target.value); setSearch(''); }}>{settings.providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>}

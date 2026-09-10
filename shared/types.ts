@@ -87,7 +87,7 @@ export interface Message { clientSurface?: ClientSurface; turnId?: string; turnU
   receipts?: TurnReceipts; }
 export interface Usage { inputTokens: number; outputTokens: number; cachedTokens?: number; cost?: number; durationMs?: number; }
 export interface Todo { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; }
-export interface PermissionRequest { scopePath?: string; id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }
+export interface PermissionRequest { invocationId?: string; ruleMatch?: RuleMatch; scopePath?: string; id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }
 export interface FileEntry { name: string; path: string; type: 'file' | 'directory'; size?: number; }
 export interface FileChange { path: string; before: string | null; after: string | null; actorSessionId?: string; invocationId?: string; }
 export interface QueuedMessage { clientSurface?: ClientSurface; id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }

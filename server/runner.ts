@@ -229,10 +229,32 @@ export class Runner {
   decide(id: string, requestId: string, decision: 'allow' | 'always' | 'deny') {
     this.assertRoot(id);const run = this.runs.get(id), pending = run?.approvals.get(requestId);
     if (!run || !pending) throw conflict('This permission request is no longer pending.');
+    if (decision === 'always' && pending.request.ruleMatch?.decision === 'ask') throw conflict('An explicit permission rule requires approval each time. Allow once or edit that rule.');
     if (decision === 'always') this.store.grantTool(id,pending.request.tool,pending.scope);
-    this.bus.emit(id, 'permission_resolved', { id: requestId, decision });
-    run.approvals.delete(requestId);
-    pending.resolve(decision !== 'deny');
+    for (const [key, approval] of [...run.approvals]) {
+      if (key !== requestId && !(decision === 'always' && approval.request.ruleMatch?.decision !== 'ask' && approval.request.tool === pending.request.tool && approval.scope === pending.scope)) continue;
+      this.bus.emit(id, 'permission_resolved', { id: key, decision });
+      run.approvals.delete(key); approval.resolve(decision !== 'deny');
+    }
+  }
+  /** Permission posture alone can change during work, by explicit user action.
+   * Routing and captured deny/ask rules remain pinned to the accepted turn. */
+  setPermissionMode(id: string, permissionMode: Session['permissionMode'], expectedConfigRevision: number) {
+    this.assertRoot(id); this.assertOpen();
+    if (this.preparations.has(id) || this.queuePreparations.has(id) || this.configurationPreparations.has(id)) throw conflict('A turn is being prepared. Try changing permissions after it starts.');
+    const session = this.store.updateSession(id, { permissionMode }, expectedConfigRevision);
+    const owner = this.runs.get(id);
+    for (const active of this.runs.values()) if ((active === owner || (owner && active.child?.parent === owner)) && active.policy) active.policy.session.permissionMode = permissionMode;
+    this.bus.emit(id, 'session', session);
+    this.bus.emit(id, 'queue', this.store.queue(id));
+    if (permissionMode === 'auto' && owner && !owner.controller.signal.aborted) {
+      for (const [key, pending] of [...owner.approvals]) {
+        if (pending.request.ruleMatch?.decision === 'ask') continue;
+        this.bus.emit(id, 'permission_resolved', { id: key, decision: 'allow' });
+        owner.approvals.delete(key); pending.resolve(true);
+      }
+    }
+    return session;
   }
   enqueue(id: string, content: string, attachments: Attachment[] = []) {
     this.assertRoot(id);this.assertOpen();const run=this.runs.get(id);
@@ -1094,7 +1116,7 @@ export class Runner {
     if (access) this.approvedPaths.set(call,access); else this.approvedPaths.delete(call);
     if(match)call.ruleMatch=match;
     if(match?.decision==='deny')return false;
-    const scope = createHash('sha256').update(canonical({workspace:session.workspace,...(access?.external?{externalPath:access.resolvedPath}:{}),mcp:subject.startsWith('mcp_') ? run.external!.scope(subject) : undefined})).digest('hex');
+    const scope = createHash('sha256').update(canonical({workspace:ownerSession.workspace,...(access?.external?{externalPath:access.resolvedPath}:{}),mcp:subject.startsWith('mcp_') ? run.external!.scope(subject) : undefined})).digest('hex');
     if (match?.decision!=='ask') {
       if ((localReadOnly && !access?.external) || session.permissionMode === 'auto' || this.store.toolGrants(ownerSession.id).some(g => g.tool === subject && g.scope === scope) || match?.decision==='allow') return true;
     }
@@ -1104,7 +1126,7 @@ export class Runner {
     // request.tool/args carry the SUBJECT: the user reviews the real connected
     // tool and its real arguments, and an "always" grant is stored under that
     // identity (decide() grants pending.request.tool), never under 'capability'.
-    const request: PermissionRequest = { id:randomUUID(),sessionId:ownerSession.id,toolCallId:call.id,tool:subject,args:subjectArgs,description:base+notes,...(access?.external?{scopePath:access.resolvedPath}:{}) };
+    const request: PermissionRequest = { id:randomUUID(),sessionId:ownerSession.id,toolCallId:call.id,tool:subject,args:subjectArgs,description:base+notes,...(run.child?{invocationId:run.child.delegation.id}:{}),...(match?{ruleMatch:match}:{}),...(access?.external?{scopePath:access.resolvedPath}:{}) };
     this.setSession(ownerSession.id,{status:'waiting'});
     this.workerActivity(run,'Waiting for approval');
     run.approvalWaitStarted=Date.now();

@@ -133,7 +133,7 @@ export const KEYBIND_DEFAULTS: Record<string, BindingValue> = {
   messages_undo: '<leader>u',
   messages_redo: '<leader>r',
   messages_toggle_conceal: '<leader>h',
-  tool_details: 'none',
+  tool_details: 'alt+o',
   display_thinking: 'none',
   // Prompt / workspace
   prompt_submit: 'none',

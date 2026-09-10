@@ -79,9 +79,9 @@ export function SettingsPanel({ controller, onClose }: { controller: TerminalCon
     { id: 'refresh', label: 'Reload status', action: () => { void run(async () => { await controller.settings(); setMcp(await controller.client.api<McpSnapshot>('/mcp')); }); } },
   ]} />;
   if (view === 'permissions') return <Menu title="Permissions" search={false} onClose={back} footer={feedback || 'Project rules, Plan mode, and profile limits still apply.'} items={[
-    { id: 'ask', label: `${controller.detail?.session.permissionMode === 'ask' ? '●' : '○'} Ask before actions`, action: () => { void run(async () => { await controller.configure({ permissionMode: 'ask' }); }); } },
-    { id: 'auto', label: `${controller.detail?.session.permissionMode === 'auto' ? '●' : '○'} Automatic approvals`, description: 'Allow available actions without individual prompts', action: () => { void run(async () => { await controller.configure({ permissionMode: 'auto' }); }); } },
-    { id: 'default', label: `New session default: ${settings.permissionMode}`, action: () => { void run(() => save({ permissionMode: settings.permissionMode === 'ask' ? 'auto' : 'ask' }, 'permissions')); } },
+    { id: 'ask', label: `${controller.detail?.session.permissionMode === 'ask' ? '●' : '○'} Ask before actions`, action: () => { void run(async () => { await controller.permissionMode('ask'); }); } },
+    { id: 'auto', label: `${controller.detail?.session.permissionMode === 'auto' ? '●' : '○'} Allow all tools`, description: 'This session and its workers; explicit ask/deny rules still apply', action: () => { void run(async () => { await controller.permissionMode('auto'); }); } },
+    { id: 'default', label: `New session default: ${settings.permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}`, action: () => { void run(() => save({ permissionMode: settings.permissionMode === 'ask' ? 'auto' : 'ask' }, 'permissions')); } },
     { id: 'rules', separatorBefore: true, label: 'App permission rules', description: `${settings.permissionRules?.rules.length ?? 0} explicit rules`, action: () => setView('rules') },
     { id: 'grants', label: 'Clear “Always” approvals for this session', description: grants.join(', ') || 'No saved tool approvals', action: () => { void run(async () => { if (await controller.action('Clearing approvals', () => controller.client.api(controller.path('/tool-grants'), undefined, 'DELETE'))) setGrants([]); }); } },
   ]} />;

@@ -177,10 +177,12 @@ export function toolRow(call: ToolCall): ToolRowModel {
       return { ...base, icon: '%', text: `WebFetch ${str(args.url)}`, pending: 'Fetching from the web…' };
     case 'web_search':
       return { ...base, icon: '◈', text: `Web Search "${str(args.query)}"`, pending: 'Searching web…' };
+    case 'delegate':
+    case 'sidekick':
     case 'task': {
       const description = str(args.description);
       if (!description) return { ...base, icon: '│', text: '', pending: 'Delegating…' };
-      const lines = [`Research Task — ${description}`];
+      const lines = [`${call.name === 'delegate' ? 'Worker' : call.name === 'sidekick' ? 'Sidekick' : 'Research Task'} — ${description}`];
       if (running) lines.push('↳ working');
       return {
         ...base, icon: completed ? '✓' : '│', text: lines.join('\n'),
@@ -272,21 +274,13 @@ export function filetypeOf(filePath: string): string | undefined {
 
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 export const SPINNER_INTERVAL_MS = 80;
-export const SCANNER_WIDTH = 8;
-export const SCANNER_INTERVAL_MS = 40;
-export const SCANNER_HOLD_START = 30;
-export const SCANNER_HOLD_END = 9;
+export const SCANNER_WIDTH = 6;
+export const SCANNER_INTERVAL_MS = 180;
+export const SCANNER_HOLD_START = 0;
+export const SCANNER_HOLD_END = 0;
 
-/** One frame of the block scanner: position sweeps 0..width-1 and back, with
- * hold frames at each end. Returns the glyph row (■ active, ⬝ inactive). */
+/** A single segment travels forward; stable width prevents text from shifting. */
 export function scannerFrame(tick: number, width = SCANNER_WIDTH): string {
-  const sweep = width - 1;
-  const cycle = SCANNER_HOLD_START + sweep + SCANNER_HOLD_END + sweep;
-  let t = tick % cycle;
-  let position: number;
-  if (t < SCANNER_HOLD_START) position = 0;
-  else if ((t -= SCANNER_HOLD_START) < sweep) position = t + 1;
-  else if ((t -= sweep) < SCANNER_HOLD_END) position = sweep;
-  else position = sweep - (t - SCANNER_HOLD_END) - 1;
-  return Array.from({ length: width }, (_, i) => (i === position ? '■' : '⬝')).join('');
+  const length = Math.max(1, width), position = ((tick % length) + length) % length;
+  return Array.from({ length }, (_, index) => index === position ? '━' : '─').join('');
 }

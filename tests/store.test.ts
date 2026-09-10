@@ -89,6 +89,16 @@ describe('local persistence',()=>{
     store.clearToolGrants(s.id);expect(store.toolGrants(s.id)).toEqual([]);
     store.grantTool(s.id,'bash','scope');store.deleteSession(s.id);expect(store.db.prepare('SELECT * FROM tool_grants').all()).toEqual([]);
   });
+  it('migrates old single-scope grants without losing remembered approvals',()=>{
+    const session=store.createSession();
+    store.db.exec('DROP TABLE tool_grants; CREATE TABLE tool_grants (session_id TEXT NOT NULL, tool TEXT NOT NULL, scope TEXT NOT NULL, PRIMARY KEY(session_id,tool));');
+    store.db.prepare('INSERT INTO tool_grants VALUES(?,?,?)').run(session.id,'read_file','first');
+    store.close();store=new Store(directory);
+    store.grantTool(session.id,'read_file','second');store.grantTool(session.id,'read_file','first');
+    store.close();store=new Store(directory);
+    expect(store.toolGrants(session.id)).toEqual(expect.arrayContaining([{tool:'read_file',scope:'first'},{tool:'read_file',scope:'second'}]));
+    expect(store.toolGrants(session.id)).toHaveLength(2);
+  });
   describe('queued messages',()=>{
     const acceptedMessage=(item:QueuedMessage,id=`accepted-${item.id}`):Message=>({
       id,sessionId:item.sessionId,role:'user',content:item.content,

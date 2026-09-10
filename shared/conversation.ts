@@ -12,7 +12,10 @@ export function groupRuns(messages: Message[]) {
     if (message.role === 'user') turn = message.id;
     const key = message.turnId ?? turn;
     keys.push(key);
-    if (message.role === 'assistant') runs.set(key, [...(runs.get(key) ?? []), message]);
+    if (message.role === 'assistant') {
+      const run = runs.get(key);
+      if (run) run.push(message); else runs.set(key, [message]);
+    }
   }
   return rendered.map((message, index) => {
     const run = runs.get(keys[index]) ?? [];

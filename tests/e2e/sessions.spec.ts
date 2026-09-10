@@ -215,7 +215,7 @@ test('remembers approvals across reload and later runs, isolates sessions, and r
   await open(page, session);
   await send(page, 'create fixture with remembered approval');
   await expect(page.getByRole('region', { name: 'Permission requested' })).toBeVisible();
-  await page.getByRole('button', { name: 'Always allow this tool', exact: true }).click();
+  await page.getByRole('button', { name: 'Allow this tool for session', exact: true }).click();
   await completed(page, request, session.id, 1);
   expect(await grants(session.id)).toEqual(['write_file']);
   expect((await history(request, session.id)).messages.flatMap(m => m.toolCalls ?? []).map(t => t.status)).toEqual(['completed']);

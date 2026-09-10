@@ -180,7 +180,9 @@ test('new-session defaults are applied only to explicitly selected profiles and 
 });
 
 test('welcome profile selection is explicit and travels with the first accepted message', async ({ page, request }) => {
-  await page.goto('/'); await expect(composer(page)).toBeVisible(); await composer(page).fill('PROFILE_BROWSER welcome activation');
+  await page.goto('/');
+  await page.getByRole('dialog', { name:'Set up Lite', exact:true }).getByRole('button', { name:'Set up later', exact:true }).click();
+  await expect(composer(page)).toBeVisible(); await composer(page).fill('PROFILE_BROWSER welcome activation');
   await use(page, 'Careful inspector', true); await expect(composer(page)).toHaveValue('PROFILE_BROWSER welcome activation');
   const created = page.waitForResponse(response => new URL(response.url()).pathname === '/api/sessions' && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Send message', exact: true }).click(); const response = await created; expect(response.status()).toBe(201);

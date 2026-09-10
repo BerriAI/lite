@@ -36,10 +36,10 @@ lite --url http://localhost:3210
 ## Your first task
 
 1. Open **Settings → Providers** to connect an API or start ChatGPT device sign-in. Keys are masked. Save the provider and test its connection.
-2. Open **Models** from the header or Ctrl+P. Choose Single model, Sidekick Fusion, Team Fusion, or Expert Fusion. Each architecture has a short explanation and only its relevant model roles.
+2. Follow **Set up Lite** on your first visit, or use `/setup`. Choose an architecture, its models, and permissions. `/models` keeps the advanced settings, including reasoning, planner, and output style.
 3. Select models using the searchable picker. Reasoning is stored per provider/model. Beneath the divider, optionally enable a separate Planner model for Plan mode. Choose an output style if wanted, then **Save**.
 4. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will actually handle the next turn, including a separate planner.
-5. Review the result through **Response steps**, **Worker assignments**, **Changed files**, and **File history** in Ctrl+P.
+5. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Consecutive tools stay open while working and collapse at the next text response. Click a tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
 
 Workspace model preferences are shared with the web app. An editor opened before another client changes the session must be reopened before saving, so it cannot silently overwrite newer configuration.
 
@@ -123,3 +123,9 @@ npm run test:tui:startup
 The checked-in PTY suite runs the actual terminal against an isolated server and deterministic provider. It exercises all four architectures, Ask decisions, question replies, cancellation, queues, profiles, file context, stale configuration, Plan routing, history, editor/shell handoffs, Unicode paste, session drafts, restart, and 80/100/140-column layouts. Artifacts are written to `test-results-tui/`. The production smoke copies the built application into an isolated installation and checks automatic startup and backend ownership without making provider calls.
 
 This replacement has been exercised on macOS with Node 26 and Bun 1.4.2. Linux terminal-emulator coverage, Windows terminal support, and fresh paid-provider/sign-in smoke tests remain release-matrix follow-ups. The fixture suite tests the real orchestration and permission boundaries, not model quality or provider availability. The old Node renderer and `--legacy` path have been removed.
+
+### Activity and permissions
+
+The header identifies the active driver, Sidekick, or worker count. Handoffs appear where they happened in the conversation; worker text is muted and italic. Each Sidekick handoff keeps its own transcript even when the model reuses context. Worker transcripts stream live. Old responses do not reparse merely because you type a draft.
+
+Use `/permissions` or the footer to switch between **Ask first** and **Allow all tools**, even during a run. Approval prompts say whether a grant applies to a tool for the session or one external path; `4` selects Allow all tools. Explicit ask/deny rules still apply. `/queue` lets you promote a queued text message to **Steer driver now**.

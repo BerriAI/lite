@@ -1,5 +1,5 @@
 import { conversationBlocks } from './conversation-blocks';
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { QuestionRequest } from '../../shared/questions';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -7,14 +7,14 @@ import { ArrowDown, Check, ChevronRight, Clock3, File, GitFork, Shield, Terminal
 import type { Message, PermissionRequest, SessionDetail, ToolCall, Usage } from '../../shared/types';
 import { CopyButton, Logo, SpeedRail } from './ui';
 
-export function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
     pre({ children, ...props }) { return <div className="code-block"><pre {...props}>{children}</pre><CopyCode>{children}</CopyCode></div>; },
     a({ children, ...props }) { return <a {...props} target="_blank" rel="noopener noreferrer">{children}</a>; },
     table({ children, ...props }) { return <div className="markdown-table"><table {...props}>{children}</table></div>; },
     img({ src, alt }) { return <a href={src} target="_blank" rel="noopener noreferrer" className="image-link">{alt || 'View image'} ↗</a>; },
   }}>{content}</ReactMarkdown>;
-}
+});
 function CopyCode({ children }: { children: React.ReactNode }) {
   function text(node: React.ReactNode): string {
     if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -33,10 +33,17 @@ function ToolCard({ tool }: { tool: ToolCall }) {
   // unmodified original arguments above the (modified) executed ones.
   return <details className={`tool-card ${working ? 'working' : ''} ${tool.status === 'error' ? 'failed' : ''}`}><summary><span className="tool-status">{working ? <span className="working-dot" /> : tool.status === 'completed' ? <Check size={13} /> : <X size={13} />}</span><span className="tool-name">{toolLabels[tool.name] || tool.name}</span><span className="tool-summary">{typeof title === 'string' ? title : ''}</span>{tool.intercepted && <span className="tool-intercepted-tag" title={tool.intercepted.reason}>modified by {tool.intercepted.by}</span>}<ChevronRight size={13} className="disclosure-chevron" /></summary><div className="tool-body">{tool.intercepted && <><div className="tool-section-title">Original arguments</div><pre>{JSON.stringify(tool.intercepted.originalArgs, null, 2)}</pre></>}<div className="tool-section-title">Arguments</div><pre>{JSON.stringify(tool.args, null, 2)}</pre>{tool.output !== undefined && <><div className="tool-section-title">{tool.status === 'error' ? 'Error' : 'Result'}<CopyButton text={tool.output} /></div><pre>{tool.output || '(No output)'}</pre></>}</div></details>;
 }
-function Approval({ request, onDecide, busy }: { request: PermissionRequest; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; busy: boolean }) {
-  return <section className="approval" aria-label="Permission requested"><div className="approval-heading"><span><Shield size={17} /></span><div><strong>A quick check before I continue.</strong><p>{request.description || `${toolLabels[request.tool] || request.tool} needs your permission.`}</p></div></div><details><summary>Review {toolLabels[request.tool]?.toLowerCase() || request.tool}<ChevronRight size={13} /></summary><pre>{JSON.stringify(request.args, null, 2)}</pre></details><div className="approval-actions"><button className="button secondary" disabled={busy} onClick={() => onDecide(request.id, 'deny')}>Deny</button><button className="text-button" title={request.scopePath ? `Remember approval for this tool at ${request.scopePath} in this session. Revoke in Session actions.` : "Remember approval for this tool in this session, including future runs. Revoke in Session actions."} disabled={busy} onClick={() => onDecide(request.id, 'always')}>{request.scopePath ? 'Always allow at this path' : 'Always allow this tool'}</button><button className="button primary" disabled={busy} onClick={() => onDecide(request.id, 'allow')}>Allow once<Check size={14} /></button></div></section>;
+function Approval({ request, onDecide, onAllowAll, busy }: { request: PermissionRequest; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onAllowAll?: () => void; busy: boolean }) {
+  const forced = request.ruleMatch?.decision === 'ask';
+  return <section className="approval" aria-label="Permission requested">
+    <div className="approval-heading"><span><Shield size={17} /></span><div><strong>Permission to continue</strong><p>{request.description || `${toolLabels[request.tool] || request.tool} needs your permission.`}</p></div></div>
+    <details><summary>Review {toolLabels[request.tool]?.toLowerCase() || request.tool}<ChevronRight size={13} /></summary><pre>{JSON.stringify(request.args, null, 2)}</pre></details>
+    {forced && <p className="field-hint">An explicit {request.ruleMatch!.source} rule requires approval each time.</p>}
+    <div className="approval-actions"><button className="button secondary" disabled={busy} onClick={() => onDecide(request.id, 'deny')}>Deny</button>{!forced && <button className="text-button" title={request.scopePath ? `Remember this tool at ${request.scopePath} for this session and its workers.` : 'Remember this tool for this session and its workers.'} disabled={busy} onClick={() => onDecide(request.id, 'always')}>{request.scopePath ? 'Allow at this path' : 'Allow this tool for session'}</button>}<button className="button primary" disabled={busy} onClick={() => onDecide(request.id, 'allow')}>Allow once<Check size={14} /></button></div>
+    {!forced && onAllowAll && <div className="approval-mode"><button className="text-button" disabled={busy} onClick={onAllowAll}>Allow all tools</button><span>For this session and its workers</span></div>}
+  </section>;
 }
-export function Conversation({ detail, connection, onDecide, onFork, renderQuestion, renderTask, busy, readOnly = false, inline = false }: { detail: SessionDetail; connection: 'connecting' | 'connected' | 'reconnecting'; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onFork: (messageId: string) => void; renderQuestion: (question: QuestionRequest) => ReactNode; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode; busy: boolean; readOnly?: boolean; inline?: boolean }) {
+export function Conversation({ detail, connection, onDecide, onAllowAll, onFork, renderQuestion, renderTask, busy, readOnly = false, inline = false }: { detail: SessionDetail; connection: 'connecting' | 'connected' | 'reconnecting'; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onAllowAll?: () => void; onFork: (messageId: string) => void; renderQuestion: (question: QuestionRequest) => ReactNode; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode; busy: boolean; readOnly?: boolean; inline?: boolean }) {
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(() => new Set());
   const scroll = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -58,7 +65,7 @@ export function Conversation({ detail, connection, onDecide, onFork, renderQuest
     {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }, index) => <MessageView driver={!inline && Boolean(detail.session.architecture)} workerNoun={detail.session.architecture?.kind === 'expert-fusion' ? 'expert' : 'worker'} key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript && index === groups.length - 1} runUsage={runUsage} steps={steps} expanded={expandedSteps.has(message.id)} onExpand={open => setExpandedSteps(current => { const next = new Set(current); if (open) next.add(message.id); else next.delete(message.id); return next; })} inline={inline} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
     {!detail.messages.length && <div className="session-empty"><Logo /><h2>{readOnly ? 'No transcript yet.' : 'A fresh start.'}</h2><p>{readOnly ? 'Research messages will appear here when available. This view cannot start a run.' : 'Give your agent a task. It will work in this session’s workspace.'}</p></div>}
     {!readOnly && detail.questions?.map(renderQuestion)}
-    {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} busy={busy} />)}
+    {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} onAllowAll={onAllowAll} busy={busy} />)}
     {running && !last?.content && !last?.reasoning && !hasWork && !detail.permissions.length && !detail.questions?.length && <div className="run-status" role="status"><SpeedRail compact active /><span>{detail.session.status === 'waiting' ? detail.questions?.length ? 'Waiting for your answer' : 'Waiting for your approval' : detail.session.mode === 'plan' ? 'Exploring and planning' : last?.activity || 'Working'}<span className="animated-ellipsis">…</span></span></div>}
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" aria-label="Jump to latest" title="Jump to latest" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={16} /></button>}</div>;

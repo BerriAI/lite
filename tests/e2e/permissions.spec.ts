@@ -158,7 +158,7 @@ test('an external read in Plan mode shows the resolved path and completes after 
   await send(page,session,'RULES_BROWSER READ_PATH[../notes.txt]');
   await expect(permission(page)).toContainText('Read outside this session’s workspace');
   await expect(permission(page)).toContainText(join(workspace,'notes.txt'));
-  await expect(permission(page).getByRole('button',{name:'Always allow at this path',exact:true})).toBeVisible();
+  await expect(permission(page).getByRole('button',{name:'Allow at this path',exact:true})).toBeVisible();
   await page.reload();await expect(permission(page)).toBeVisible();
   await permission(page).getByRole('button',{name:'Allow once',exact:true}).click();
   const result=await done(request,session);expect(toolResults(result).join('\n')).toContain('Rule fixture file.');

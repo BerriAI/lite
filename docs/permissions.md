@@ -2,6 +2,14 @@
 
 Permission rules let you decide, per tool and per argument pattern, whether a tool call is allowed without asking, always asks, or is denied outright — before the session's general permission mode applies. Rules narrow or confirm authority; they never widen it. Plan mode's read-only ceiling, project profile tool allowlists, and the researcher tool ceiling all still apply first.
 
+## Choose an approval mode
+
+Use **Ask first** to review actions, or **Allow all tools** to run without routine prompts. Both clients let you switch during a response, including while it is waiting for approval. The mode applies to this session and its workers. In the terminal, use the footer control or `/permissions`; in the browser, use the composer’s permission menu. Setup can save your preferred mode for new sessions in this workspace.
+
+**Allow this tool for session** remembers approval across turns and fresh worker assignments. For an external file or directory, **Allow at this path** remembers that tool at the exact resolved path. Approving another path preserves earlier grants. Forked sessions do not inherit grants. Revoke them in session permission settings.
+
+Explicit ask rules still require approval each time, so those prompts offer **Allow once** and explain the rule instead of offering a remembered approval that cannot apply. Explicit deny rules, Plan mode, and profile restrictions remain in effect.
+
 ## Where rules live
 
 - **App rules** — Settings → Permissions. Stored with your other app settings.

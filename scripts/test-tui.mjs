@@ -165,6 +165,8 @@ try {
   terminal.write('/queue\r');
   await waitFor(() => screen().includes('remove this queued message'), 'removable queued item');
   terminal.write('\x1b[B\r');
+  await waitFor(() => screen().includes('Steer driver now'), 'queued message actions');
+  terminal.write('\x1b[B\r');
   await waitFor(async () => (await detail()).queue.items.length === 0, 'queued item removed');
   await waitFor(() => screen().includes('Ask Lite to do'), 'composer after queue removal');
   await waitFor(() => !screen().includes('×') && !screen().includes('Updating queue') && screen().includes('Ask Lite to do'), 'queue action finished');

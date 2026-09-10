@@ -2,7 +2,7 @@ import type { Session } from '../shared/types.js';
 import { architectureWorker } from '../shared/architectures.js';
 import type { Store } from './store.js';
 
-export type WorkspaceSelection = Pick<Session,'providerId'|'model'|'architecture'|'planner'|'modelReasoning'|'outputStyle'>;
+export type WorkspaceSelection = Pick<Session,'providerId'|'model'|'architecture'|'planner'|'modelReasoning'|'outputStyle'> & { permissionMode?: Session['permissionMode']; setupComplete?: boolean };
 export class WorkspacePreferences {
   constructor(private store: Store) {store.db.exec('CREATE TABLE IF NOT EXISTS workspace_preferences (workspace TEXT PRIMARY KEY, data TEXT NOT NULL);');}
   get(workspace: string): Partial<WorkspaceSelection> {
@@ -17,6 +17,8 @@ export class WorkspacePreferences {
   }
   save(workspace: string, selection: WorkspaceSelection) {
     const {providerId,model,architecture,planner,modelReasoning,outputStyle}=selection;
-    this.store.db.prepare('INSERT INTO workspace_preferences(workspace,data) VALUES(?,?) ON CONFLICT(workspace) DO UPDATE SET data=excluded.data').run(workspace,JSON.stringify({providerId,model,architecture,planner,modelReasoning,outputStyle}));
+    const permissionMode=selection.permissionMode ?? this.get(workspace).permissionMode;
+    const setupComplete=selection.setupComplete ?? this.get(workspace).setupComplete;
+    this.store.db.prepare('INSERT INTO workspace_preferences(workspace,data) VALUES(?,?) ON CONFLICT(workspace) DO UPDATE SET data=excluded.data').run(workspace,JSON.stringify({providerId,model,architecture,planner,modelReasoning,outputStyle,permissionMode,setupComplete}));
   }
 }

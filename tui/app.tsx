@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { useBlur, useFocus, useKeyboard, useRenderer, useSelectionHandler, useTerminalDimensions } from '@opentui/react';
 import type { TextareaRenderable } from '@opentui/core';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -22,6 +22,9 @@ import { FilePicker } from './files.js';
 import { attachmentFromFile, editDraft, openShell, suspendTerminal } from './terminalIO.js';
 import { Changes, WorkInspector, WorkerInspector } from './inspectors.js';
 import { conversationGroups, usageDetails } from './conversation.js';
+import { Brand } from './brand.js';
+import { Onboarding } from './onboarding.js';
+import { workerLabels } from '../shared/worker-presentation.js';
 import { ModelSettings } from './models.js';
 import { GoalPanel, PlanPanel, HistoryPanel } from './sessionPanels.js';
 import { SettingsPanel } from './settings.js';
@@ -35,7 +38,7 @@ export const LOADING_DOT_MS = 3000;
 function LoadingScreen() {
   const theme = useTheme(), [visible, setVisible] = useState(false);
   useEffect(() => { const timer = setTimeout(() => setVisible(true), LOADING_GRACE_MS); return () => clearTimeout(timer); }, []);
-  return <box flexGrow={1} justifyContent="center" alignItems="center"><text fg={toHex(theme.textMuted)}>{visible ? 'Connecting to Lite…' : ''}</text></box>;
+  return <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column">{visible && <><Brand /><box marginTop={1} flexDirection="row" gap={1}><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>Connecting to Lite…</text></box></>}</box>;
 }
 
 function Composer({ controller, focused, onSubmit, onReference }: { controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void }) {
@@ -99,15 +102,22 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   const sessions = () => setPanel(<Sessions controller={controller} onClose={close} />);
   const queue = () => {
     const current = controller.getState().sync.detail?.queue;
-    menu('Queued messages', [{ id: 'toggle', label: current?.paused ? 'Resume queue' : 'Pause queue', description: current?.reason, action: () => { close(); run(() => controller.queue(current?.paused ? 'resume' : 'pause')); } }, ...(current?.items ?? []).map(item => ({ id: item.id, label: terminalText(item.content), description: 'Select to remove this queued message', action: () => { close(); run(() => controller.queue('remove', item.id)); } }))]);
+    menu('Queued messages', [{ id: 'toggle', label: current?.paused ? 'Resume queue' : 'Pause queue', description: current?.reason, action: () => { close(); run(() => controller.queue(current?.paused ? 'resume' : 'pause')); } }, ...(current?.items ?? []).map(item => ({ id: item.id, label: terminalText(item.content), description: 'Steer the driver or remove from queue', action: () => menu('Queued message', [{id:'steer',label:'Steer driver now',disabled:!isRunning(controller.detail) || Boolean(item.attachments?.length),action:()=>{close();run(()=>controller.steerQueued(item.id));}},{id:'remove',label:'Remove from queue',action:()=>{close();run(()=>controller.queue('remove',item.id));}}]) }))]);
   };
+  const permissions = () => menu('Permissions', [
+    { id: 'ask', label: `${controller.detail?.session.permissionMode === 'ask' ? '●' : '○'} Ask first`, description: 'Review actions; remember tools you trust for this session.', action: () => { close(); run(() => controller.permissionMode('ask')); } },
+    { id: 'auto', label: `${controller.detail?.session.permissionMode === 'auto' ? '●' : '○'} Allow all tools`, description: 'This session and its workers. Explicit ask/deny rules still apply.', action: () => { close(); run(() => controller.permissionMode('auto')); } },
+    { id: 'settings', label: 'Rules and defaults', action: () => openSettings() },
+  ]);
   const openSettings = () => setPanel(<SettingsPanel controller={controller} onClose={close} />);
   const openModels = () => {
     if (!controller.detail || !controller.getState().settings) return;
     controller.configurationReady();
     setPanel(<ModelSettings controller={controller} initial={controller.detail.session} settings={controller.getState().settings!} onClose={close} onProviders={() => setPanel(<Providers controller={controller} onClose={close} />)} />);
   };
-  const inspect = (steps: Message[]) => { if (controller.detail) setPanel(<WorkInspector controller={controller} steps={steps} detail={controller.detail} onClose={close} />); };
+  const openSetup = () => { controller.configurationReady(); if (controller.detail) setPanel(<Onboarding controller={controller} initial={controller.detail.session} onClose={close} />); };
+  const inspect = useCallback((steps: Message[]) => { if (controller.detail) setPanel(<WorkInspector controller={controller} steps={steps} detail={controller.detail} onClose={() => setPanel(null)} />); }, [controller]);
+  const showUsage = useCallback((message: Message, usage?: import('../shared/types.js').Usage) => setPanel(<TextViewer title="Turn usage" text={usageDetails(message, usage)} onClose={() => setPanel(null)} />), []);
   const attach = (filename: string) => controller.action('Attaching file', async () => {
     const current = controller.getState().draft;
     if (current.attachments.length >= 10) throw new Error('A message can have up to 10 attachments.');
@@ -145,11 +155,13 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'goal', label: 'Session goal', description: 'Set an objective and a turn limit', action: () => setPanel(<GoalPanel controller={controller} onClose={close} />) },
     { id: 'todos', label: 'Task list', description: 'Follow the agent’s plan and progress', action: () => setPanel(<PlanPanel controller={controller} onClose={close} />) },
     { id: 'changes', label: 'Review changed files', description: 'Recorded file edits and diffs', action: () => setPanel(<Changes controller={controller} onClose={close} />) },
-    { id: 'work', label: 'Inspect response steps', description: 'Thinking, commands, outputs, and worker assignments', action: () => menu('Response turns', conversationGroups(controller.detail!).filter(group => group.startsRun).reverse().map((group, index) => ({ id: group.message.id, label: group.steps.find(message => message.content)?.content.slice(0, 100) || `Response ${index + 1}`, description: `${group.steps.flatMap(message => message.toolCalls ?? []).length} steps`, action: () => inspect(group.steps) }))) },
-    { id: 'workers', label: 'Worker assignments', description: 'Brief, report, evidence, and invocation transcript', action: () => menu('Worker assignments', (controller.detail?.delegations ?? []).map(task => ({ id: task.id, label: task.description, description: `${task.role ?? 'research'} · ${task.status}`, action: () => setPanel(<WorkerInspector controller={controller} invocation={task} onClose={close} />) }))) },
+    { id: 'work', label: 'Inspect response steps', description: 'Thinking, commands, outputs, and worker assignments', action: () => menu('Response turns', conversationGroups(controller.detail!).filter(group => group.steps.some(message => message.reasoning || message.toolCalls?.length)).reverse().map((group, index) => ({ id: group.message.id, label: group.steps.find(message => message.content)?.content.slice(0, 100) || `Response ${index + 1}`, description: `${group.steps.flatMap(message => message.toolCalls ?? []).length} steps`, action: () => inspect(group.steps) }))) },
+    { id: 'workers', label: 'Worker assignments', description: 'Brief, report, evidence, and invocation transcript', action: () => menu('Worker assignments', (controller.detail?.delegations ?? []).map(task => ({ id: task.id, label: `${workerLabels(controller.detail!).get(`${task.parentMessageId}:${task.toolCallId}`) || 'Research'} · ${task.description}`, description: `${task.role ?? 'research'} · ${task.status}`, action: () => setPanel(<WorkerInspector controller={controller} invocation={task} onClose={close} />) }))) },
     { id: 'fork', label: 'Fork session', description: 'Continue from a copy of this conversation', disabled: busy, action: () => { close(); run(() => controller.fork()); } },
     { id: 'compact', label: 'Compact context', description: 'Summarize earlier context for the next response', disabled: busy, action: () => { close(); run(() => controller.action('Compacting context', () => controller.client.api(controller.path('/compact'), {}))); } },
+    { id: 'setup', label: 'Set up Lite', description: 'A quick guide to architecture, models, and permissions', disabled: busy, action: () => run(openSetup) },
     { id: 'models', label: 'Choose models', description: 'Architecture, driver, worker, planner, and output style', disabled: busy, action: () => run(openModels) },
+    { id: 'permissions', label: 'Permissions', description: 'Ask first or allow all tools, including workers', action: permissions },
     { id: 'settings', label: 'Settings', description: 'Providers, project profiles, permissions, integrations, and usage', action: openSettings },
     { id: 'sessions', label: 'Sessions', description: 'Switch sessions or start a new one', action: () => run(sessions) },
     { id: 'new', label: 'New session', description: 'Keep this session and its draft', action: () => { close(); run(() => controller.create(detail?.session.workspace ?? process.cwd())); } },
@@ -185,7 +197,15 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     }
     run(() => controller.send());
   };
-  useEffect(() => { if (detail && !detail.session.model && state.settings) run(openModels); }, [detail?.session.id, Boolean(state.settings)]);
+  const setupSeen = useRef(new Set<string>());
+  useEffect(() => {
+    if (!detail || !state.settings || detail.messages.length || busy || setupSeen.current.has(detail.session.workspace)) return;
+    const workspace = detail.session.workspace; let live = true;
+    void controller.client.api<{setupComplete?:boolean}>(`/workspace-preferences?workspace=${encodeURIComponent(workspace)}`).then(preferred => {
+      if (live && !preferred.setupComplete && !isRunning(controller.detail) && !controller.detail?.messages.length) { setupSeen.current.add(workspace); openSetup(); }
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [detail?.session.id, Boolean(state.settings)]);
   useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   useKeyboard(key => {
     if (key.defaultPrevented) return;
@@ -214,11 +234,13 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     const command = commands.find(item => item.id === KEY_COMMANDS[result.command ?? '']);
     if (command && !command.disabled) command.action();
   });
+  const activeWorkers = detail?.delegations?.filter(task => task.status === 'running') ?? [];
+  const actor = activeWorkers.length > 1 ? `${activeWorkers.length} ${activeWorkers.every(task => task.role === 'expert') ? 'experts' : 'workers'}` : activeWorkers.length ? workerLabels(detail!).get(`${activeWorkers[0].parentMessageId}:${activeWorkers[0].toolCallId}`) || 'Research' : 'Driver';
   const model = detail ? effectiveModel(detail.session) : null;
   return <TranscriptSettingsProvider value={settings}><box width="100%" height="100%" flexDirection="column" backgroundColor={toHex(theme.background)}>
     {detail ? <>
-      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{model?.model.slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><InterruptHint pressed={escPressed} /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
-      <Transcript detail={detail} width={width} active={!panel && !permission && !question} onInspect={inspect} onUsage={(message, usage) => setPanel(<TextViewer title="Turn usage" text={usageDetails(message, usage)} onClose={close} />)} />
+      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{model?.model.slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>{` ${actor} `}</text><InterruptHint pressed={escPressed} /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
+      <Transcript controller={controller} detail={detail} width={width} active={!panel && !permission && !question} onInspect={inspect} onUsage={showUsage} />
       {detail.history?.pendingRecovery && <box border borderColor={toHex(theme.warning)}><text fg={toHex(theme.warning)}>History needs recovery. Your draft is saved. </text><Button onPress={() => run(() => controller.history('recover'))}>Recover history</Button></box>}
       {detail.session.goal && ['active', 'blocked'].includes(detail.session.goal.status) && <box height={1} flexShrink={0}><Button onPress={() => setPanel(<GoalPanel controller={controller} onClose={close} />)}>{`Goal ${detail.session.goal.status} · ${detail.session.goal.turns}/${detail.session.goal.maxTurns} turns · ${terminalText(detail.session.goal.text).slice(0, Math.max(10, width - 36))}`}</Button></box>}
       {detail.queue?.items.length ? <box flexDirection="row" height={1}><Button onPress={queue}>{`${detail.queue.items.length} queued · ${detail.queue.paused ? 'paused' : 'will run next'}`}</Button></box> : null}
@@ -226,7 +248,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
     </> : state.sync.phase === 'error' ? <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column"><text fg={toHex(theme.error)}>{state.sync.error}</text><Button onPress={() => run(() => controller.open(controller.sessionId))}>Reconnect</Button><Button onPress={palette}>Commands</Button></box> : <LoadingScreen />}
     {(state.notice || pendingLeader || state.sync.connection === 'reconnecting') && <text paddingLeft={1} fg={toHex(theme.warning)}>{terminalText(pendingLeader ? 'Leader…' : state.notice || 'Reconnecting… Showing the last known state.').slice(0, width - 2)}</text>}
-    <box height={1} flexDirection="row" flexShrink={0}><Button onPress={palette}>Ctrl+P Commands</Button><Button onPress={openSettings}>Settings</Button><text fg={toHex(theme.textMuted)}>{state.pending ? `${state.pending}…` : permission || question ? 'Choose an answer above · Esc Esc stop' : 'Enter send · Shift+Enter newline'}</text></box>
+    <box height={1} flexDirection="row" flexShrink={0}><Button onPress={palette}>Ctrl+P Commands</Button><Button onPress={permissions}>{detail?.session.permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}</Button><Button onPress={openSettings}>Settings</Button><text fg={toHex(theme.textMuted)}>{state.pending ? `${state.pending}…` : permission || question ? 'Choose an answer above · Esc Esc stop' : 'Enter send · Shift+Enter newline'}</text></box>
     {panel}
   </box></TranscriptSettingsProvider>;
 }

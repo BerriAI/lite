@@ -1,6 +1,6 @@
 # Lite
 
-A local coding agent for your terminal and browser, built around **multi-model workflows**. Use one model or combine a driver with sidekicks, workers, or experts. Follow their work, approve changes, and review the result in one conversation.
+A local coding agent for your terminal and browser, built around **multi-model workflows**. Use one model or combine a driver with sidekicks, workers, or experts. Follow their work, approve changes, and review the result in one conversation. Pairing models lets a faster, cheaper model handle routine work while a stronger model handles planning or difficult tasks, which can reduce cost and wait time.
 
 Connect through LiteLLM, OpenAI-compatible APIs, native Anthropic, or ChatGPT device sign-in. Your project stays on your machine; prompts and selected context go to your chosen provider.
 
@@ -25,9 +25,9 @@ lite
 
 That directory becomes your workspace. Lite starts its local backend automatically. Keep the cloned checkout in place: `npm link` points the command to it.
 
-1. Open **Settings → Providers** and connect a provider.
-2. Open **Models**, choose an architecture, and select its models.
-3. Type a task. **Build** asks before edits and commands; **Plan** uses read-only tools. **Ctrl+P** opens terminal commands and navigation.
+1. Follow **Set up Lite** to choose an architecture and its models. Connect a provider there if needed.
+2. Choose **Ask first** or **Allow all tools**. Setup is remembered for this workspace in both clients; reopen it from the web sidebar or `/setup`.
+3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. **Ctrl+P** opens terminal commands and navigation.
 
 See the [terminal guide](docs/tui.md) for shortcuts, resuming sessions, and configuration.
 

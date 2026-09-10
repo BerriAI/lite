@@ -1,5 +1,6 @@
+import { WorkspacePreferences } from '../server/workspace-preferences.js';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer as createViteServer } from 'vite';
@@ -8,7 +9,7 @@ import { createApp } from '../server/app.js';
 import { attachTerminals } from '../server/terminal.js';
 import { McpManager } from '../server/mcp.js';
 
-const root=await mkdtemp(join(tmpdir(),'lite-e2e-'));
+const root=await realpath(await mkdtemp(join(tmpdir(),'lite-e2e-')));
 await mkdir(join(root,'src'));await writeFile(join(root,'src','hello.ts'),'export const hello = "world";\n');await writeFile(join(root,'README.md'),'# Fixture project\nA small project for browser tests.\n');
 let providerRequests=0;
 const profileRequests:{model:string;messages:any[];tools:any[]}[]=[];
@@ -160,6 +161,7 @@ const mock=createServer(async(req,res)=>{
 await new Promise<void>(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const store=new Store(join(root,'state'));
 store.saveSettings({workspace:root,providers:[{id:'fixture',name:'Test gateway',kind:'openai',baseUrl:`http://127.0.0.1:${(mock.address() as any).port}`,apiKey:'fixture-key'}],defaultProvider:'fixture',defaultModel:'test-model'});
+new WorkspacePreferences(store).save(root,{providerId:'fixture',model:'test-model',setupComplete:process.env.LITE_E2E_ONBOARDING !== '1'});
 const mcp=new McpManager(()=>store.settings().mcpServers);
 const{app,runner}=createApp({store,external:mcp});
 app.get('/fixture/requests',(_req,res)=>res.json({count:providerRequests}));

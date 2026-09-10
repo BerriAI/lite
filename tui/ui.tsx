@@ -34,7 +34,8 @@ export function Menu({ title, items, onClose, search = true, footer }: { title: 
   const filtered = items.filter(item => `${item.label} ${item.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
   const selected = Math.min(index, Math.max(0, filtered.length - 1));
   const size = (item: MenuItem) => 1 + Number(Boolean(item.description)) + Number(Boolean(item.separatorBefore));
-  const budget = Math.max(1, height - (search ? 12 : 10));
+  const footerRows = Math.ceil((footer?.length ?? 35) / Math.max(8, Math.min(width - 12, 66)));
+  const budget = Math.max(1, height - (search ? 13 : 12) - Math.max(0, footerRows - 1));
   let start = selected, used = size(filtered[selected] ?? { id: '', label: '', action() {} });
   while (start > 0 && used + size(filtered[start - 1]) <= budget) used += size(filtered[--start]);
   let end = selected + 1;

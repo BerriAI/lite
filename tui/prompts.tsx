@@ -8,6 +8,7 @@ import { toHex } from './theme.js';
 import { createTwoFilesPatch } from 'diff';
 import { Button, Dialog, TextViewer } from './ui.js';
 import { terminalText } from './protocol.js';
+import { workerLabels } from '../shared/worker-presentation.js';
 
 export function PermissionPrompt({ request, controller, disabled, onOverlayChange, active = true }: { request: PermissionRequest; controller: TerminalController; disabled: boolean; active?: boolean; onOverlayChange: (open: boolean) => void }) {
   const theme = useTheme(), { height } = useTerminalDimensions(), [preview, setPreview] = useState(false), [previewText, setPreviewText] = useState('');
@@ -20,13 +21,10 @@ export function PermissionPrompt({ request, controller, disabled, onOverlayChang
         let before = '';
         const root = controller.detail!;
         let workspace = root.session.workspace;
-        // Public permissions belong to the root, even when an isolated child
-        // requested the edit. Match the tool in its scoped invocation view.
-        if (!root.messages.some(message => message.toolCalls?.some(call => call.id === request.toolCallId))) {
-          for (const invocation of root.delegations?.filter(item => item.status === 'running') ?? []) {
-            const child = await controller.client.api<import('../shared/types.js').DelegationDetail>(controller.path(`/delegations/${encodeURIComponent(invocation.id)}`));
-            if (child.messages.some(message => message.toolCalls?.some(call => call.id === request.toolCallId))) { workspace = child.session.workspace; break; }
-          }
+        if (request.invocationId) {
+          const child = await controller.client.api<import('../shared/types.js').DelegationDetail>(controller.path(`/delegations/${encodeURIComponent(request.invocationId)}`));
+          if (child.delegation.id !== request.invocationId || child.delegation.parentSessionId !== root.session.id) throw new Error('Worker could not be verified.');
+          workspace = child.session.workspace;
         }
         try { before = (await controller.client.api<{ content: string }>(`/file?workspace=${encodeURIComponent(workspace)}&path=${encodeURIComponent(args.path as string)}`)).content; }
         catch (error) { if (request.tool !== 'write_file' || (error as { status?: number }).status !== 404) throw error; }
@@ -44,16 +42,23 @@ export function PermissionPrompt({ request, controller, disabled, onOverlayChang
   const decide = (decision: 'allow' | 'always' | 'deny') => { if (!disabled) void controller.decide(request, decision); };
   useKeyboard(key => {
     if (!active || key.defaultPrevented || preview) return;
-    const decision = key.name === '1' ? 'allow' : key.name === '2' ? 'always' : key.name === '3' ? 'deny' : null;
+    if (key.name === '4' && request.ruleMatch?.decision !== 'ask') { key.preventDefault(); key.stopPropagation(); if (!disabled) void controller.permissionMode('auto'); return; }
+    const decision = key.name === '1' ? 'allow' : key.name === '2' && request.ruleMatch?.decision !== 'ask' ? 'always' : key.name === '3' ? 'deny' : null;
     if (decision || (key.ctrl && key.name === 'f')) { key.preventDefault(); key.stopPropagation(); if (decision) decide(decision); else setPreview(true); }
   });
+  const parent = controller.detail, task = parent?.delegations?.find(task => task.id === request.invocationId);
+  const actor = task && parent ? workerLabels(parent).get(`${task.parentMessageId}:${task.toolCallId}`) || 'Research' : 'Driver';
   const summary = terminalText(request.description || request.tool, true);
+  const forced = request.ruleMatch?.decision === 'ask';
   const args = terminalText(JSON.stringify(request.args, null, 2), true);
   return <><box border borderColor={toHex(theme.warning)} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0}>
     <text fg={toHex(theme.warning)}><strong>Permission requested · {request.tool}</strong></text>
-    <text height={1} fg={toHex(theme.text)}>{summary.slice(0, 300)}</text>
+    <text fg={toHex(theme.textMuted)}>{actor}{forced ? ` · ${request.ruleMatch!.source} rule requires approval each time` : request.scopePath ? ' · this exact path' : ' · this session, including its workers'}</text>
+    <text height={height < 20 ? 1 : 2} fg={toHex(theme.text)}>{summary.slice(0, 300)}</text>
     <text height={height < 20 ? 1 : 3} fg={toHex(theme.textMuted)}>{args.split('\n').slice(0, 3).join('\n')}</text>
-    <box flexDirection="row" gap={1}><Button disabled={disabled} onPress={() => decide('allow')}>1 Allow once</Button><Button disabled={disabled} onPress={() => decide('always')}>2 Always</Button><Button disabled={disabled} onPress={() => decide('deny')}>3 Deny</Button><Button onPress={() => setPreview(true)}>Ctrl+F Details</Button></box>
+    <box flexDirection="row" gap={1}><Button disabled={disabled} onPress={() => decide('allow')}>1 Allow once</Button>{!forced && <Button disabled={disabled} onPress={() => decide('always')}>{request.scopePath ? '2 Allow at this path' : '2 Allow this tool'}</Button>}<Button disabled={disabled} onPress={() => decide('deny')}>3 Deny</Button></box>
+    {forced && <Button onPress={() => setPreview(true)}>Ctrl+F Details</Button>}
+    {!forced && <box flexDirection="row"><Button disabled={disabled} onPress={() => { void controller.permissionMode('auto'); }}>4 Allow all tools</Button><text fg={toHex(theme.textMuted)}>For this session</text><Button onPress={() => setPreview(true)}>Ctrl+F Details</Button></box>}
   </box>
     {preview && <Dialog title={`Review ${request.tool}`} onClose={() => setPreview(false)}><scrollbox height={Math.max(4, height - 10)} focused><text fg={toHex(theme.text)}>{previewText + '\n\n' + summary + '\n\n' + args}</text></scrollbox></Dialog>}
   </>;
