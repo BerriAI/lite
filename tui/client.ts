@@ -13,7 +13,7 @@ export class LiteClient {
   async api<T>(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
     const response = await fetch(`${this.base}/api${path}`, {
       method: method ?? (body === undefined ? 'GET' : 'POST'),
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Lite-Client': 'terminal' },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal ?? AbortSignal.timeout(30000),
     });

@@ -1,3 +1,4 @@
+import { clientSurface } from '../shared/client.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { WorkspacePreferences } from './workspace-preferences.js';
 import { architectureWorker } from '../shared/architectures.js';
@@ -268,28 +269,28 @@ export function createApp(options:AppOptions = {}) {
     const heartbeat=setInterval(()=>res.write(': heartbeat\n\n'),15000);heartbeat.unref();
     req.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });
-  const snapshotInput=async(id:string,body:unknown)=>{
+  const snapshotInput=async(id:string,body:unknown,surface:unknown)=>{
     const input=inputSchema.parse(body),session=store.session(id);
     for(const attachment of input.attachments||[])if(attachment.path){const file=await readFile(session.workspace,attachment.path);attachment.content=file.content.slice(0,50000)+(file.truncated?'\n[Attachment truncated]':'');}
-    return input;
+    return {...input,clientSurface:clientSurface(surface)};
   };
   app.post('/api/sessions/:id/messages',async(req,res)=>{
-    const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body));
+    const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Lite-Client')));
     res.status(202).json({ok:true,messageId});
   });
   app.get('/api/sessions/:id/queue',(req,res)=>res.json(store.queue(req.params.id)));
   app.post('/api/sessions/:id/queue',async(req,res)=>{
-    const queue=await runner.submitQueued(req.params.id,()=>snapshotInput(req.params.id,req.body));
+    const queue=await runner.submitQueued(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Lite-Client')));
     res.status(202).json(queue);
   });
   app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
-  app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId)));
+  app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId,clientSurface(req.get('X-Lite-Client')))));
   // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
   // is delivered between steps of the ACTIVE response. Child ids are already
   // rejected by the app-level child guard above; the runner 409s when idle.
   app.post('/api/sessions/:id/steer',(req,res)=>{
     const {content}=z.object({content:z.string().trim().min(1).max(4000)}).parse(req.body);
-    runner.steer(req.params.id,content);
+    runner.steer(req.params.id,content,undefined,clientSurface(req.get('X-Lite-Client')));
     res.status(202).json({ok:true});
   });
   // GOAL MODE: set one session objective pursued across host-continued turns.

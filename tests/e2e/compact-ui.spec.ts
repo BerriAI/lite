@@ -80,7 +80,7 @@ for (const width of [1280, 390]) {
     const answer = 'This repository contains **AI model-routing and agent experiments**.\n\n| Folder | What’s inside |\n| --- | --- |\n| `harness-planner-executor/` | A planner → executor → validator agent loop using the Claude Agent SDK |\n| `router/` | Mid-session model switching, with a web configuration UI |\n| `oc-router/` | Model-routing experiments built as an OpenCode plugin |\n| `proxy/` | An HTTP proxy that classifies conversations and rewrites the requested model |\n| `bot-loop/` | Tests whether repository knowledge reduces review iterations |\n| `caveats/` | A taxonomy of failure patterns mined from LiteLLM PR reviews |\n| `ux/` | A protocol for evaluating the agent experience |\n\n**THOUGHTS.md** collects auto-routing ideas. The root **README.md** describes the experiments, but references a `practice/` folder that is no longer present.\n\nI only inspected files; nothing changed or ran.';
     const result = await request.post('/api/sessions/import', { data: { session: { title: 'Repository overview', providerId: 'fixture', model: 'test-model' }, messages: [
       { id: 'u', role: 'user', content: 'Give me an overview of this repository.', createdAt: 1 },
-      { id: 'steps', role: 'assistant', content: '', createdAt: 2, toolCalls: [{ id: 't1', name: 'sidekick', args: { description: 'Inspect repository overview' }, status: 'completed', output: 'Repository overview report.' }, { id: 't2', name: 'read_file', args: { path: 'README.md' }, status: 'completed', output: '# Experiments' }] },
+      { id: 'steps', role: 'assistant', content: 'I’ll inspect the repository first.', createdAt: 2, toolCalls: [{ id: 't1', name: 'sidekick', args: { description: 'Inspect repository overview' }, status: 'completed', output: 'Repository overview report.' }, { id: 't2', name: 'read_file', args: { path: 'README.md' }, status: 'completed', output: '# Experiments' }] },
       { id: 'answer', role: 'assistant', content: answer, createdAt: 3 },
     ] } });
     expect(result.ok()).toBe(true); const session = await result.json();
@@ -93,7 +93,9 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole('combobox', { name: 'Agent mode', exact: true })).toHaveValue('build');
     await expect(page.locator('.markdown table')).toBeVisible();
     const answerBounds = await page.locator('.markdown').last().boundingBox(), stepsBounds = await page.locator('.work-log').boundingBox();
-    expect(stepsBounds!.y).toBeGreaterThanOrEqual(answerBounds!.y + answerBounds!.height);
+    const introBounds = await page.getByText('I’ll inspect the repository first.', { exact: true }).boundingBox();
+    expect(stepsBounds!.y).toBeGreaterThanOrEqual(introBounds!.y + introBounds!.height);
+    expect(answerBounds!.y).toBeGreaterThanOrEqual(stepsBounds!.y + stepsBounds!.height);
     await page.locator('.conversation-scroll').evaluate(el => { el.scrollTop = 0; });
     await page.screenshot({ path: `/tmp/lite-clean-overview-${width}.png`, animations: 'disabled' });
     await page.locator('.work-log > summary').click();

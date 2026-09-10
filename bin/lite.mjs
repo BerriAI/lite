@@ -89,7 +89,7 @@ function terminalText(value, multiline = false) {
 
 async function api(path, body, signal, method) {
   const response = await fetch(`${base}/api${path}`, {
-    method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json' },
+    method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', 'X-Lite-Client': 'cli' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: signal ?? AbortSignal.timeout(30000),
   });
   let data;

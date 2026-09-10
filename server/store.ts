@@ -1,3 +1,4 @@
+import type { ClientSurface } from '../shared/client.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -350,10 +351,10 @@ export class Store {
     this.db.prepare('INSERT INTO queues(session_id,data) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET data=excluded.data').run(id,JSON.stringify(queue));
     return queue;
   }
-  enqueue(id: string, content: string, attachments: Attachment[], active: boolean): QueueState {
+  enqueue(id: string, content: string, attachments: Attachment[], active: boolean, clientSurface?: ClientSurface): QueueState {
     const queue=this.queue(id);
     if(queue.items.length>=20)throw Object.assign(new Error('Queue is full (20 messages). Remove an item before adding another.'),{status:409});
-    const item:QueuedMessage={id:randomUUID(),sessionId:id,content,attachments,createdAt:Date.now()};
+    const item:QueuedMessage={id:randomUUID(),sessionId:id,content,attachments,createdAt:Date.now(),...(clientSurface?{clientSurface}:{})};
     const next:QueueState={...queue,items:[...queue.items,item]};
     // Explicit Pause holds future items too, even after all existing items are removed.
     if(!queue.items.length&&!queue.manualPause){next.paused=!active;next.reason=active?undefined:'Ready when you are. Resume to send queued messages.';}

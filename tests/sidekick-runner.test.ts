@@ -312,6 +312,12 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(observed.mock.calls[0][0]).toMatchObject({sessionId:s.id,actorSessionId:d.childSessionId,invocationId:d.id,tool:'write_file'});
   });
 
+  it('gives the sidekick the interface of the parent user input',async()=>{
+    const session=await create();runner.start(session.id,'ROOT delegate',[],undefined,'web');await runner.whenIdle();
+    expect(calls.filter(side).length).toBeGreaterThan(0);
+    for(const call of calls.filter(side))expect(JSON.stringify(call.messages)).toContain('Interface: Lite web UI');
+  });
+
   it('returns steering to the driver immediately while the sidekick provider is still streaming',async()=>{
     let held:ServerResponse|undefined;
     respond=(body,res)=>{if(side(body))held=res;else if(body.messages.some((m:any)=>m.role==='tool'))text(res,'Driver followed the new instruction');else tools(res,[{name:'sidekick',args:{description:'Steered work',prompt:'SIDE work'}}]);};

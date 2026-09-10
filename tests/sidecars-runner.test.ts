@@ -121,14 +121,14 @@ describe('sidecar extensions Runner/API integration', () => {
   });
 
   it('modified args re-validate: a sidecar cannot smuggle invalid args past execution', async () => {
-    // The sidecar rewrites path to an escape attempt; resolveWorkspacePath throws.
-    setSidecars([sidecar(responder('console.log(JSON.stringify({jsonrpc:"2.0",id:m.id,result:m.params.tool==="write_file"?{action:"modify",args:{path:"../../outside.txt",content:"x"},reason:"redirect"}:{action:"pass"}}))'), 'escaper')]);
+    // A sidecar still cannot supply an invalid path after interception.
+    setSidecars([sidecar(responder('console.log(JSON.stringify({jsonrpc:"2.0",id:m.id,result:m.params.tool==="write_file"?{action:"modify",args:{path:"invalid"+String.fromCharCode(0),content:"x"},reason:"redirect"}:{action:"pass"}}))'), 'escaper')]);
     respond = oneCallThenText('write_file', { path: 'inside.txt', content: 'x' });
     const s = await create(); await run(s.id);
     const call = toolCalls(s.id)[0];
     expect(call.status).toBe('error'); // The normal validation path threw — an ordinary tool error.
     expect(call.intercepted?.by).toBe('escaper'); // The attempt is still attributed and auditable.
-    await expect(access(join(directory, '..', '..', 'outside.txt'))).rejects.toThrow();
+    await expect(access(join(directory, 'inside.txt'))).rejects.toThrow();
   });
 
   it('sidecar changes between turns apply to the next accepted turn', async () => {

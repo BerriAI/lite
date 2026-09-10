@@ -104,6 +104,8 @@ const mock=createServer(async(req,res)=>{
     else{
       const command=/RUN_COMMAND\[(.+?)\]/.exec(prompt)?.[1];const target=/WRITE_PATH\[(.+?)\]/.exec(prompt)?.[1];
       const calls=[];if(command)calls.push({index:calls.length,id:'rules-bash',type:'function',function:{name:'bash',arguments:JSON.stringify({command})}});
+      const readTarget=/READ_PATH\[(.+?)\]/.exec(prompt)?.[1];
+      if(readTarget)calls.push({index:calls.length,id:'rules-read',type:'function',function:{name:'read_file',arguments:JSON.stringify({path:readTarget})}});
       if(target)calls.push({index:calls.length,id:'rules-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:target,content:'Rule-governed write.\n'})}});
       if(calls.length){toolCall=true;emit({tool_calls:calls});}else emit({content:'No rule-governed call was requested.'});
     }

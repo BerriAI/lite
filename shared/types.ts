@@ -1,3 +1,4 @@
+import type { ClientSurface } from './client.js';
 import type { HistoryState } from './history.js';
 import type { DelegationSummary } from './delegation.js';
 export type { DelegationSummary, DelegationStatus, DelegationDetail } from './delegation.js';
@@ -81,15 +82,15 @@ export interface ToolCall { changes?: FileChange[]; delegationId?: string; ruleM
    * in the transcript and visibly attributed on the activity card. */
   intercepted?: { by: string; originalArgs: Record<string,unknown>; reason: string }; }
 export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
-export interface Message { turnId?: string; turnUsage?: import('./usage.js').TurnUsage; context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
+export interface Message { clientSurface?: ClientSurface; turnId?: string; turnUsage?: import('./usage.js').TurnUsage; context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
   /** Host-computed end-of-turn evidence account. Only on the FINAL assistant message of a completed root turn; observation only, never persisted for children. */
   receipts?: TurnReceipts; }
 export interface Usage { inputTokens: number; outputTokens: number; cachedTokens?: number; cost?: number; durationMs?: number; }
 export interface Todo { id: string; content: string; status: 'pending' | 'in_progress' | 'completed'; }
-export interface PermissionRequest { id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }
+export interface PermissionRequest { scopePath?: string; id: string; sessionId: string; toolCallId: string; tool: string; args: Record<string,unknown>; description: string; }
 export interface FileEntry { name: string; path: string; type: 'file' | 'directory'; size?: number; }
 export interface FileChange { path: string; before: string | null; after: string | null; actorSessionId?: string; invocationId?: string; }
-export interface QueuedMessage { id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }
+export interface QueuedMessage { clientSurface?: ClientSurface; id: string; sessionId: string; content: string; attachments: Attachment[]; createdAt: number; }
 export interface QueueState { items: QueuedMessage[]; paused: boolean; reason?: string; manualPause?: boolean; }
 export interface BackgroundJob { id: string; command: string; status: 'running' | 'exited' | 'killed' | 'failed'; pid?: number; startedAt: number; endedAt?: number; exitCode?: number; signal?: string; timedOut: boolean; truncated: boolean; }
 export interface SessionDetail { delegations?: DelegationSummary[]; lastEventId?: number; session: Session; messages: Message[]; todos: Todo[]; permissions: PermissionRequest[]; questions?: QuestionRequest[]; queue?: QueueState; history?: HistoryState; jobs?: BackgroundJob[]; }

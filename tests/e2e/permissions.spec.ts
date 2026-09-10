@@ -149,3 +149,18 @@ test('the settings editor saves rules that then govern a real run', async ({ pag
   expect(await permission(page).count()).toBe(0);
   expect(toolResults(result).join('\n')).toContain('saved-from-editor');
 });
+
+
+test('an external read in Plan mode shows the resolved path and completes after approval', async ({page,request}) => {
+  expect((await rules(request, [])).ok()).toBe(true);
+  const project=join(workspace,'project'); await mkdir(project);
+  const session=await create(request,{workspace:project,mode:'plan'});await open(page,session);
+  await send(page,session,'RULES_BROWSER READ_PATH[../notes.txt]');
+  await expect(permission(page)).toContainText('Read outside this session’s workspace');
+  await expect(permission(page)).toContainText(join(workspace,'notes.txt'));
+  await expect(permission(page).getByRole('button',{name:'Always allow at this path',exact:true})).toBeVisible();
+  await page.reload();await expect(permission(page)).toBeVisible();
+  await permission(page).getByRole('button',{name:'Allow once',exact:true}).click();
+  const result=await done(request,session);expect(toolResults(result).join('\n')).toContain('Rule fixture file.');
+  await expect(permission(page)).toHaveCount(0);
+});
