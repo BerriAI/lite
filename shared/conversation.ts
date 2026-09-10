@@ -28,6 +28,6 @@ export function groupRuns(messages: Message[]) {
         ...(usage.length === run.length && usage.every(item => item.cost !== undefined) ? {cost:usage.reduce((sum,item)=>sum+item.cost!,0)} : {}),
       };
     }
-    return {message, startsRun, endsRun, closesTranscript:message.role==='assistant'&&keys[index]===keys.at(-1), runUsage, steps:startsRun?run:[]};
+    return {message, startsRun, endsRun, closesTranscript:message.role==='assistant'&&keys[index]===keys.at(-1), runUsage, workSteps:run, steps:startsRun?run:[]};
   });
 }

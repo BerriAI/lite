@@ -50,7 +50,8 @@ function server() {
   return { parents, calls, set child(value: DelegationDetail) { transcript = value; }, set intercept(value: typeof intercept) { intercept = value; } };
 }
 async function mountApp() { await act(async () => root().render(createElement(App))); }
-async function mountTranscript(value = task()) { const mounted = root(), onClose = vi.fn(); await act(async () => mounted.render(createElement(TaskTranscript, { task: value, onClose }))); return { root: mounted, onClose, render: async (next: DelegationSummary) => { await act(async () => mounted.render(createElement(TaskTranscript, { task: next, onClose }))); } }; }
+async function mountTranscript(value = task()) { const mounted = root(); await act(async () => mounted.render(createElement(TaskTranscript, { task: value }))); return { root: mounted, render: async (next: DelegationSummary) => { await act(async () => mounted.render(createElement(TaskTranscript, { task: next }))); } }; }
+async function expandSteps(open = true) { await act(async () => { const log = el<HTMLDetailsElement>('.work-log'); log.open = open; log.dispatchEvent(new Event('toggle', { bubbles: false })); }); }
 const region = () => el('[aria-label="Research task"]');
 const transcriptSource = () => Source.instances.find(source => source.url.startsWith(bound + '/events'))!;
 beforeEach(() => {
@@ -61,10 +62,10 @@ beforeEach(() => {
 afterEach(async () => { await act(async () => roots.splice(0).forEach(root => root.unmount())); vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('bound research task cards', () => {
-  it('shows exact private links, scope and status without launching anything on render', async () => {
+  it('loads the inline transcript on the first expansion without launching anything', async () => {
     const api = server(); await mountApp(); expect(region().querySelector('strong')?.title).toBe('Read-only research'); expect(region().textContent).not.toContain('parent response is waiting'); expect(region().textContent).toContain('Researching');
     expect(api.calls.every(call => call.method === 'GET')).toBe(true); expect(api.calls.some(call => call.path === bound)).toBe(false);
-    await press('Open transcript', region()); expect(el('[role="dialog"]').textContent).toContain('Research transcript'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0); expect(window.location.hash).toBe('#session/a');
+    await expandSteps(); expect(el('[aria-label="Research transcript"]').textContent).toContain('Reading research.txt.'); expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0); expect(window.location.hash).toBe('#session/a');
   });
   it.each(['no-summary', 'wrong-parent', 'wrong-message', 'wrong-tool', 'copied-id'] as const)('keeps %s task references inert', async variant => {
     const api = server(), value = api.parents.get('a')!;
@@ -75,12 +76,12 @@ describe('bound research task cards', () => {
     if (variant === 'copied-id') { delete value.messages[0].toolCalls![0].delegationId; value.messages[0].toolCalls![0].output = 'childSessionId=child-a delegationId=task-a'; }
     await mountApp(); expect(document.querySelector('[aria-label="Research task"]')).toBeNull(); expect(document.body.textContent).not.toContain('Open transcript'); expect(api.calls.some(call => call.path === bound)).toBe(false);
   });
-  it('preserves parent composer draft and attachment while child updates and closes', async () => {
+  it('preserves parent composer draft and attachment while child updates and collapses', async () => {
     const api = server(); localStorage.setItem('lite:draft:v1:a', JSON.stringify({ text: 'Next parent thought', attachments: [{ name: 'notes.txt', content: 'keep' }] }));
-    await mountApp(); await press('Open transcript', region());
+    await mountApp(); await expandSteps();
     await act(async () => transcriptSource().emit({ id: 21, sessionId: 'child-a', type: 'delta', data: { messageId: 'child-message', delta: ' Child progress.' } }));
-    expect(el('[role="dialog"]').textContent).toContain('Child progress.'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Next parent thought');
-    await click('[aria-label="Close dialog"]'); expect(transcriptSource().closed).toBe(true); expect(document.body.textContent).toContain('notes.txt'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0);
+    expect(el('[aria-label="Research transcript"]').textContent).toContain('Child progress.'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Next parent thought');
+    await expandSteps(false); expect(transcriptSource().closed).toBe(true); expect(document.body.textContent).toContain('notes.txt'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0);
   });
   it('cancels once against parent-bound identity and refreshes root status without clearing its draft', async () => {
     const api = server(), wait = deferred<object>(); api.intercept = (path, method) => path === bound + '/cancel' && method === 'POST' ? wait.promise : undefined;
@@ -98,14 +99,14 @@ describe('bound research task cards', () => {
     expect(api.calls.filter(call => call.method === 'POST')).toHaveLength(2);
   });
   it('drops open transcript and task links when reset removes their current message', async () => {
-    server(); await mountApp(); await press('Open transcript', region()); const childStream = transcriptSource();
+    server(); await mountApp(); await expandSteps(); const childStream = transcriptSource();
     await act(async () => Source.instances[0].emit({ id: 11, sessionId: 'a', type: 'reset', data: { messages: [] } }));
     expect(document.querySelector('[aria-label="Research task"]')).toBeNull(); expect(document.querySelector('[role="dialog"]')).toBeNull(); expect(childStream.closed).toBe(true);
     await act(async () => Source.instances[0].emit({ id: 12, sessionId: 'a', type: 'delegation', data: task() })); expect(document.querySelector('[aria-label="Research task"]')).toBeNull();
   });
   it('ignores late cancellation and child updates after navigating away', async () => {
     const api = server(), wait = deferred<object>(); api.intercept = (path, method) => path.endsWith('/cancel') && method === 'POST' ? wait.promise : undefined;
-    await mountApp(); await press('Cancel task', region()); await press('Open transcript', region()); const stream = transcriptSource(); await click('[aria-label="Close dialog"]'); await click('.session-link[title="Session b"]'); await fill('B draft');
+    await mountApp(); await press('Cancel task', region()); await expandSteps(); const stream = transcriptSource(); await expandSteps(false); await click('.session-link[title="Session b"]'); await fill('B draft');
     await act(async () => { wait.reject(new Error('Old task failed')); stream.emit({ id: 21, sessionId: 'child-a', type: 'delta', data: { messageId: 'child-message', delta: 'Old child' } }); });
     expect(el('.topbar-title').textContent).toBe('Session b'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('B draft'); expect(document.querySelector('.global-alert')).toBeNull(); expect(document.body.textContent).not.toContain('Old task failed');
   });
@@ -145,7 +146,7 @@ describe('independent read-only research transcript', () => {
   });
   it('restores a terminal transcript on reload without opening SSE or running another task', async () => {
     const api = server(); api.child = child({ session: session('child-a'), delegation: task({ status: 'cancelled' }) }); await mountTranscript(task({ status: 'cancelled' }));
-    expect(Source.instances).toHaveLength(0); expect(document.body.textContent).toContain('Cancelled'); expect(api.calls).toEqual([{ path: bound, method: 'GET' }]);
+    expect(Source.instances).toHaveLength(0); expect(document.querySelector('[aria-label="Research transcript"]')).not.toBeNull(); expect(api.calls).toEqual([{ path: bound, method: 'GET' }]);
   });
   it('rejects a mismatched bound detail without exposing another child transcript', async () => {
     const api = server(); api.child = child({ delegation: task({ parentSessionId: 'other' }), messages: [{ id: 'private', sessionId: 'child-a', role: 'assistant', content: 'Wrong parent transcript', createdAt: 1 }] });

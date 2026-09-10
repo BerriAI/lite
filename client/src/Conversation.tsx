@@ -36,7 +36,8 @@ function ToolCard({ tool }: { tool: ToolCall }) {
 function Approval({ request, onDecide, busy }: { request: PermissionRequest; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; busy: boolean }) {
   return <section className="approval" aria-label="Permission requested"><div className="approval-heading"><span><Shield size={17} /></span><div><strong>A quick check before I continue.</strong><p>{request.description || `${toolLabels[request.tool] || request.tool} needs your permission.`}</p></div></div><details><summary>Review {toolLabels[request.tool]?.toLowerCase() || request.tool}<ChevronRight size={13} /></summary><pre>{JSON.stringify(request.args, null, 2)}</pre></details><div className="approval-actions"><button className="button secondary" disabled={busy} onClick={() => onDecide(request.id, 'deny')}>Deny</button><button className="text-button" title="Remember approval for this tool in this session, including future runs. Revoke in Session actions." disabled={busy} onClick={() => onDecide(request.id, 'always')}>Always allow this tool</button><button className="button primary" disabled={busy} onClick={() => onDecide(request.id, 'allow')}>Allow once<Check size={14} /></button></div></section>;
 }
-export function Conversation({ detail, connection, onDecide, onFork, renderQuestion, renderTask, busy, readOnly = false }: { detail: SessionDetail; connection: 'connecting' | 'connected' | 'reconnecting'; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onFork: (messageId: string) => void; renderQuestion: (question: QuestionRequest) => ReactNode; renderTask?: (tool: ToolCall, message: Message) => ReactNode; busy: boolean; readOnly?: boolean }) {
+export function Conversation({ detail, connection, onDecide, onFork, renderQuestion, renderTask, busy, readOnly = false, inline = false }: { detail: SessionDetail; connection: 'connecting' | 'connected' | 'reconnecting'; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onFork: (messageId: string) => void; renderQuestion: (question: QuestionRequest) => ReactNode; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode; busy: boolean; readOnly?: boolean; inline?: boolean }) {
+  const [expandedRuns, setExpandedRuns] = useState<Set<string>>(() => new Set());
   const scroll = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const running = detail.session.status === 'running' || detail.session.status === 'waiting';
@@ -45,10 +46,16 @@ export function Conversation({ detail, connection, onDecide, onFork, renderQuest
   const tasks=detail.delegations?.filter(task=>task.status==='running')??[];
   const workActivity=detail.permissions.length||detail.questions?.length?false:tasks.length>1?`${tasks.length} workers running`:tasks.length===1?`${tasks[0].role?tasks[0].role[0].toUpperCase()+tasks[0].role.slice(1):'Research'} · ${tasks[0].activity??tasks[0].description}`:undefined;
   const hasWork = groups.findLast(group => group.startsRun && group.closesTranscript)?.steps.some(message => message.reasoning || message.toolCalls?.length);
-  useLayoutEffect(() => { if (atBottom && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [detail.messages, detail.permissions, detail.questions, atBottom]);
+  useLayoutEffect(() => { if (!inline && atBottom && scroll.current) scroll.current.scrollTop = scroll.current.scrollHeight; }, [detail.messages, detail.permissions, detail.questions, atBottom, inline]);
+  useLayoutEffect(() => {
+    const viewport = scroll.current, content = viewport?.firstElementChild;
+    if (inline || !atBottom || !viewport || !content || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => { viewport.scrollTop = viewport.scrollHeight; });
+    observer.observe(content); return () => observer.disconnect();
+  }, [atBottom, inline]);
   return <div className="conversation-shell"><div className="conversation-scroll" ref={scroll} onScroll={e => { const el = e.currentTarget; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 100); }}><div className="conversation-content">
     <div className="conversation-start"><span />{new Date(detail.session.createdAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}<span /></div>
-    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }) => <MessageView key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript} runUsage={runUsage} steps={steps} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
+    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, workSteps }) => <MessageView key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript} runUsage={runUsage} steps={endsRun ? workSteps : []} expanded={expandedRuns.has(workSteps[0]?.id)} onExpand={open => setExpandedRuns(current => { const next = new Set(current); if (open) next.add(workSteps[0]?.id); else next.delete(workSteps[0]?.id); return next; })} inline={inline} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
     {!detail.messages.length && <div className="session-empty"><Logo /><h2>{readOnly ? 'No transcript yet.' : 'A fresh start.'}</h2><p>{readOnly ? 'Research messages will appear here when available. This view cannot start a run.' : 'Give your agent a task. It will work in this session’s workspace.'}</p></div>}
     {!readOnly && detail.questions?.map(renderQuestion)}
     {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} busy={busy} />)}
@@ -66,7 +73,7 @@ function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> 
   return <div className="receipts-row" title="Host-computed from tool receipts, not model claims">Changed: {receipts.filesChanged.join(', ')} {checks}</div>;
 }
 /** The transcript is available on demand; the answer owns the reading surface. */
-function WorkLog({ messages, live, renderTask, workActivity }: { messages: Message[]; live: boolean; workActivity?: string|false; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
+function WorkLog({ messages, live, renderTask, workActivity, expanded, onExpand }: { expanded: boolean; onExpand: (open: boolean) => void; messages: Message[]; live: boolean; workActivity?: string|false; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode }) {
   const calls = messages.flatMap(message => (message.toolCalls ?? []).map(tool => ({ tool, message })));
   const thinking = messages.filter(message => message.reasoning);
   if (!calls.length && !thinking.length) return null;
@@ -76,28 +83,33 @@ function WorkLog({ messages, live, renderTask, workActivity }: { messages: Messa
   const label = working ? workActivity || (current ? `${toolLabels[current.name] || (current.name === 'sidekick' ? 'Sidekick' : current.name)}${typeof action === 'string' ? ` · ${action}` : ''}` : 'Thinking') : calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process';
   const failed = calls.filter(({ tool }) => tool.status === 'error' || tool.status === 'denied').length;
   const modified = calls.filter(({ tool }) => tool.intercepted).length;
-  return <details className={`work-log${working ? ' active' : ''}`} aria-label="Response steps">
+  return <details className={`work-log${working ? ' active' : ''}`} aria-label="Response steps" open={expanded} onToggle={event => { if (event.target === event.currentTarget) onExpand(event.currentTarget.open); }}>
     <summary>{working ? <span className="working-dot" /> : <Check size={13} />}<span>{label}</span>{failed > 0 && <span className="work-warning">{failed} {failed === 1 ? 'issue' : 'issues'}</span>}{modified > 0 && <span className="work-warning">{modified} modified {modified === 1 ? 'tool' : 'tools'}</span>}<ChevronRight size={13} className="disclosure-chevron" /></summary>
     <div className="work-log-body">
-      {messages.map(message => <div key={message.id}>{message.reasoning && <details className="thinking"><summary>Thinking<ChevronRight size={13} /></summary><div className="markdown"><Markdown content={message.reasoning} /></div></details>}
-        {message.toolCalls?.map(tool => <div key={tool.id}>{renderTask?.(tool, message) ?? <ToolCard tool={tool} />}</div>)}
+      {messages.map(message => <div key={message.id}>{message.reasoning && <div className="thinking-inline markdown"><Markdown content={message.reasoning} /></div>}
+        {message.toolCalls?.map(tool => <div key={tool.id}>{renderTask?.(tool, message, expanded) ?? <ToolCard tool={tool} />}</div>)}
       </div>)}
     </div>
   </details>;
 }
-function MessageView({ message, running, grouped, tail, live, runUsage, steps, workActivity, onFork, disabled, readOnly, renderTask }: { message: Message; running: boolean; grouped: boolean; tail: boolean; live: boolean; runUsage?: Usage; steps: Message[]; workActivity?: string|false; onFork: () => void; disabled: boolean; readOnly?: boolean; renderTask?: (tool: ToolCall, message: Message) => ReactNode }) {
-  if (message.role === 'system') return <div className="system-message"><Terminal size={12} />{message.content}</div>;
+function MessageView({ message, running, grouped, tail, live, runUsage, steps, workActivity, onFork, disabled, readOnly, renderTask, inline, expanded, onExpand }: { expanded: boolean; onExpand: (open: boolean) => void; message: Message; running: boolean; grouped: boolean; tail: boolean; live: boolean; runUsage?: Usage; steps: Message[]; workActivity?: string|false; onFork: () => void; disabled: boolean; readOnly?: boolean; inline?: boolean; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode }) {
+  const steering = message.role === 'system' && message.content.startsWith('[Steering] ');
+  if (steering) message = { ...message, content: message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '') };
+  if (message.role === 'system' && !steering) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : 'Your message'}>
     {assistant && !grouped && <div className="message-byline"><Logo small /><span>Lite</span></div>}
-    <div className="message-body">{assistant && !grouped && <WorkLog messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}
+    <div className="message-body">{steering && <span className="steering-label">Steering</span>}
       {message.content && <div className="markdown"><Markdown content={message.content} /></div>}
+      {inline && message.reasoning && <div className="thinking-inline markdown"><Markdown content={message.reasoning} /></div>}
+      {inline && message.toolCalls?.map(tool => <ToolCard key={tool.id} tool={tool} />)}
+      {assistant && tail && !inline && <WorkLog expanded={expanded} onExpand={onExpand} messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
 
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
       {assistant && message.receipts && message.receipts.filesChanged.length > 0 && <ReceiptsRow receipts={message.receipts} />}
     </div>
-    {assistant && tail && !live && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={message.turnUsage} />}</div>}
+    {assistant && tail && !live && !inline && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={message.turnUsage} />}</div>}
   </article>;
 }
 

@@ -36,6 +36,7 @@ export class History {
       session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, data TEXT NOT NULL);`);
     store.db.exec('CREATE TABLE IF NOT EXISTS command_snapshots (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, checkpoint_id TEXT NOT NULL, workspace TEXT NOT NULL, data TEXT NOT NULL);');
     store.db.exec('CREATE TABLE IF NOT EXISTS steering_notes (id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, turn_id TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);');
+    if (!(store.db.prepare('PRAGMA table_info(steering_notes)').all() as {name:string}[]).some(column => column.name === 'attachments')) store.db.exec("ALTER TABLE steering_notes ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
     if (!initialized.has(store)) {
       store.db.prepare("UPDATE history_checkpoints SET status='interrupted' WHERE status='open'").run();
       initialized.add(store);
@@ -354,8 +355,8 @@ export class History {
     const visibleIds = new Set(this.store.messages(id).map(message => message.id));
     for (const row of this.rows(id).filter(row => row.status === 'interrupted' || row.status === 'open')) {
       const turnId = this.read(row).userId;
-      for (const note of this.store.db.prepare('SELECT id,content,created_at FROM steering_notes WHERE session_id=? AND turn_id=? ORDER BY rowid').all(id,turnId) as {id:string;content:string;created_at:number}[]) {
-        if (!visibleIds.has(note.id)) this.store.saveMessage({id:note.id,sessionId:id,turnId,role:'system',content:`[Steering] The user sent this note before the response was interrupted. It still needs attention: ${note.content}`,createdAt:note.created_at});
+      for (const note of this.store.db.prepare('SELECT id,content,created_at,attachments FROM steering_notes WHERE session_id=? AND turn_id=? ORDER BY rowid').all(id,turnId) as {id:string;content:string;created_at:number;attachments:string}[]) {
+        if (!visibleIds.has(note.id)) this.store.saveMessage({id:note.id,sessionId:id,turnId,role:'system',content:`[Steering] The user sent this note before the response was interrupted. It still needs attention: ${note.content}`,createdAt:note.created_at,attachments:JSON.parse(note.attachments)});
       }
     }
     for (const row of this.rows(id).filter(row => row.status === 'interrupted' || row.status === 'open')) {

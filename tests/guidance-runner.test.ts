@@ -99,6 +99,79 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     expect(carrying.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('moves a queued message with its attachment snapshot into driver steering exactly once', async () => {
+    const session = await create();
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    respond = (_body, res) => { if (calls.length === 1) void gate.then(() => text(res, 'Original response')); else text(res, 'Steered response'); };
+    runner.start(session.id, 'Original task');
+    while (!calls.length) await new Promise(resolve => setTimeout(resolve, 5));
+    const attachments = [{ name: 'notes.txt', content: 'Saved queue attachment', path: 'notes.txt' }, { name: 'reference.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,aGVsbG8=' }];
+    const queued = runner.enqueue(session.id, 'Use this queued instruction', attachments);
+    runner.enqueue(session.id, 'Keep this for later'); runner.pauseQueue(session.id);
+    const path = `/sessions/${session.id}/queue/${queued.items[0].id}/steer`;
+    const accepted = await api(path, {});
+    expect(accepted.status).toBe(202);
+    expect(accepted.body).toMatchObject({ paused: true, items: [{ content: 'Keep this for later' }] });
+    expect((await api(path, {})).status).toBe(409);
+    expect(store.messages(session.id).filter(message => message.content.includes('[Steering]'))).toHaveLength(1);
+    release(); await runner.whenIdle();
+    expect(calls).toHaveLength(2);
+    const delivered = calls[1].messages.find((message: any) => Array.isArray(message.content) && JSON.stringify(message.content).includes('Use this queued instruction'));
+    expect(delivered.role).toBe('user');
+    expect(delivered.content).toContainEqual({ type: 'image_url', image_url: { url: attachments[1].dataUrl } });
+    expect(JSON.stringify(delivered.content)).toContain('Saved queue attachment');
+    expect(store.messages(session.id).find(message => message.content.includes('[Steering]'))?.attachments).toEqual(attachments);
+    expect(store.queue(session.id).items).toHaveLength(1);
+    expect(runner.history.state(session.id).canUndo).toBe(true);
+  });
+
+  it('keeps the queued message intact if steering is idle, full, or cannot be committed', async () => {
+    const session = await create();
+    let queued = runner.enqueue(session.id, 'Must not disappear');
+    let path = `/sessions/${session.id}/queue/${queued.items[0].id}/steer`;
+    expect((await api(path, {})).status).toBe(409);
+    runner.removeQueued(session.id, queued.items[0].id);
+    let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+    respond = (_body, res) => { void gate.then(() => text(res)); };
+    runner.start(session.id, 'Original task');
+    queued = runner.enqueue(session.id, 'Must not disappear');
+    path = `/sessions/${session.id}/queue/${queued.items[0].id}/steer`;
+    const failure = vi.spyOn(store, 'removeQueued').mockImplementationOnce(() => { throw new Error('Queue storage failed'); });
+    expect((await api(path, {})).status).toBe(500); failure.mockRestore();
+    expect(store.queue(session.id)).toEqual(queued);
+    expect(store.messages(session.id).some(message => message.content.includes('[Steering]'))).toBe(false);
+    expect(store.db.prepare('SELECT * FROM steering_notes WHERE session_id=?').all(session.id)).toHaveLength(0);
+    for (let index = 0; index < 5; index++) runner.steer(session.id, `Note ${index}`);
+    expect((await api(path, {})).status).toBe(409);
+    expect(store.queue(session.id)).toEqual(queued);
+    runner.cancel(session.id); release(); await runner.whenIdle();
+  });
+
+  it('steers past a pending approval without executing the old action', async () => {
+    const session = await create({ permissionMode: 'ask' });
+    respond = (body, res) => body.messages.some((message: any) => message.role === 'tool') ? text(res, 'Following steering') : tools(res, [{ name: 'write_file', args: { path: 'old.txt', content: 'Obsolete' } }]);
+    runner.start(session.id, 'Write a file');
+    while ((await api(`/sessions/${session.id}`)).body.permissions.length === 0) await new Promise(resolve => setTimeout(resolve, 5));
+    expect((await api(`/sessions/${session.id}/steer`, { content: 'Explain instead.' })).status).toBe(202);
+    await runner.whenIdle();
+    expect(store.messages(session.id).at(-1)?.content).toBe('Following steering');
+    expect(store.messages(session.id).flatMap(message => message.toolCalls ?? []).every(call => call.status === 'denied')).toBe(true);
+    expect((await api(`/sessions/${session.id}`)).body.permissions).toHaveLength(0);
+  });
+
+  it('returns to the driver when steering supersedes a pending question', async () => {
+    const session = await create();
+    respond = (body, res) => body.messages.some((message: any) => message.role === 'tool') ? text(res, 'Following the new direction') : tools(res, [{ name: 'ask_user', args: { question: 'Which file should I edit?' } }]);
+    runner.start(session.id, 'Ask before editing');
+    while (!runner.questions.pending(session.id).length) await new Promise(resolve => setTimeout(resolve, 5));
+    runner.steer(session.id, 'Do not edit. Explain the options.');
+    await runner.whenIdle();
+    expect(runner.questions.pending(session.id)).toHaveLength(0);
+    expect(store.messages(session.id).at(-1)?.content).toBe('Following the new direction');
+    expect(calls.at(-1).messages.at(-1)).toMatchObject({ role: 'user', content: expect.stringContaining('Do not edit. Explain the options.') });
+    expect(runner.history.state(session.id).canUndo).toBe(true);
+  });
+
   it('seals history and releases the turn even if usage persistence fails during completion', async () => {
     const session = await create();
     const usage = vi.spyOn(runner.usage, 'turn').mockImplementationOnce(() => { throw new Error('Simulated usage storage failure'); });

@@ -256,17 +256,18 @@ describe('session-scoped asynchronous responses', () => {
     expect(document.querySelector('.global-alert')).toBeNull();
   });
 
-  it.each(['enqueue', 'pause', 'resume', 'remove'] as const)('does not revive consumed items from a delayed %s response after the journal is pruned', async action => {
+  it.each(['enqueue', 'pause', 'resume', 'remove', 'steer'] as const)('does not revive consumed items from a delayed %s response after the journal is pruned', async action => {
     const item = (id: string) => ({ id, sessionId: 'a', content: `queued ${id}`, attachments: [], createdAt: 1 });
     const paused = action === 'resume';
     const initialQueue: QueueState = { items: action === 'enqueue' ? [] : [item('first'), item('second')], paused };
     const server = appServer([detail('a', { session: session('a', { status: 'running' }), queue: initialQueue })]);
     const pending = deferred<QueueState>();
-    const expected = action === 'enqueue' ? 'POST /api/sessions/a/queue' : action === 'remove' ? 'DELETE /api/sessions/a/queue/first' : `POST /api/sessions/a/queue/${action}`;
+    const expected = action === 'steer' ? 'POST /api/sessions/a/queue/first/steer' : action === 'enqueue' ? 'POST /api/sessions/a/queue' : action === 'remove' ? 'DELETE /api/sessions/a/queue/first' : `POST /api/sessions/a/queue/${action}`;
     server.mutation = (path, method) => { expect(`${method} ${path}`).toBe(expected); return pending.promise; };
     localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'queued draft', attachments: [] }));
     await mountApp();
     if (action === 'enqueue') await click('[aria-label="Add to queue"]');
+    else if (action === 'steer') await click('[aria-label="Steer with queued message 1"]');
     else if (action === 'remove') await click('[aria-label="Remove queued message 1"]');
     else await clickText(action === 'pause' ? 'Pause queue' : 'Resume queue');
     expect(server.requests).toContain(expected);

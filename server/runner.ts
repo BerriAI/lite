@@ -236,22 +236,39 @@ export class Runner {
     const queue=this.store.enqueue(id,content,attachments,Boolean(run&&!run.compacting&&!run.controller.signal.aborted));
     this.bus.emit(id,'queue',queue);return queue;
   }
-  /** Mid-turn steering: a short user note delivered between steps of the ACTIVE
-   * response (queued messages, by contrast, wait for the run to end). Never
-   * interrupts a tool mid-execution — the note is drained at the start of the
-   * next step, where the envelope is built. Cancellation or any run end discards
-   * undelivered notes with the run (they were addressed to that response only).
-   * Children are unreachable here: the app-level child guard 409s the route and
-   * assertRoot rejects child ids defensively. */
-  steer(id: string, content: string) {
+  /** Steering belongs to the driver. Accept durably before releasing a worker
+   * or removing a queued message, so failures cannot lose or duplicate input. */
+  steer(id: string, content: string, queueId?: string) {
     this.assertRoot(id);this.assertOpen();
     const run=this.runs.get(id);
     if(!run||run.compacting||run.controller.signal.aborted)throw conflict('No active response to steer. Send a normal message instead.');
     const notes=run.steering??=[];
     if(notes.length>=5)throw conflict('Too many steering notes for this response.');
-    this.store.db.prepare('INSERT INTO steering_notes(id,session_id,turn_id,content,created_at) VALUES(?,?,?,?,?)').run(randomUUID(),id,run.turnId!,content,Date.now());
+    const queue=queueId?this.store.queue(id):undefined;
+    const item=queue?.items.find(item=>item.id===queueId);
+    if(queueId&&!item)throw conflict('Queued message is no longer available. It may already have started.');
+    content=item?.content??content;
+    const note:Message={id:randomUUID(),sessionId:id,turnId:run.turnId,role:'system',content:`[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: ${content}`,attachments:item?.attachments,createdAt:Date.now()};
+    this.store.db.exec('BEGIN');
+    try {
+      this.store.db.prepare('INSERT INTO steering_notes(id,session_id,turn_id,content,created_at,attachments) VALUES(?,?,?,?,?,?)').run(note.id,id,run.turnId!,content,note.createdAt,JSON.stringify(note.attachments??[]));
+      this.persist(note);
+      if(item) this.store.removeQueued(id,item.id);
+      this.store.db.exec('COMMIT');
+    } catch(error) {this.store.db.exec('ROLLBACK');throw error;}
     notes.push(content);
-    for(const child of this.runs.values())if(child.child?.parent===run)(child.steering??=[]).push(content);
+    // Release delegated work and pending approvals; the driver reads the note
+    // before choosing another action. Never forward user steering to a worker.
+    for(const child of this.runs.values())if(child.child?.parent===run)child.controller.abort();
+    for(const [requestId,pending] of run.approvals) {
+      run.approvals.delete(requestId);pending.resolve(false);
+      try {this.bus.emit(id,'permission_resolved',{id:requestId,decision:'deny'});} catch { /* Snapshot restores state. */ }
+    }
+    try {this.questions.interrupt(id);} catch { /* The accepted note remains available for recovery. */ }
+    try {this.bus.emit(id,'message',note);} catch { /* Input is already durable. */ }
+    const next=queueId?this.store.queue(id):undefined;
+    if(next)try {this.bus.emit(id,'queue',next);} catch { /* Snapshot restores state. */ }
+    return next;
   }
   removeQueued(id: string, itemId: string) {
     this.assertRoot(id);const queue=this.store.removeQueued(id,itemId);this.bus.emit(id,'queue',queue);return queue;
@@ -613,7 +630,8 @@ export class Runner {
       if(late.length&&run.turnId) {
         run.blocked=true;
         for(const [index,content] of late.entries()) {
-          const note:Message={id:this.steeringId(id,run,(run.steeringDelivered??0)+index),sessionId:id,turnId:run.turnId,role:'system',content:`[Steering] This user note arrived before the response ended and still needs attention: ${content}`,createdAt:Date.now()};
+          const saved=this.store.messages(id).find(message=>message.id===this.steeringId(id,run,(run.steeringDelivered??0)+index));
+          const note:Message={...saved,id:this.steeringId(id,run,(run.steeringDelivered??0)+index),sessionId:id,turnId:run.turnId,role:'system',content:`[Steering] This user note arrived before the response ended and still needs attention: ${content}`,createdAt:Date.now()};
           this.persist(note);try {this.bus.emit(id,'message',note);} catch {/* Preserve accepted steering even when delivery fails. */}
         }
         run.steeringDelivered=run.steering?.length;
@@ -771,7 +789,19 @@ export class Runner {
   }
   private providerMessages(id: string, messages = this.store.messages(id)): ProviderMessage[] {
     const history: ProviderMessage[] = [];
+    // The UI shows steering immediately. Provider histories must keep every
+    // tool result adjacent to its call before the next user instruction.
+    const ordered: Message[] = [], deferred: Message[] = [];
+    const outstanding = new Set<string>();
     for (const message of messages) {
+      if (message.role === 'system' && message.content.startsWith('[Steering] ') && outstanding.size) { deferred.push(message); continue; }
+      ordered.push(message);
+      if (message.role === 'assistant') for (const call of message.toolCalls ?? []) outstanding.add(call.id);
+      if (message.role === 'tool' && message.toolCallId) outstanding.delete(message.toolCallId);
+      if (!outstanding.size) ordered.push(...deferred.splice(0));
+    }
+    ordered.push(...deferred);
+    for (const message of ordered) {
       if (message.role === 'tool') {
         // view_image delivery (5.5): a tool result carrying image attachments
         // becomes a content ARRAY (text + image_url parts). The openai chat
@@ -784,7 +814,7 @@ export class Runner {
       } else if (message.role === 'assistant') {
         if (!message.content && !message.toolCalls?.length) continue;
         history.push({role:'assistant',providerMetadata:message.providerMetadata,content:message.content || null,tool_calls:message.toolCalls?.map(t => ({id:t.id,type:'function',function:{name:t.name,arguments:JSON.stringify(t.args)}}))});
-      } else if (message.role === 'user') {
+      } else if (message.role === 'user' || (message.role === 'system' && message.content.startsWith('[Steering] '))) {
         const parts: any[] = [{type:'text',text:message.content}];
         for (const attachment of message.attachments || []) {
           if (attachment.dataUrl && attachment.mimeType?.startsWith('image/')) parts.push({type:'image_url',image_url:{url:attachment.dataUrl}});
@@ -795,14 +825,6 @@ export class Runner {
           }
         }
         history.push({role:'user',content:parts.length === 1 ? message.content : parts});
-      } else if (message.role === 'system' && message.content.startsWith('[Steering] ')) {
-        // A steering note IS user input — the user typed it into the running
-        // response. It is persisted as a system marker for auditability, but it
-        // must reach the provider with user authority and its chronological
-        // position: gateways hoist mid-conversation system messages into the
-        // static system prompt for some model families, which buries the note
-        // before the plan it supersedes and gets it (correctly) ignored.
-        history.push({role:'user',content:message.content});
       } else history.push({role:'system',content:message.content});
     }
     return history;
@@ -1204,7 +1226,7 @@ export class Runner {
         // The envelope is the wrong channel — its preamble subordinates it to
         // "the user's current request", which a steering note must supersede,
         // and it anchors before the original plan.
-        for(const [index,note] of pending.entries())this.save({id:this.steeringId(id,run,run.steeringDelivered!-pending.length+index),sessionId:id,role:'system',content:`[Steering] The user sent this note to the running response. It supersedes their earlier request in this turn; follow it as the user's latest instruction: ${note}`,createdAt:Date.now()});
+        for(const [index,note] of pending.entries()) {const noteId=this.steeringId(id,run,run.steeringDelivered!-pending.length+index);if(!this.store.messages(id).some(message=>message.id===noteId))this.save({id:noteId,sessionId:id,role:'system',content:`[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: ${note}`,createdAt:Date.now()});}
       }
       // A pruned-retry step reuses the saved placeholder row instead of orphaning it.
       const message: Message = {id:reuseMessageId??randomUUID(),sessionId:id,role:'assistant',content:'',createdAt:Date.now()};
@@ -1386,6 +1408,7 @@ export class Runner {
         const preToolVeto = async (): Promise<boolean> => {
           const veto = await this.fireHooks(id, run, 'PreToolUse', { tool: call.name==='verify'?'bash':call.name, args: call.args }, call.name==='verify'?'bash':call.name, content => hookNotices.push(content));
           if (veto) { call.status = 'denied'; output = `Blocked by PreToolUse hook${veto.stderr.trim() ? `: ${utf8Bounded(veto.stderr.trim(), HOOK_LIMITS.stdioBytes)}` : '. Do not retry it or work around this decision.'}`; }
+          if((run.steering?.length??0)>(run.steeringDelivered??0)) {call.status='denied';deferredForSteering=true;return true;}
           return Boolean(veto);
         };
         try {
@@ -1412,7 +1435,7 @@ export class Runner {
               const local=message.toolCalls!.find(item=>item.id===saved.id);
               if(local)Object.assign(local,saved);
             }
-            if(settlement.status!=='answered')run.blocked=true;
+            if(settlement.status!=='answered'&&(run.steering?.length??0)===(run.steeringDelivered??0))run.blocked=true;
             if(!signal.aborted)this.setSession(id,{status:'running'});
             return;
           }
@@ -1424,7 +1447,7 @@ export class Runner {
             else if (!(await preToolVeto())) {
               const settled=await this.research(id,run,message,call,input,()=>{questionStarted=true;});
               for(const saved of settled.assistant.toolCalls??[]) { const local=message.toolCalls!.find(item=>item.id===saved.id);if(local)Object.assign(local,saved); }
-              if(settled.delegation.status!=='completed')run.blocked=true;
+              if(settled.delegation.status!=='completed'&&(run.steering?.length??0)===(run.steeringDelivered??0))run.blocked=true;
               flushHookNotices();
               return;
             }
@@ -1437,7 +1460,7 @@ export class Runner {
               const settled=await this.sidekick(id,run,message,call,input,()=>{questionStarted=true;},parallel?.workspaces.get(call.id));
               for(const saved of settled.assistant.toolCalls??[]) { const local=message.toolCalls!.find(item=>item.id===saved.id);if(local)Object.assign(local,saved); }
               if(typeof call.args.repairOf==='string')run.unresolvedWorkers?.delete(call.args.repairOf);
-              if(settled.delegation.status!=='completed') {run.workerFailed=true;(run.unresolvedWorkers??=new Set()).add(settled.delegation.id);}
+              if(settled.delegation.status!=='completed'&&(run.steering?.length??0)===(run.steeringDelivered??0)) {run.workerFailed=true;(run.unresolvedWorkers??=new Set()).add(settled.delegation.id);}
               flushHookNotices();
               return;
             }
@@ -1513,6 +1536,7 @@ export class Runner {
           const bytes=Buffer.byteLength(JSON.stringify([...this.store.messages(id).filter(item=>item.id!==message.id),assistant,result]));
           if(bytes>childLimits.transcriptBytes-4096) { call.status='error';output=run.child.role?'The sidekick transcript reached its 16 MiB limit.':'The research transcript reached its 4 MiB limit.';run.failure=output;toolAttachments.length=0; }
         }
+        if(call.status==='denied'&&(run.steering?.length??0)>(run.steeringDelivered??0)) {deferredForSteering=true;output='This action was not executed because new user steering arrived. Read the note before choosing the next action.';}
         if((call.status==='denied'&&!deferredForSteering)||(call.status==='error'&&!run.child?.role&&!session.architecture))run.blocked=true;
         if(run.child?.role||session.architecture) {
           const key=(call.name==='write_file'||call.name==='edit_file')?`file:${call.args.path}`:signature(call);
@@ -1640,7 +1664,7 @@ export class Runner {
     // tools keep the full captured list minus delegation — allowed() applies
     // the sidekick-child composition on top. The session override pins the
     // LIVE architecture pair over whatever the persisted child session holds.
-    const child:ActiveRun={steering:[...(parent.steering??[])],controller:new AbortController(),approvals:new Map(),profile:parent.profile,turnId:created.user.id,policy:{...policy,provider,session:{...policy.session,workspace,id:created.child.id,parentId:id,providerId:route.providerId,model:route.model},tools:policy.tools.filter(name=>name!=='task'&&name!=='sidekick'&&name!=='delegate'&&name!=='takeover'&&name!=='verify')},child:{delegation:created.delegation,parent,timedOut:false,role,isolated}};
+    const child:ActiveRun={controller:new AbortController(),approvals:new Map(),profile:parent.profile,turnId:created.user.id,policy:{...policy,provider,session:{...policy.session,workspace,id:created.child.id,parentId:id,providerId:route.providerId,model:route.model},tools:policy.tools.filter(name=>name!=='task'&&name!=='sidekick'&&name!=='delegate'&&name!=='takeover'&&name!=='verify')},child:{delegation:created.delegation,parent,timedOut:false,role,isolated}};
     const started=Date.now(),abort=()=>child.controller.abort();parent.controller.signal.addEventListener('abort',abort,{once:true});
     const allowance=Math.min(SIDEKICK_LIMITS.childMs,SIDEKICK_LIMITS.totalMs-budget.elapsedMs);
     const activeElapsed=()=>Date.now()-started-(child.approvalWaitMs??0)-(child.approvalWaitStarted===undefined?0:Date.now()-child.approvalWaitStarted);

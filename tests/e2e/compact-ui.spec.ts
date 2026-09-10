@@ -92,6 +92,8 @@ for (const width of [1280, 390]) {
     await expect(page.locator('.composer [aria-label="Project profiles"]')).toHaveCount(0);
     await expect(page.getByRole('combobox', { name: 'Agent mode', exact: true })).toHaveValue('build');
     await expect(page.locator('.markdown table')).toBeVisible();
+    const answerBounds = await page.locator('.markdown').last().boundingBox(), stepsBounds = await page.locator('.work-log').boundingBox();
+    expect(stepsBounds!.y).toBeGreaterThanOrEqual(answerBounds!.y + answerBounds!.height);
     await page.locator('.conversation-scroll').evaluate(el => { el.scrollTop = 0; });
     await page.screenshot({ path: `/tmp/lite-clean-overview-${width}.png`, animations: 'disabled' });
     await page.locator('.work-log > summary').click();

@@ -960,3 +960,28 @@ fieldset.model-picker { padding: 22px 24px; gap: 22px; overflow: visible; }
 .usage-breakdown { width: min(340px,65vw); max-height: 220px; overflow: auto; margin-top: 8px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
 .usage-breakdown > div { display: grid; gap: 3px; padding: 5px 0; overflow-wrap: anywhere; }
 .usage-breakdown strong { font-weight: 500; }
+
+/* Expanded work reads in place, using the main conversation scroll. */
+.thinking-inline, .inline-transcript .markdown { color: var(--secondary); font-style: italic; }
+.thinking-inline { padding: 6px 0; font-size: 13px; line-height: 1.7; }
+.inline-transcript { height: auto; margin: 8px 0 12px 22px; }
+.inline-transcript .conversation-shell, .inline-transcript .conversation-scroll { display: block; overflow: visible; flex: none; }
+.inline-transcript .conversation-content { width: 100%; padding: 0; }
+.inline-transcript .conversation-start, .inline-transcript .message-byline, .inline-transcript .scroll-bottom { display: none; }
+.inline-transcript .message { padding: 0; margin: 10px 0; }
+.inline-transcript .message-body { margin: 0; }
+.inline-transcript .markdown { font-size: 13px; line-height: 1.7; }
+.inline-transcript .markdown pre, .inline-transcript .markdown code { font-style: normal; }
+.inline-transcript .user-message { background: none; border: 0; box-shadow: none; max-width: 100%; }
+.inline-transcript .research-loading { padding: 4px 0; }
+.message-body > .markdown + .work-log { margin-top: 10px; }
+.queue-steer { flex-shrink: 0; gap: 4px; white-space: nowrap; }
+@media (max-width: 600px) {
+  .queue-steer { min-height: 36px; }
+  .inline-transcript { margin-left: 8px; }
+}
+
+.steering-label { display: block; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+
+.inline-transcript { position: relative; padding-right: 24px; }
+.transcript-refresh { position: absolute; top: 0; right: 0; color: var(--muted); }

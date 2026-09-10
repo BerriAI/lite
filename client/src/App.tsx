@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState, type Keyboard
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Target, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
 import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft, visibleDelegations } from './api';
-import { TaskCard, TaskTranscript, delegationPath } from './TaskCard';
+import { TaskCard, delegationPath } from './TaskCard';
 import type { DelegationSummary } from '../../shared/delegation';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
@@ -55,11 +55,9 @@ export default function App() {
   const [historyBusy, setHistoryBusy] = useState(false);
   const [contextSession, setContextSession] = useState<string | null>(null);
   const latestContext = detail?.messages.filter(message => message.role === 'assistant' && message.context).at(-1)?.context;
-  const [openTask, setOpenTask] = useState<{ parentSessionId: string; id: string } | null>(null);
   const [taskErrors, setTaskErrors] = useState(new Map<string, string>());
   const [cancellingTasks, setCancellingTasks] = useState(new Set<string>());
   const taskOperations = useRef(new Set<string>());
-  const closeTask = useCallback(() => setOpenTask(null), []);
   const [questionDrafts, setQuestionDrafts] = useState(new Map<string, QuestionDraft>());
   const [questionErrors, setQuestionErrors] = useState(new Map<string, string>());
   const [answering, setAnswering] = useState(new Set<string>());
@@ -102,8 +100,6 @@ export default function App() {
   const detailRef = useRef(detail); detailRef.current = detail;
   const running = detail?.session.status === 'running' || detail?.session.status === 'waiting';
   const delegations = detail ? visibleDelegations(detail) : [];
-  const transcriptTask = openTask?.parentSessionId === activeId ? delegations.find(task => task.id === openTask?.id) : undefined;
-  useEffect(() => { if (openTask && !transcriptTask) setOpenTask(null); }, [openTask, transcriptTask]);
   const history = detail?.history;
   const historyDisabled = running || busy || queueBusy || submissionBusy || historyBusy || configBusy || sessionLoading;
   const legacyUndo = history?.hasCheckpoints === false && !history.pendingRecovery;
@@ -415,20 +411,22 @@ export default function App() {
     queueOperation.current = true; setQueueBusy(true); setError('');
     try {
       await post(`/sessions/${id}/steer`, { content });
-      if (currentId.current === id) setToast('Steering note sent to the running response.');
+      if (currentId.current === id) setToast('Steering sent to the driver.');
       return true;
     } catch (e) {
       if (currentId.current === id) setError(errorMessage(e));
       return false;
     } finally { queueOperation.current = false; setQueueBusy(false); }
   }
-  async function queueAction(action: 'pause' | 'resume' | 'remove', queueId?: string) {
+  async function queueAction(action: 'pause' | 'resume' | 'remove' | 'steer', queueId?: string) {
     const id = activeId;
-    if (!id || queueOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery || (action === 'remove' && !queueId)) return;
+    if (!id || queueOperation.current || configOperation.current || historyOperation.current || detailRef.current?.history?.pendingRecovery || ((action === 'remove' || action === 'steer') && !queueId)) return;
     queueOperation.current = true; setQueueBusy(true); setError('');
     const cursor = detail?.lastEventId ?? 0;
     try {
-      const queue = action === 'remove'
+      const queue = action === 'steer'
+        ? await post<QueueState>(`/sessions/${id}/queue/${encodeURIComponent(queueId!)}/steer`)
+        : action === 'remove'
         ? await api<QueueState>(`/sessions/${id}/queue/${encodeURIComponent(queueId!)}`, { method: 'DELETE' })
         : await post<QueueState>(`/sessions/${id}/queue/${action}`);
       // The detail cursor survives journal pruning; a bare response must not replace newer SSE/snapshot state.
@@ -606,9 +604,9 @@ export default function App() {
       <div className="main-panels"><div className={`main-stage ${!activeId ? 'welcome-stage' : ''}`}>
         {loading ? <div className="app-loading"><Logo /><SpeedRail active /><p>Opening your workspace…</p></div> : !settings ? <EmptyState icon={<Terminal size={30} />} title="Let’s get connected.">The local server is not available. Check that Lite is running, then retry the connection.<button className="button primary" onClick={() => void load()}>Try again</button></EmptyState> : activeId ? <>
           {goalVisible && detail && <div className={`goal-banner ${goal.status}`} role="status"><Target size={14} /><div className="goal-banner-body"><strong>{goal.status === 'blocked' ? 'Goal paused' : 'Session goal'}</strong><span title={goal.text}>{goal.text}</span></div><span className="goal-banner-turns">Turn {goal.turns} of {goal.maxTurns}</span><button className="button secondary" disabled={busy || running} onClick={() => void clearSessionGoal()}>Clear goal</button></div>}
-          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} renderTask={(tool, message) => {
+          {sessionLoading ? <div className="app-loading"><SpeedRail active /><p>Opening this conversation…</p></div> : detail ? <Conversation detail={detail} connection={connection} busy={busy} renderTask={(tool, message, expanded) => {
             const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
-            return task ? <TaskCard task={task} tool={tool} onOpen={() => setOpenTask({ parentSessionId: task.parentSessionId, id: task.id })} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
+            return task ? <TaskCard task={task} expanded={expanded} onCancel={() => void cancelTask(task)} cancelling={cancellingTasks.has(task.id)} error={taskErrors.get(task.id)} /> : null;
           }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
           {detail && <div className="chat-composer">{history?.pendingRecovery && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} onSteer={content => steerMessage(content)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
@@ -619,10 +617,9 @@ export default function App() {
         </div>}
       </div>{workspaceOpen && settings && <Workspace workspace={workspace} sessionId={activeId ?? undefined} todos={detail?.todos ?? []} refreshKey={refreshKey} onClose={() => setWorkspaceOpen(false)} onUndo={legacyUndo ? () => askHistory('legacy') : undefined} running={historyDisabled} />}</div>
     </main>
-    <input type="file" accept="application/json,.json" className="sr-only" tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
+    <input type="file" accept="application/json,.json" hidden tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
     {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {contextSession && contextSession === activeId && !running && latestContext && <Modal title="Context details" onClose={() => setContextSession(null)}><div className="context-dialog"><ContextIndicator context={latestContext} /></div></Modal>}
-    {transcriptTask && <TaskTranscript key={`${transcriptTask.parentSessionId}-${transcriptTask.id}`} task={transcriptTask} onClose={closeTask} />}
     {settingsOpen && settings && <Settings settings={settings} profilesDisabled={selectionDisabled} onProfiles={() => { setSidebarOpen(false); openProfiles(); }} profiles={profileDialog && profileDialog.id === activeId ? <ProfilePicker embedded key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeSettings} onApply={applyProfile} /> : null} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
     {goalModal && activeId && <Modal title="Set session goal" onClose={closeGoal}><form className="rename-form" onSubmit={e => { e.preventDefault(); void setSessionGoal(); }}><label>Goal<textarea autoFocus rows={3} maxLength={2000} placeholder="One objective to pursue across multiple turns…" value={goalText} onChange={e => setGoalText(e.target.value)} /></label><label>Max turns (1-25)<input type="number" min={1} max={25} value={goalTurns} onChange={e => setGoalTurns(e.target.value)} /></label><p className="goal-hint">The assistant reports progress each turn and the host continues automatically until the goal completes, blocks, or reaches the turn limit. Cancelling a response pauses continuation; your next message resumes it.</p><div className="form-actions"><button className="button secondary" type="button" onClick={closeGoal}>Cancel</button><button className="button primary" disabled={!goalText.trim() || busy}>Set goal</button></div></form></Modal>}

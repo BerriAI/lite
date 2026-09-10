@@ -148,6 +148,9 @@ export class Questions {
     this.wake(row, settlement);
     return { id, status: 'answered', answer };
   }
+  interrupt(sessionId: string): void {
+    for (const request of this.pending(sessionId)) this.cancel(sessionId, request.id);
+  }
   private cancel(sessionId: string, id: string): void {
     const row = this.row(sessionId, id);
     if (row.status !== 'pending') return;

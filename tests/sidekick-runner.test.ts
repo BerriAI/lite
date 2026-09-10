@@ -312,14 +312,22 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(observed.mock.calls[0][0]).toMatchObject({sessionId:s.id,actorSessionId:d.childSessionId,invocationId:d.id,tool:'write_file'});
   });
 
-  it('delivers a root steering note to the active worker at its next model boundary',async()=>{
+  it('returns steering to the driver immediately while the sidekick provider is still streaming',async()=>{
     let held:ServerResponse|undefined;
-    respond=(body,res)=>{if(side(body)){if(body.messages.some((m:any)=>m.role==='tool'))text(res,'Worker finished after steering');else held=res;}else if(body.messages.some((m:any)=>m.role==='tool'))text(res);else tools(res,[{name:'sidekick',args:{description:'Steered work',prompt:'SIDE work'}}]);};
+    respond=(body,res)=>{if(side(body))held=res;else if(body.messages.some((m:any)=>m.role==='tool'))text(res,'Driver followed the new instruction');else tools(res,[{name:'sidekick',args:{description:'Steered work',prompt:'SIDE work'}}]);};
     const s=await create();runner.start(s.id,'ROOT work');await until(()=>Boolean(held));
-    runner.steer(s.id,'Inspect README only.');tools(held!,[{name:'glob',args:{pattern:'*'}}]);
+    runner.steer(s.id,'Inspect README only.');
     await runner.whenIdle();
-    expect(calls.filter(side).some(body=>JSON.stringify(body.messages).includes('Inspect README only.'))).toBe(true);
-    const d=runner.delegations.list(s.id)[0];expect(runner.delegations.transcript(s.id,d.id).messages.some(m=>m.content.includes('[Steering]'))).toBe(true);
+    expect(calls.filter(side)).toHaveLength(1);
+    expect(calls.filter(side).some(body=>JSON.stringify(body.messages).includes('Inspect README only.'))).toBe(false);
+    const driver=calls.filter(body=>!side(body)).at(-1);
+    expect(driver.messages.at(-1)).toMatchObject({role:'user',content:expect.stringContaining('Inspect README only.')});
+    const callIndex=driver.messages.findIndex((m:any)=>m.tool_calls?.length);
+    expect(driver.messages[callIndex+1].role).toBe('tool');
+    const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('cancelled');
+    expect(runner.delegations.transcript(s.id,d.id).messages.some(m=>m.content.includes('[Steering]'))).toBe(false);
+    expect(store.messages(s.id).at(-1)?.content).toBe('Driver followed the new instruction');
+    expect(runner.history.state(s.id).canUndo).toBe(true);
   });
 
   it('stops unfinished worker jobs before settling and reports incomplete verification',async()=>{

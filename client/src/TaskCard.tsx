@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Clock3, X, Zap } from 'lucide-react';
+import { BookOpen, Check, RotateCw, X, Zap } from 'lucide-react';
 import type { DelegationDetail, DelegationSummary } from '../../shared/delegation';
-import type { RunEvent, ToolCall } from '../../shared/types';
+import type { RunEvent } from '../../shared/types';
 import { api, applyEvent, errorMessage } from './api';
 import { Conversation } from './Conversation';
-import { Modal, SpeedRail } from './ui';
+import { SpeedRail } from './ui';
 
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
 const sidekick = (task: DelegationSummary) => Boolean(task.role);
 const actor = (task: DelegationSummary) => task.role === 'expert' ? 'Expert' : task.role === 'worker' ? 'Worker' : 'Sidekick';
 const statusLabel = (task: DelegationSummary) => task.status === 'running' && sidekick(task) ? 'Working' : statusLabels[task.status];
 export const delegationPath = (task: DelegationSummary) => `/sessions/${encodeURIComponent(task.parentSessionId)}/delegations/${encodeURIComponent(task.id)}`;
-export function TaskCard({ task, tool, onOpen, onCancel, cancelling, error }: { task: DelegationSummary; tool: ToolCall; onOpen: () => void; onCancel: () => void; cancelling: boolean; error?: string }) {
+export function TaskCard({ task, expanded, onCancel, cancelling, error }: { task: DelegationSummary; expanded: boolean; onCancel: () => void; cancelling: boolean; error?: string }) {
   const running = task.status === 'running';
   const fusion = sidekick(task);
   return <section className="research-task" role="region" aria-label={fusion ? `${actor(task)} task` : 'Research task'}>
-    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions"><button className="text-button" onClick={onOpen}>Open transcript</button>{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
+    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions">{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
     {task.error && <p className="error-text" role="status">{task.error}</p>}
 
     {error && <p className="error-text" role="alert">{error}</p>}
+    {expanded && <TaskTranscript task={task} />}
 
   </section>;
 }
 
-export function TaskTranscript({ task, onClose }: { task: DelegationSummary; onClose: () => void }) {
+export function TaskTranscript({ task }: { task: DelegationSummary }) {
   const [detail, setDetail] = useState<DelegationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -85,14 +86,10 @@ export function TaskTranscript({ task, onClose }: { task: DelegationSummary; onC
   useEffect(() => {
     if (previousStatus.current !== task.status) { previousStatus.current = task.status; void refresh.current(); }
   }, [task.status]);
-  const summary = detail?.delegation ?? task;
-  return <Modal title={fusion ? `${actor(task)} transcript` : 'Research transcript'} onClose={onClose} wide>
-    <div className="research-transcript">
-      <div className="research-transcript-header"><div><strong title={fusion ? `${actor(task)} · edits and commands use this session’s permissions` : "Read-only research"}>{task.description || (fusion ? `${actor(task)} task` : 'Research task')}</strong>{detail && <p className="field-hint">{detail.session.model}{task.legacyContext?' · Legacy context association':''}{task.isolated?' · Isolated workspace':''}</p>}</div><span className="research-transcript-status" role="status">{summary.status === 'running' ? <Clock3 size={13} /> : <Check size={13} />}{statusLabel(summary)}</span></div>
-      <div className="research-transcript-toolbar"><p>Read-only transcript</p><button className="button secondary" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}>Refresh transcript</button></div>
-      {error && <div className="inline-alert" role="alert">{error}</div>}
-      {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}
-      {detail && <Conversation detail={detail} connection={connection} busy={false} readOnly onDecide={() => {}} onFork={() => {}} renderQuestion={() => null} />}
-    </div>
-  </Modal>;
+  return <div className="research-transcript inline-transcript" role="region" aria-label={`${fusion ? actor(task) : 'Research'} transcript`}>
+    <button className="icon-button transcript-refresh" title="Refresh transcript" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}><RotateCw size={12} /><span className="sr-only">Refresh transcript</span></button>
+    {error && <div className="inline-alert" role="alert">{error}</div>}
+    {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}
+    {detail && <Conversation detail={detail} connection={connection} busy={false} readOnly inline onDecide={() => {}} onFork={() => {}} renderQuestion={() => null} />}
+  </div>;
 }

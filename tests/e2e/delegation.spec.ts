@@ -8,7 +8,7 @@ import type { DelegationSummary } from '../../shared/delegation';
 async function expandSteps(page: Page) { const log = page.locator('.conversation-content > article .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
 const taskCard = (page: Page) => page.getByRole('region', { name: 'Research task', exact: true, includeHidden: true });
-const transcript = (page: Page) => page.getByRole('dialog', { name: 'Research transcript', exact: true });
+const transcript = (page: Page) => page.getByRole('region', { name: 'Research transcript', exact: true });
 const permission = (page: Page) => page.getByRole('region', { name: 'Permission requested', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[];
 const fixtureText = 'RESEARCH_FILE_VERIFIED: this project uses a local SQLite database.\n';
@@ -70,7 +70,7 @@ for (const mode of ['build', 'plan'] as const) test(`${mode} requires deliberate
   expect(research.messages.flatMap(message => message.toolCalls ?? []).map(tool => tool.name)).toEqual(['read_file']);
   expect(research.messages.some(message => message.role === 'tool' && message.content.includes('RESEARCH_FILE_VERIFIED'))).toBe(true);
   expect(completed.messages.filter(message => message.role === 'tool')).toHaveLength(1); expect(await calls(request, session)).toHaveLength(4);
-  await expect(taskCard(page)).toContainText('Inspect fixture project'); await expandSteps(page); await taskCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click();
+  await expect(taskCard(page)).toContainText('Inspect fixture project'); await expandSteps(page);
   await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED'); await expect(transcript(page).getByRole('textbox', { name: 'Message Lite', exact: true })).toHaveCount(0);
   await expect(transcript(page).getByRole('button', { name: 'Fork session', exact: true })).toHaveCount(0); await assertUnchanged();
 });
@@ -93,13 +93,13 @@ for (const flag of ['FORCE_WRITE', 'FORCE_NESTED', 'FORCE_QUESTION']) test(`auto
 
 test('streamed child progress survives parent reload without clearing the draft or replaying research', async ({ page, request }) => {
   const session = await create(request, { permissionMode: 'auto' }); await open(page, session); await send(page, session, 'HOLD_CHILD'); const delegation = await waitHeld(request, session);
-  await expandSteps(page); await taskCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click(); await expect(transcript(page)).toContainText('Researcher is reviewing');
-  await transcript(page).getByRole('button', { name: 'Close dialog', exact: true }).click(); await composer(page).fill('A separate draft survives research.');
+  await expandSteps(page); await expect(transcript(page)).toContainText('Researcher is reviewing');
+  await composer(page).fill('A separate draft survives research.');
   const before = await calls(request, session); await page.reload(); await expect(composer(page)).toHaveValue('A separate draft survives research.');
   expect((await latest(request, session)).id).toBe(delegation.id); expect(await calls(request, session)).toHaveLength(before.length);
-  await expandSteps(page); await taskCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click(); await expect(transcript(page)).toContainText('Researcher is reviewing');
+  await expandSteps(page); await expect(transcript(page)).toContainText('Researcher is reviewing');
   await request.post('/fixture/delegations/release', { data: {} }); await done(request, session); await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED');
-  await transcript(page).getByRole('button', { name: 'Close dialog', exact: true }).click(); await expect(composer(page)).toHaveValue('A separate draft survives research.');
+  await expect(composer(page)).toHaveValue('A separate draft survives research.');
   expect(await calls(request, session)).toHaveLength(4); await assertUnchanged();
 });
 
@@ -190,8 +190,8 @@ test('a late child transcript response cannot replace another session or clear i
   const gate = new Promise<void>(resolve => { release = resolve; });
   await page.route(`**${bound(first, delegation)}`, async route => { const response = await route.fetch(); reached = true; await gate; await route.fulfill({ response }); });
   try {
-    await expandSteps(page); await taskCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click(); await expect(transcript(page)).toBeVisible(); await expect.poll(() => reached).toBe(true);
-    await transcript(page).getByRole('button', { name: 'Close dialog', exact: true }).click(); await page.getByRole('button', { name: 'Other research session', exact: true }).click();
+    await expandSteps(page); await expect(transcript(page)).toBeVisible(); await expect.poll(() => reached).toBe(true);
+    await page.getByRole('button', { name: 'Other research session', exact: true }).click();
     await expect(composer(page)).toHaveValue('Keep the other session draft.'); release(); await expect(transcript(page)).toHaveCount(0);
     await expect(page).toHaveURL(new RegExp(second.id)); await expect(composer(page)).toHaveValue('Keep the other session draft.');
   } finally { release(); await page.unrouteAll({ behavior: 'wait' }); }
@@ -210,7 +210,11 @@ test('another tab can cancel one researcher without duplicating results or losin
 
 test('desktop and mobile research transcript controls fit without horizontal overflow', async ({ page, request }) => {
   const session = await create(request, { permissionMode: 'auto' }); await page.setViewportSize({ width: 1440, height: 1000 }); await open(page, session); await send(page, session, 'HOLD_CHILD'); await waitHeld(request, session);
-  await expandSteps(page); await taskCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click(); await expect(transcript(page)).toContainText('Researcher is reviewing');
+  await expandSteps(page); await expect(transcript(page)).toContainText('Researcher is reviewing');
+  await expect(transcript(page).locator('.markdown').last()).toHaveCSS('font-style', 'italic');
+  await expect(page.getByRole('button', { name: 'Open transcript', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.evaluate(() => document.fonts.ready);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: 'test-results/delegation-desktop.png', fullPage: true, animations: 'disabled' });
   await page.setViewportSize({ width: 390, height: 844 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/delegation-mobile.png', fullPage: true, animations: 'disabled' });

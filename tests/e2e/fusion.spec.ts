@@ -45,9 +45,7 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await page.locator('.usage-details > summary').click();
       await expect(page.locator('.usage-breakdown')).toContainText('test-fast');
       await page.locator('.work-log > summary').click();
-      await page.getByRole('region', { name: `${role} task`, exact: true }).getByRole('button', { name: 'Open transcript', exact: true }).click();
-      await expect(page.getByRole('dialog', { name: `${role} transcript`, exact: true })).toContainText('Implementation complete');
-      await page.getByRole('button', { name: 'Close dialog', exact: true }).click();
+      await expect(page.getByRole('region', { name: `${role} transcript`, exact: true })).toContainText('Implementation complete');
       await page.getByRole('button', { name: 'Session actions', exact: true }).click();
       await page.getByRole('button', { name: 'Undo last turn', exact: true }).click();
       await page.getByRole('dialog').getByRole('button', { name: 'Undo last turn', exact: true }).click();

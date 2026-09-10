@@ -283,6 +283,7 @@ export function createApp(options:AppOptions = {}) {
     res.status(202).json(queue);
   });
   app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
+  app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId)));
   // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
   // is delivered between steps of the ACTIVE response. Child ids are already
   // rejected by the app-level child guard above; the runner 409s when idle.

@@ -227,3 +227,42 @@ test('retains the draft and attachment when a queue request fails, with no ghost
   await expect(page.getByRole('button', { name: 'Remove retry-context.txt' })).toHaveCount(0);
   await stopped(page, request, session);
 });
+
+for (const width of [1280, 390]) {
+  test(`promotes a queued message to steering without losing its attachment or the current draft at ${width}px`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const session = await create(request, 'Queue to steering');
+    try {
+      await open(page, session); await waiting(page, session, 'steering barrier');
+      await page.locator('input[type="file"][aria-label="Attach files"]').setInputFiles({ name: 'queued-context.txt', mimeType: 'text/plain', buffer: Buffer.from('Keep the saved attachment.') });
+      await enqueue(page, session, 'Explain the plan before making changes.');
+      await composer(page).fill('An independent unsent thought.');
+      const item = (await queue(request, session.id)).items[0];
+      const path = `/api/sessions/${session.id}/queue/${item.id}/steer`;
+      await page.route(`**${path}`, route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: 'Steering temporarily unavailable' }) }));
+      await page.getByRole('button', { name: 'Steer with queued message 1', exact: true }).click();
+      await expect(page.getByRole('alert')).toContainText('Steering temporarily unavailable');
+      expect((await queue(request, session.id)).items).toEqual([item]);
+      await expect(composer(page)).toHaveValue('An independent unsent thought.');
+      await page.unroute(`**${path}`);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/steer-queue-${width}.png`, animations: 'disabled' });
+      const accepted = page.waitForResponse(response => response.url().endsWith(path) && response.request().method() === 'POST');
+      await page.getByRole('button', { name: 'Steer with queued message 1', exact: true }).click();
+      expect((await accepted).status()).toBe(202);
+      await expect(queuePanel(page)).toHaveCount(0);
+      const note = page.getByRole('article', { name: 'Your message', exact: true }).last();
+      await expect(note).toContainText('Steering'); await expect(note).toContainText(item.content);
+      await expect(note).toContainText('queued-context.txt'); await expect(note).not.toContainText('[Steering]');
+      await expect(composer(page)).toHaveValue('An independent unsent thought.');
+      await expect(page.getByRole('region', { name: 'Permission requested' })).toHaveCount(0);
+      await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
+      const state = await detail(request, session.id);
+      expect(state.messages.filter(message => message.content.includes('[Steering]'))).toHaveLength(1);
+      expect(state.messages.find(message => message.content.includes('[Steering]'))?.attachments).toEqual(item.attachments);
+      expect(state.messages.filter(message => message.role === 'user')).toHaveLength(1);
+      await page.reload(); await expect(composer(page)).toHaveValue('An independent unsent thought.');
+      await expect(queuePanel(page)).toHaveCount(0); await expect(note).toContainText(item.content);
+    } finally { await request.post(`/api/sessions/${session.id}/cancel`); }
+  });
+}

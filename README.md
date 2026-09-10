@@ -48,7 +48,7 @@ npm start
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
 - Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
 - Background shell jobs: the agent can start a command with `run_in_background`, keep working, poll or stop it, and it learns of finished jobs automatically on your next message — with the same approval rules as any foreground command.
-- Mid-response steering: send a short note into a running response with the Steer button; it lands between steps as your latest instruction, auditable in the transcript.
+- Mid-response steering: send a short note into a running response with the Steer button; it goes to the driver as your latest instruction, stopping active delegated work and appearing immediately in the conversation.
 - Loop guards beyond identical-batch blocking: a repeated failing call is refused after three attempts with a change-approach directive, and rounds that produce no new information first draw a nudge, then an honest stop.
 - Session goals: set one objective and the agent pursues it across turns, reporting continue/complete/blocked each turn and continuing itself within a turn budget — with a bounded host evaluator when it forgets to report.
 - Planner + executor pairing: optionally set a planner model per session — Plan-mode turns think on the big model, Build turns execute on the fast one, while the picker shows the model that will handle the next turn.
@@ -93,7 +93,7 @@ Provider errors produce a nonzero exit status, including with `--json`. Ctrl+C/S
 
 ## Follow-ups and drafts
 
-During a response, **Queue** or Enter appends a follow-up; Shift+Enter adds a newline. Queued messages run in order only after an uninterrupted successful response. Stop, provider errors, denied/failed tools, and server restarts hold the remaining queue for explicit **Resume**. **Pause** holds future items without stopping the current response; **Stop** also cancels that response. Remove an item before it starts. Queues are local to each session, limited to 20 items and 16 MiB of serialized content, and file context is snapshotted when queued.
+During a response, **Queue** or Enter appends a follow-up; Shift+Enter adds a newline. Queued messages run in order only after an uninterrupted successful response. Stop, provider errors, denied/failed tools, and server restarts hold the remaining queue for explicit **Resume**. **Pause** holds future items without stopping the current response; **Stop** also cancels that response. Remove an item before it starts, or use **Steer now** during a response to send that queued message and its saved attachments to the driver immediately. Queues are local to each session, limited to 20 items and 16 MiB of serialized content, and file context is snapshotted when queued.
 
 Draft text and attachments stay separate for each session and are saved in this browser when storage allows it. Drafts are not shared across devices or browsers. Large drafts remain in memory with a warning when they exceed the 1 MiB per-draft / 2 MiB total browser-storage budget. File uploads allow up to six files, 3 MiB per file, and 200,000 characters per text file; selected file context sent to the model is bounded separately. An accepted message clears only the draft that was submitted, not newer typing.
 

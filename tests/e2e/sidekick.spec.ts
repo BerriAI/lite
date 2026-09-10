@@ -8,7 +8,7 @@ import type { DelegationSummary } from '../../shared/delegation';
 async function expandSteps(page: Page) { const log = page.locator('.conversation-content > article .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
 const sidekickCard = (page: Page) => page.getByRole('region', { name: 'Sidekick task', exact: true, includeHidden: true });
-const transcript = (page: Page) => page.getByRole('dialog', { name: 'Sidekick transcript', exact: true });
+const transcript = (page: Page) => page.getByRole('region', { name: 'Sidekick transcript', exact: true });
 const permission = (page: Page) => page.getByRole('region', { name: 'Permission requested', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[];
 
@@ -64,13 +64,13 @@ test('the sidekick writes behind parent-surfaced approvals and one persistent ch
   expect(first.messages.some(message => message.role === 'tool' && message.content.includes('Sidekick report for turn 1'))).toBe(true);
   // The card and transcript are labeled as sidekick surfaces, on the sidekick model.
   await expect(sidekickCard(page)).toContainText('Write the fixture note');
-  await expect(sidekickCard(page).locator('strong')).toHaveAttribute('title', /Sidekick/);
+  await expect(sidekickCard(page).locator('.research-task-heading > strong')).toHaveAttribute('title', /Sidekick/);
   const childCalls = (await calls(request, session)).filter(call => call.messages.some(message => message.role === 'user' && String(message.content).includes('SIDEKICK_CHILD')));
   expect(childCalls.length).toBeGreaterThan(0); for (const call of childCalls) expect(call.model).toBe('test-fast');
-  await expandSteps(page); await sidekickCard(page).getByRole('button', { name: 'Open transcript', exact: true }).click();
+  await expandSteps(page);
   await expect(transcript(page)).toContainText('Sidekick report for turn 1');
   await expect(transcript(page).getByRole('textbox', { name: 'Message Lite', exact: true })).toHaveCount(0);
-  await transcript(page).getByRole('button', { name: 'Close dialog', exact: true }).click();
+
   // Second turn: the SAME child session continues — persistent context, not a fresh helper.
   await send(page, session, 'second');
   await approve(page, 'sidekick'); await approve(page, /sidekick/i); await done(request, session);
@@ -80,13 +80,13 @@ test('the sidekick writes behind parent-surfaced approvals and one persistent ch
   const final = (await calls(request, session)).filter(call => call.messages.some(message => message.role === 'user' && String(message.content).includes('SIDEKICK_CHILD'))).at(-1)!;
   expect(final.messages.filter(message => message.role === 'user')).toHaveLength(2);
   await expandSteps(page);
-  await sidekickCard(page).last().getByRole('button',{name:'Open transcript',exact:true}).click();
-  await expect(transcript(page)).toContainText('Sidekick report for turn 2');
-  await expect(transcript(page)).not.toContainText('Sidekick report for turn 1');
-  await transcript(page).getByRole('button',{name:'Close dialog',exact:true}).click();
-  await sidekickCard(page).first().getByRole('button',{name:'Open transcript',exact:true}).click();
-  await expect(transcript(page)).toContainText('Sidekick report for turn 1');
-  await expect(transcript(page)).not.toContainText('Sidekick report for turn 2');
+
+  await expect(transcript(page).last()).toContainText('Sidekick report for turn 2');
+  await expect(transcript(page).last()).not.toContainText('Sidekick report for turn 1');
+
+
+  await expect(transcript(page).first()).toContainText('Sidekick report for turn 1');
+  await expect(transcript(page).first()).not.toContainText('Sidekick report for turn 2');
 });
 
 test('the sidekick tool is advertised only when the architecture is selected', async ({ page, request }) => {
