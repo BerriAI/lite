@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { getTheme } from '../tui2/theme.js';
-import { BUILTIN_THEMES } from '../tui2/themes.js';
-import { subtleSyntaxRules, syntaxRules } from '../tui2/syntax.js';
+import { getTheme } from '../tui/theme.js';
+import { BUILTIN_THEMES } from '../tui/themes.js';
+import { subtleSyntaxRules, syntaxRules } from '../tui/syntax.js';
 
 const theme = getTheme('lite', 'dark', BUILTIN_THEMES);
 if (!theme) throw new Error('lite theme missing');

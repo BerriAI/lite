@@ -1,6 +1,0 @@
-{
-  // remap exit to ctrl+q only
-  "keybinds": {
-    "app_exit": "ctrl+q",
-  },
-}

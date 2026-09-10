@@ -3,17 +3,22 @@
  * text, reasoning rows, inline and block tool renderers, error boxes, and the
  * turn footer. All derivation lives in transcriptModel.ts; this file only maps
  * row models onto renderer elements. */
-import { createContext, memo, useContext, useEffect, useMemo, useState } from 'react';
-import { SyntaxStyle } from '@opentui/core';
-import type { Message, PermissionRequest, SessionDetail } from '../shared/types.js';
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useKeyboard } from '@opentui/react';
+import { SyntaxStyle, MacOSScrollAccel, type ScrollBoxRenderable } from '@opentui/core';
+import type { Message, PermissionRequest, SessionDetail, Usage } from '../shared/types.js';
 import { selectedForeground, toHex, type Theme } from './theme.js';
 import { subtleSyntaxRules, syntaxRules } from './syntax.js';
 import {
-  collapseToolOutput, deriveRows, filetypeOf, formatDuration, marginAbove,
-  outputBudget, scannerFrame, TODO_MARKERS, type ToolRowModel, type TranscriptRow,
+  collapseToolOutput, filetypeOf, formatDuration,
+  outputBudget, scannerFrame, TODO_MARKERS, type ToolRowModel,
   SCANNER_INTERVAL_MS, SPINNER_FRAMES, SPINNER_INTERVAL_MS,
 } from './transcriptModel.js';
-import { useTheme } from './app.js';
+import { conversationGroups, usageLabel } from './conversation.js';
+import { Button } from './ui.js';
+import { terminalText } from './protocol.js';
+import { toolRow, reasoningSummary } from './transcriptModel.js';
+import { useConfig, useTheme } from './context.js';
 
 /** Heavy left rail used by user messages, block tools, and error boxes. */
 export const RAIL_BORDER = {
@@ -31,7 +36,7 @@ export interface TranscriptSettings {
 
 export const DEFAULT_TRANSCRIPT_SETTINGS: TranscriptSettings = {
   showThinking: false,
-  toolDetails: true,
+  toolDetails: false,
   animations: true,
   timestamps: false,
   genericToolOutput: false,
@@ -44,10 +49,9 @@ export function useTranscriptSettings(): TranscriptSettings {
 }
 
 function useSyntax(theme: Theme): { normal: SyntaxStyle; subtle: SyntaxStyle } {
-  return useMemo(() => ({
-    normal: SyntaxStyle.fromTheme(syntaxRules(theme)),
-    subtle: SyntaxStyle.fromTheme(subtleSyntaxRules(theme)),
-  }), [theme]);
+  const styles = useMemo(() => ({ normal: SyntaxStyle.fromTheme(syntaxRules(theme)), subtle: SyntaxStyle.fromTheme(subtleSyntaxRules(theme)) }), [theme]);
+  useEffect(() => () => { styles.normal.destroy(); styles.subtle.destroy(); }, [styles]);
+  return styles;
 }
 
 export function Spinner({ color, children }: { color: string; children: string }) {
@@ -95,7 +99,7 @@ function UserRow({ message, first }: { message: Message; first: boolean }) {
       flexShrink={0}
     >
       <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} backgroundColor={toHex(theme.backgroundPanel)} flexDirection="column">
-        {message.content.trim() ? <text fg={toHex(theme.text)} wrapMode="word">{message.content.trim()}</text> : null}
+        {message.content.trim() ? <text fg={toHex(theme.text)} wrapMode="word">{terminalText(message.content.trim(), true)}</text> : null}
         {chips.length ? <box flexDirection="row" gap={1} marginTop={message.content.trim() ? 1 : 0}>{chips}</box> : null}
         {timestamps ? <text fg={toHex(theme.textMuted)}>{new Date(message.createdAt).toLocaleTimeString()}</text> : null}
       </box>
@@ -103,24 +107,8 @@ function UserRow({ message, first }: { message: Message; first: boolean }) {
   );
 }
 
-function QueuedRow({ content }: { content: string }) {
-  const theme = useTheme();
-  return (
-    <box marginTop={1} border={['left']} customBorderChars={RAIL_BORDER} borderColor={toHex(theme.primary)} flexShrink={0}>
-      <box paddingTop={1} paddingBottom={1} paddingLeft={2} paddingRight={2} backgroundColor={toHex(theme.backgroundPanel)} flexDirection="column">
-        <box flexDirection="row" height={1}>
-          <text fg={toHex(selectedForeground(theme, theme.primary))} bg={toHex(theme.primary)}> QUEUED </text>
-        </box>
-        <box marginTop={1}>
-          <text fg={toHex(theme.text)} wrapMode="word">{content}</text>
-        </box>
-      </box>
-    </box>
-  );
-}
-
 function ReasoningRow({ row, subtle }: {
-  row: Extract<TranscriptRow, { kind: 'reasoning' }>;
+  row: { running: boolean; title: string | null; body: string };
   subtle: SyntaxStyle;
 }) {
   const theme = useTheme();
@@ -211,6 +199,8 @@ function InlineToolRow({ row, awaitingPermission, margin }: {
 function BlockBody({ row, syntax, width }: { row: ToolRowModel; syntax: SyntaxStyle; width: number }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
+  const { genericToolOutput } = useTranscriptSettings();
+  const config = useConfig();
   const body = row.body;
   if (!body) return null;
   switch (body.kind) {
@@ -288,7 +278,7 @@ function BlockBody({ row, syntax, width }: { row: ToolRowModel; syntax: SyntaxSt
     case 'generic': {
       const budget = outputBudget(3, width);
       const collapsed = collapseToolOutput(body.output, 3, budget);
-      return <text fg={toHex(theme.textMuted)} wrapMode="word">{collapsed.output}</text>;
+      return <text fg={toHex(theme.textMuted)} wrapMode="word">{genericToolOutput ? body.output : collapsed.output}</text>;
     }
   }
 }
@@ -327,65 +317,53 @@ function ErrorRow({ error }: { error: string }) {
   );
 }
 
-function FooterRow({ row }: { row: Extract<TranscriptRow, { kind: 'footer' }> }) {
-  const theme = useTheme();
-  const marker = row.interrupted ? theme.textMuted : theme.primary;
-  const parts = [row.mode];
-  if (row.model) parts.push(row.model);
-  if (row.duration) parts.push(row.duration);
-  if (row.interrupted) parts.push('interrupted');
-  return (
-    <box paddingLeft={3} marginTop={1} flexDirection="row" flexShrink={0} height={1}>
-      <text fg={toHex(marker)}>{'▣ '}</text>
-      <text fg={toHex(theme.text)}>{parts[0]}</text>
-      <text fg={toHex(theme.textMuted)}>{parts.slice(1).map(part => ` · ${part}`).join('')}</text>
-    </box>
-  );
+function WorkLog({ steps, detail, live, syntax, width, onInspect }: { steps: Message[]; detail: SessionDetail; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; onInspect?: (steps: Message[]) => void }) {
+  const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
+  const calls = steps.flatMap(message => message.toolCalls ?? []);
+  const thinking = steps.filter(message => message.reasoning);
+  if (!calls.length && !thinking.length) return null;
+  const current = calls.findLast(call => call.status === 'running' || call.status === 'pending');
+  const tasks = detail.delegations?.filter(task => task.parentTurnId === steps[0]?.turnId && task.status === 'running') ?? [];
+  const issues = calls.filter(call => call.status === 'error' || call.status === 'denied').length;
+  const label = live && !detail.permissions.length && !detail.questions?.length ? tasks.length > 1 ? `${tasks.length} workers running` : tasks.length === 1 ? `${tasks[0].role || 'Research'} · ${tasks[0].activity || tasks[0].description}` : current ? toolRow(current).text || current.name : 'Thinking' : calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process';
+  const open = expanded || settings.toolDetails;
+  return <box marginTop={1} flexDirection="column" flexShrink={0}>
+    <box flexDirection="row"><Button onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${terminalText(label).slice(0, width - 25)}${issues ? ` · ${issues} issues` : ''}`}</Button>{onInspect && <Button onPress={() => onInspect(steps)}>Inspect</Button>}</box>
+    {open && steps.map(message => <box key={message.id} flexDirection="column" flexShrink={0}>
+      {message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && message === steps.at(-1) && !message.content, ...reasoningSummary(message.reasoning) }} />}
+      {message.toolCalls?.map(call => { const row = toolRow(call); return row.shape === 'block' ? <BlockToolRow key={call.id} row={row} syntax={syntax.normal} width={width} /> : <InlineToolRow key={call.id} row={row} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id)} margin={0} />; })}
+    </box>)}
+  </box>;
 }
 
-function rowKey(row: TranscriptRow, index: number): string {
-  switch (row.kind) {
-    case 'tool': return `${row.message.id}:${row.row.call.id}`;
-    case 'queued': return `queued:${index}`;
-    default: return `${row.message.id}:${row.kind}:${index}`;
-  }
-}
-
-export const Transcript = memo(function Transcript({ detail, width }: { detail: SessionDetail; width: number }) {
-  const theme = useTheme();
-  const { toolDetails } = useTranscriptSettings();
-  const syntax = useSyntax(theme);
-  const rows = deriveRows(detail);
-  const visible = rows.filter(row =>
-    row.kind !== 'tool' || toolDetails || !row.row.completed);
-  const awaiting = new Set(detail.permissions.map((permission: PermissionRequest) => permission.toolCallId));
-  return (
-    <scrollbox flexGrow={1} stickyScroll stickyStart="bottom" paddingLeft={2} paddingRight={2} paddingBottom={1}>
-      <box height={1} />
-      {visible.map((row, index) => {
-        const margin = marginAbove(visible, index);
-        const key = rowKey(row, index);
-        switch (row.kind) {
-          case 'user':
-            return <UserRow key={key} message={row.message} first={index === 0} />;
-          case 'reasoning':
-            return <ReasoningRow key={key} row={row} subtle={syntax.subtle} />;
-          case 'text':
-            return <TextRow key={key} text={row.text} syntax={syntax.normal} />;
-          case 'tool':
-            return row.row.shape === 'block'
-              ? <BlockToolRow key={key} row={row.row} syntax={syntax.normal} width={width} />
-              : <InlineToolRow key={key} row={row.row} awaitingPermission={awaiting.has(row.row.call.id)} margin={margin} />;
-          case 'error':
-            return <ErrorRow key={key} error={row.error} />;
-          case 'footer':
-            return <FooterRow key={key} row={row} />;
-          case 'queued':
-            return <QueuedRow key={key} content={row.content} />;
-        }
-      })}
-    </scrollbox>
-  );
+export const Transcript = memo(function Transcript({ detail, width, active = true, onInspect, onUsage }: { detail: SessionDetail; width: number; active?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
+  const theme = useTheme(), config = useConfig(), syntax = useSyntax(theme), scroll = useRef<ScrollBoxRenderable>(null);
+  const acceleration = useMemo(() => { const native = new MacOSScrollAccel(); return { tick: () => (config.scroll_acceleration.enabled ? native.tick() : 1) * config.scroll_speed, reset: () => native.reset() }; }, [config.scroll_speed, config.scroll_acceleration.enabled]);
+  const [limit, setLimit] = useState(120);
+  const groups = useMemo(() => conversationGroups(detail), [detail.messages, detail.session.status]);
+  const visible = groups.slice(-limit);
+  useEffect(() => { setLimit(120); scroll.current?.scrollTo(Infinity); }, [detail.session.id]);
+  useKeyboard(key => {
+    if (!active || key.defaultPrevented) return;
+    const amount = key.name === 'pageup' ? -1 : key.name === 'pagedown' ? 1 : 0;
+    if (amount) { key.preventDefault(); key.stopPropagation(); scroll.current?.scrollBy(amount, 'viewport'); }
+    if (key.ctrl && key.name === 'home') { key.preventDefault(); key.stopPropagation(); setLimit(count => count + 120); scroll.current?.scrollTo(0); }
+    if ((key.ctrl && key.name === 'end') || (key.ctrl && key.name === 'g')) { key.preventDefault(); key.stopPropagation(); scroll.current?.scrollTo(Infinity); }
+  });
+  return <scrollbox ref={scroll} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>
+    {groups.length > limit && <Button onPress={() => setLimit(count => count + 120)}>Load earlier messages</Button>}
+    {!groups.length && <box flexGrow={1} marginTop={2} paddingLeft={2} flexDirection="column"><text fg={toHex(theme.text)}><strong>A fresh start.</strong></text><text fg={toHex(theme.textMuted)}>Give Lite a task in this workspace.</text><text fg={toHex(theme.textMuted)}>{terminalText(detail.session.workspace)}</text></box>}
+    {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
+      if (message.role === 'user') return <UserRow key={message.id} message={message} first={index === 0} />;
+      if (message.role === 'system') return <box key={message.id} marginTop={1} paddingLeft={2} flexShrink={0}><text fg={toHex(theme.textMuted)}>{terminalText(message.content, true)}</text></box>;
+      return <box key={message.id} flexDirection="column" flexShrink={0}>
+        {startsRun && <WorkLog steps={steps} detail={detail} live={live} syntax={syntax} width={width} onInspect={onInspect} />}
+        {message.content.trim() && <TextRow text={terminalText(message.content, true)} syntax={syntax.normal} />}
+        {message.error && <ErrorRow error={terminalText(message.error, true)} />}
+        {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(message, runUsage)}>{usageLabel(message, runUsage)}</Button></box>}
+      </box>;
+    })}
+  </scrollbox>;
 });
 
 /** Right-aligned interrupt affordance: `esc interrupt`, escalating after the

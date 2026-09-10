@@ -58,7 +58,7 @@ const mock=createServer(async(req,res)=>{
   }else if(prompt.includes('FUSION_BROWSER')){
     if(!data.tools?.some((tool:any)=>tool.function.name==='delegate'))emit({content:'Planning only. Write-capable delegation is unavailable.'});
     else if(data.messages.at(-1)?.role!=='tool'){toolCall=true;emit({tool_calls:[{index:0,id:'fusion-delegate',type:'function',function:{name:'delegate',arguments:JSON.stringify({description:'Implement the answer file',prompt:prompt.replace('FUSION_BROWSER','FUSION_CHILD')})}}]});}
-    else if(data.messages.some((message:any)=>message.role==='assistant'&&message.tool_calls?.some((call:any)=>call.function.name==='verify')))emit({content:'The answer file is implemented and npm test passed in the root workspace.'});
+    else if(data.messages.slice(data.messages.findLastIndex((message:any)=>message.role==='user')).some((message:any)=>message.role==='assistant'&&message.tool_calls?.some((call:any)=>call.function.name==='verify')))emit({content:'The answer file is implemented and npm test passed in the root workspace.'});
     else{toolCall=true;emit({tool_calls:[{index:0,id:'fusion-verify',type:'function',function:{name:'verify',arguments:JSON.stringify({command:'npm test'})}}]});}
   }else if(prompt.includes('SIDEKICK_CHILD')){
     // The persistent sidekick: writes a per-turn marker file, then reports.
@@ -139,9 +139,10 @@ app.get('/fixture/delegations',(_req,res)=>res.json({requests:delegationRequests
 app.post('/fixture/delegations/release',(_req,res)=>{for(const release of [...pendingDelegations])release();res.json({ok:true});});
 app.get('/fixture/summaries',(_req,res)=>res.json({pending:pendingSummaries.size}));
 app.post('/fixture/summaries/release',(_req,res)=>{for(const release of [...pendingSummaries])release();res.json({ok:true});});
-const vite=await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});app.use(vite.middlewares);
-const server=app.listen(3211,'127.0.0.1',()=>console.log('Lite E2E ready at http://127.0.0.1:3211'));
+const vite=process.env.LITE_E2E_NO_VITE ? undefined : await createViteServer({server:{middlewareMode:true,hmr:{port:24679}},appType:'spa'});if(vite)app.use(vite.middlewares);
+const fixturePort=Number(process.env.LITE_E2E_PORT || 3211);
+const server=app.listen(fixturePort,'127.0.0.1',()=>console.log(`Lite E2E ready at http://127.0.0.1:${(server.address() as {port:number}).port}`));
 const terminals=attachTerminals(server,store);
 let closing=false;
-async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close(),mcp.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
+async function close(){if(closing)return;closing=true;runner.stopAll();await Promise.all([runner.whenIdle(),terminals.close(),mcp.close()]);server.closeAllConnections();server.close();mock.closeAllConnections();mock.close();await vite?.close();store.close();await rm(root,{recursive:true,force:true});process.exit(0);}
 process.on('SIGINT',close);process.on('SIGTERM',close);

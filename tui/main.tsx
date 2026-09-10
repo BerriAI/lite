@@ -7,12 +7,15 @@
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import type { Session } from '../shared/types.js';
-import { LiteClient } from '../tui/client.js';
+import { LiteClient } from './client.js';
 import { parseOptions } from './options.js';
 import { SessionSync } from './sync.js';
 import { App } from './app.tsx';
+import { TerminalController } from './controller.js';
+import { TerminalStorage } from './storage.js';
 import { getTheme, setCustomThemes, type Theme } from './theme.js';
 import { BUILTIN_THEMES, DEFAULT_THEME_NAME } from './themes.js';
+import { ACTIVE_KEY_ACTIONS } from './commands.js';
 import { KeymapRouter, buildBindings, resolveLeader } from './keymap.js';
 import { discoverCustomThemes, loadTuiConfig } from './tuiConfig.js';
 
@@ -25,23 +28,13 @@ async function main() {
   const options = parseOptions(process.argv.slice(2));
   const client = new LiteClient(options.url);
 
-  // Config + theme + keymap load before the renderer so a bad config file
-  // warns on stderr while it is still visible.
-  const config = loadTuiConfig();
-  setCustomThemes(discoverCustomThemes());
-  const themeName = config.theme ?? DEFAULT_THEME_NAME;
-  const theme: Theme = getTheme(themeName, 'dark', BUILTIN_THEMES)
-    ?? getTheme(DEFAULT_THEME_NAME, 'dark', BUILTIN_THEMES)!;
-  const router = new KeymapRouter(resolveLeader(config.keybinds), config.leader_timeout);
-  router.addLayer({ name: 'app', bindings: buildBindings(config.keybinds, ['app_exit', 'session_interrupt']) });
-
   let sessionId = options.sessionId;
   if (!sessionId) {
     try {
       const body: Record<string, unknown> = {
         workspace: options.workspace,
-        permissionMode: options.permissionMode ?? 'ask',
-        mode: options.mode ?? 'build',
+        ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}),
+        ...(options.mode ? { mode: options.mode } : {}),
       };
       if (options.model) body.model = options.model;
       if (options.providerId) body.providerId = options.providerId;
@@ -56,7 +49,16 @@ async function main() {
     }
   }
 
+  const existing = await client.api<import('../shared/types.js').SessionDetail>(`/sessions/${encodeURIComponent(sessionId)}`);
+  const workspace = existing.session.workspace;
+  let config = loadTuiConfig({ cwd: workspace });
+  setCustomThemes(discoverCustomThemes({ cwd: workspace }));
+  const storage = new TerminalStorage();
+  let themeName = config.theme ?? storage.preferences().theme ?? DEFAULT_THEME_NAME;
+  let router = new KeymapRouter(resolveLeader(config.keybinds), config.leader_timeout);
+  router.addLayer({ name: 'app', bindings: buildBindings(config.keybinds, ACTIVE_KEY_ACTIONS) });
   const renderer = await createCliRenderer({
+    useMouse: config.mouse,
     externalOutputMode: 'passthrough',
     targetFps: 60,
     gatherStats: false,
@@ -67,23 +69,46 @@ async function main() {
   });
 
   const sync = new SessionSync(client, sessionId);
-  sync.start();
+  const terminalMode = await renderer.waitForThemeMode(250) ?? 'dark';
+  let theme = getTheme(themeName, terminalMode, BUILTIN_THEMES) ?? getTheme(DEFAULT_THEME_NAME, terminalMode, BUILTIN_THEMES)!;
+  if (config.cursor) renderer.setCursorStyle({ style: config.cursor.style === 'bar' ? 'line' : config.cursor.style, blinking: config.cursor.blink });
+  const controller = new TerminalController(client, sync, storage);
+  void controller.settings().catch(error => controller.notice(String(error)));
 
+  let workspaceUnsubscribe = () => {};
   let quitting = false;
   const quit = (code = 0) => {
     if (quitting) return;
     quitting = true;
     process.exitCode = code;
+    workspaceUnsubscribe();
     router.dispose();
-    sync.stop();
+    controller.stop();
     renderer.destroy();
+    try { storage.flush(); } catch { process.stderr.write('Could not save the terminal draft cache.\n'); }
   };
   process.on('SIGTERM', () => quit(143));
   process.on('SIGHUP', () => quit(129));
   const finished = new Promise<void>(resolve => renderer.once('destroy', () => resolve()));
 
   const root = createRoot(renderer);
-  root.render(<App sync={sync} theme={theme} router={router} onQuit={() => quit(0)} />);
+  let activeWorkspace = workspace;
+  const render = () => root.render(<App key={activeWorkspace} controller={controller} config={config} storage={storage} theme={theme} themeName={themeName} router={router} onQuit={() => quit(0)} />);
+  workspaceUnsubscribe = controller.subscribe(() => {
+    const nextWorkspace = controller.detail?.session.workspace;
+    if (!nextWorkspace || nextWorkspace === activeWorkspace) return;
+    activeWorkspace = nextWorkspace;
+    config = loadTuiConfig({ cwd: nextWorkspace, warn: message => controller.notice(message) });
+    setCustomThemes(discoverCustomThemes({ cwd: nextWorkspace }));
+    themeName = config.theme ?? storage.preferences().theme ?? DEFAULT_THEME_NAME;
+    theme = getTheme(themeName, renderer.themeMode ?? 'dark', BUILTIN_THEMES) ?? getTheme(DEFAULT_THEME_NAME, renderer.themeMode ?? 'dark', BUILTIN_THEMES)!;
+    router.dispose(); router = new KeymapRouter(resolveLeader(config.keybinds), config.leader_timeout);
+    router.addLayer({ name: 'app', bindings: buildBindings(config.keybinds, ACTIVE_KEY_ACTIONS) });
+    renderer.useMouse = config.mouse;
+    renderer.setCursorStyle({ style: config.cursor?.style === 'bar' ? 'line' : config.cursor?.style ?? 'block', blinking: config.cursor?.blink ?? true });
+    render();
+  });
+  render();
 
   await finished;
   root.unmount();

@@ -10,3 +10,4 @@ playwright-report/
 .DS_Store
 *.log
 WORKLOG.md
+test-results-tui/

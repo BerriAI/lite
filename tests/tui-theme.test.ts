@@ -5,8 +5,8 @@ import {
   selectedForeground, setCustomThemes, setSystemTheme, terminalMode, tint,
   toHex, THEME_TOKENS, TRANSPARENT,
   type TerminalColors, type ThemeJson,
-} from '../tui2/theme.js';
-import { BUILTIN_THEMES, DEFAULT_THEME_NAME } from '../tui2/themes.js';
+} from '../tui/theme.js';
+import { BUILTIN_THEMES, DEFAULT_THEME_NAME } from '../tui/themes.js';
 
 afterEach(() => resetThemeRegistry());
 

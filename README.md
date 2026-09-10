@@ -13,7 +13,7 @@ Built for LiteLLM, with OpenAI-compatible gateways, native Anthropic API support
 | **Team Fusion** | A strong lead gives fresh cheaper workers scoped assignments, then verifies the integrated result. Optional parallel workers use separate workspace copies and controlled patch integration. |
 | **Expert Fusion** | A cheaper driver coordinates and verifies; a fresh strong expert implements each assignment or repair without inheriting the driver's conversation. |
 
-Assign any connected provider/model to each role. “Strong” and “cheaper” describe the intended arrangement; Lite does not assume a model's quality or guarantee savings. The lead in Team and the driver in Expert delegate source edits automatically; a demonstrated worker failure can trigger an explicit bounded takeover. **Plan mode** stays read-only and optionally uses a separate planner. Bounded read-only research remains available independently of Fusion. File Pipeline and further TUI product work are deferred.
+Assign any connected provider/model to each role. “Strong” and “cheaper” describe the intended arrangement; Lite does not assume a model's quality or guarantee savings. The lead in Team and the driver in Expert delegate source edits automatically; a demonstrated worker failure can trigger an explicit bounded takeover. **Plan mode** stays read-only and optionally uses a separate planner. Bounded read-only research remains available independently of Fusion. File Pipeline remains deferred. The terminal client supports the same four arrangements.
 
 Open the model picker from the composer. Choose one of four architectures from the dropdown, then choose the driver and worker models in their searchable dropdowns (Single model needs only one). The optional Planner model switch uses a separate model in Plan mode. Close the picker and send your task. Lite remembers the most recent model arrangement for each workspace; existing conversations retain their own configuration. Work appears behind one steps disclosure. Worker approvals stay in the main conversation, Stop cancels the task family, and completed responses include recorded changes, checks, and aggregate provider usage. See [architecture behavior and limits](docs/architectures.md).
 
@@ -36,6 +36,17 @@ For a production build:
 npm run build
 npm start
 ```
+
+## Terminal interface
+
+```sh
+node bin/lite.mjs tui --workspace /path/to/project
+# Or run npm link once, then use: lite tui
+```
+
+The TUI attaches to your local server or starts one automatically. Open **Settings → Providers**, choose an architecture and models from **Models**, then type a task. **Ctrl+P** opens commands and session navigation. Handle approvals and questions in place, inspect worker evidence and changed files, and Undo/Redo from file history. Drafts survive session switches and terminal restarts. Exiting leaves the backend running; Escape twice stops the current task.
+
+The terminal uses bundled Bun; the shared backend stays on Node. See the [terminal guide](docs/tui.md) for keyboard controls, configuration, startup ownership, and tested platform scope.
 
 ## What works
 

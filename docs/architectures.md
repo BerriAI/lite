@@ -59,7 +59,7 @@ A durable request ledger attributes usage to the root turn, actor, model, and ph
 
 ## Validation
 
-Runner integration tests exercise persistent versus fresh context, parent approvals and edits, repairs, cancellation, hooks, compaction, concurrent private workspaces, conflicts, and integrated verification. Storage tests cover migration, immutable records, recovery, and usage. Browser tests cover selection, task details, history, and the existing session flows. TUI product work is deferred; shared types and existing CLI session execution remain supported.
+Runner integration tests exercise persistent versus fresh context, parent approvals and edits, repairs, cancellation, hooks, compaction, concurrent private workspaces, conflicts, and integrated verification. Storage tests cover migration, immutable records, recovery, and usage. Browser tests cover selection, task details, history, and the existing session flows. The [terminal client](tui.md) uses the same runner and is covered by real PTY workflows for all four architectures. Existing CLI session execution remains supported.
 
 For an opt-in live smoke comparison against connected providers, run:
 

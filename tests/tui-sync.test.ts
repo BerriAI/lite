@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RunEvent, SessionDetail } from '../shared/types.js';
 import type { LiteClient } from '../tui/client.js';
-import { parseOptions } from '../tui2/options.js';
-import { backoffDelay, BACKOFF_CAP_MS, COALESCE_MS, SessionSync } from '../tui2/sync.js';
+import { parseOptions } from '../tui/options.js';
+import { backoffDelay, BACKOFF_CAP_MS, COALESCE_MS, SessionSync } from '../tui/sync.js';
 
 function detailFixture(): SessionDetail {
   return {
@@ -29,7 +29,7 @@ function fakeClient(detail: SessionDetail, streams: RunEvent[][]) {
   return { client: client as unknown as LiteClient, snapshots };
 }
 
-describe('tui2 options', () => {
+describe('tui options', () => {
   it('parses launcher-forwarded flags with defaults', () => {
     const options = parseOptions(['--url', 'http://127.0.0.1:3211/', '--workspace', '/w', '--plan', '--auto'], {}, '/cwd');
     expect(options).toEqual({ url: 'http://127.0.0.1:3211', workspace: '/w', sessionId: undefined, model: undefined, providerId: undefined, mode: 'plan', permissionMode: 'auto' });
@@ -43,7 +43,7 @@ describe('tui2 options', () => {
   });
 });
 
-describe('tui2 backoff', () => {
+describe('tui backoff', () => {
   it('doubles from one second and caps at thirty', () => {
     expect([1, 2, 3, 4, 5, 6, 7].map(backoffDelay)).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000]);
     expect(backoffDelay(0)).toBe(1000);
@@ -51,7 +51,7 @@ describe('tui2 backoff', () => {
   });
 });
 
-describe('tui2 session sync', () => {
+describe('tui session sync', () => {
   it('loads the snapshot, reduces events, and coalesces notifications', async () => {
     vi.useFakeTimers();
     try {

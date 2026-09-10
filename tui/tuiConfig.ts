@@ -158,8 +158,8 @@ export function validateConfig(raw: unknown, warn: (message: string) => void): P
   if (isRecord(shaped.attention)) out.attention = { enabled: false, ...shaped.attention } as AttentionConfig;
   if (isRecord(shaped.prompt)) {
     out.prompt = { ...CONFIG_DEFAULTS.prompt };
-    if (typeof shaped.prompt.max_height === 'number') out.prompt.max_height = shaped.prompt.max_height;
-    if (typeof shaped.prompt.max_width === 'number' || shaped.prompt.max_width === 'auto') out.prompt.max_width = shaped.prompt.max_width;
+    if (typeof shaped.prompt.max_height === 'number' && Number.isFinite(shaped.prompt.max_height) && shaped.prompt.max_height >= 10 && shaped.prompt.max_height <= 85) out.prompt.max_height = shaped.prompt.max_height;
+    if ((typeof shaped.prompt.max_width === 'number' && Number.isInteger(shaped.prompt.max_width) && shaped.prompt.max_width >= 20) || shaped.prompt.max_width === 'auto') out.prompt.max_width = shaped.prompt.max_width;
   }
   if (typeof shaped.scroll_speed === 'number' && shaped.scroll_speed > 0) out.scroll_speed = shaped.scroll_speed;
   if (isRecord(shaped.scroll_acceleration) && typeof shaped.scroll_acceleration.enabled === 'boolean') {

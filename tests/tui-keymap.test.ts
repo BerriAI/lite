@@ -4,8 +4,8 @@ import {
   KeymapRouter, LEADER_TOKEN, parseBinding, parseChord, resolveLeader,
   strokeMatches,
   type KeyEvent, type Layer,
-} from '../tui2/keymap.js';
-import { KEYBIND_DEFAULTS, LEADER_DEFAULT } from '../tui2/keybinds.js';
+} from '../tui/keymap.js';
+import { KEYBIND_DEFAULTS, LEADER_DEFAULT } from '../tui/keybinds.js';
 
 function key(name: string, mods: Partial<KeyEvent> = {}): KeyEvent {
   return { name, ...mods };

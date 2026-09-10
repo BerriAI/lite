@@ -450,7 +450,7 @@ describe('spawned lite executable against a real local provider', () => {
     const state = await (await fetch(`${base}/fixture/race/${session.id}`)).json();
     expect(state.phases).toEqual(['subscribed', 'post-received', 'prior-done', 'post-dispatched']);
     expect(result.code).toBe(0); expect(sessionId(result)).toBe(session.id);
-    expect(result.stderr).not.toContain('401');
+    expect(result.stderr).toBe(`\nSession: ${session.id}\n`);
     const detail = await api<SessionDetail>(`/sessions/${session.id}`);
     const accepted = detail.messages.find(message => message.role === 'user' && message.content === 'Only this CLI response');
     expect(accepted).toBeDefined();

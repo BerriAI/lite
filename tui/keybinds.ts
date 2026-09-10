@@ -85,7 +85,7 @@ export const KEYBIND_DEFAULTS: Record<string, BindingValue> = {
   session_compact: '<leader>c',
   session_toggle_timestamps: 'none',
   session_toggle_generic_tool_output: 'none',
-  session_queued_prompts: '<leader>q',
+  session_queued_prompts: '<leader>p',
   session_child_first: '<leader>down',
   session_child_cycle: 'right',
   session_child_cycle_reverse: 'left',

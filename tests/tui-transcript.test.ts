@@ -1,32 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import type { Message, SessionDetail, ToolCall } from '../shared/types.js';
+import type { ToolCall } from '../shared/types.js';
 import {
-  collapseToolOutput, deriveRows, extractUnifiedDiff, filetypeOf, formatDuration,
-  inlineArgs, isFinalAssistant, isInterrupted, marginAbove, outputBudget,
+  collapseToolOutput, extractUnifiedDiff, filetypeOf, formatDuration,
+  inlineArgs, outputBudget,
   questionAnswer, reasoningSummary, scannerFrame, stripAnsi, titlecase, toolRow,
   SCANNER_HOLD_END, SCANNER_HOLD_START, SCANNER_WIDTH, SPINNER_FRAMES,
-} from '../tui2/transcriptModel.js';
+} from '../tui/transcriptModel.js';
 
 function call(overrides: Partial<ToolCall> & { name: string }): ToolCall {
   return { id: 't1', args: {}, status: 'completed', ...overrides };
-}
-
-function message(overrides: Partial<Message>): Message {
-  return {
-    id: 'm1', sessionId: 's1', role: 'assistant', content: '',
-    createdAt: 1_700_000_000_000, ...overrides,
-  };
-}
-
-function detail(messages: Message[], overrides: Partial<SessionDetail> = {}): SessionDetail {
-  return {
-    session: {
-      id: 's1', title: 'Test', workspace: '/w', providerId: 'fixture',
-      model: 'test-model', mode: 'build', permissionMode: 'ask', status: 'idle',
-      createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_000, archived: false,
-    } as SessionDetail['session'],
-    messages, todos: [], permissions: [], ...overrides,
-  };
 }
 
 describe('formatDuration', () => {
@@ -244,117 +226,6 @@ describe('questionAnswer', () => {
     expect(questionAnswer('{"answers":["a","b"]}')).toBe('a, b');
     expect(questionAnswer('plain reply')).toBe('plain reply');
     expect(questionAnswer('')).toBe('(no answer)');
-  });
-});
-
-describe('interrupt + footer detection', () => {
-  it('recognizes the abort marker without an error', () => {
-    expect(isInterrupted(message({ content: 'Response stopped.' }))).toBe(true);
-    expect(isInterrupted(message({ content: 'Response stopped.', error: 'x' }))).toBe(false);
-    expect(isInterrupted(message({ role: 'user', content: 'Response stopped.' }))).toBe(false);
-  });
-  it('anchors the footer on usage, interruption, or error', () => {
-    expect(isFinalAssistant(message({ content: 'hi', usage: { inputTokens: 1, outputTokens: 2 } }))).toBe(true);
-    expect(isFinalAssistant(message({ content: 'Response stopped.' }))).toBe(true);
-    expect(isFinalAssistant(message({ content: 'x', error: 'boom' }))).toBe(true);
-    expect(isFinalAssistant(message({ content: 'streaming' }))).toBe(false);
-  });
-});
-
-describe('deriveRows', () => {
-  it('produces user, reasoning, text, tool, and footer rows in order', () => {
-    const rows = deriveRows(detail([
-      message({ id: 'u1', role: 'user', content: 'hi there' }),
-      message({
-        id: 'a1', content: 'Hello back.',
-        reasoning: '**Checking**\n\nlooked at the request',
-        toolCalls: [call({ name: 'read_file', args: { path: 'a.ts' } })],
-        usage: { inputTokens: 25, outputTokens: 35, durationMs: 1200 },
-      }),
-    ]));
-    expect(rows.map(row => row.kind)).toEqual(['user', 'reasoning', 'text', 'tool', 'footer']);
-    const footer = rows.at(-1);
-    expect(footer).toMatchObject({ kind: 'footer', mode: 'Build', model: 'test-model', duration: '1.2s', interrupted: false });
-    const reasoning = rows[1];
-    expect(reasoning).toMatchObject({ kind: 'reasoning', title: 'Checking', body: 'looked at the request', running: false });
-  });
-
-  it('marks an interrupted turn and suppresses its body text', () => {
-    const rows = deriveRows(detail([
-      message({ id: 'u1', role: 'user', content: 'go' }),
-      message({ id: 'a1', content: 'Response stopped.', toolCalls: [call({ name: 'bash', args: { command: 'ls' }, output: '' })] }),
-    ]));
-    expect(rows.some(row => row.kind === 'text')).toBe(false);
-    expect(rows.at(-1)).toMatchObject({ kind: 'footer', interrupted: true });
-  });
-
-  it('adds an error row before the footer', () => {
-    const rows = deriveRows(detail([
-      message({ id: 'a1', content: 'partial', error: 'provider exploded' }),
-    ]));
-    expect(rows.map(row => row.kind)).toEqual(['text', 'error', 'footer']);
-  });
-
-  it('flags a running reasoning row only while the turn is thinking', () => {
-    const thinking = deriveRows(detail(
-      [message({ id: 'a1', content: '', reasoning: 'considering' })],
-      { session: { ...detail([]).session, status: 'running' } },
-    ));
-    expect(thinking[0]).toMatchObject({ kind: 'reasoning', running: true });
-    const answered = deriveRows(detail(
-      [message({ id: 'a1', content: 'done', reasoning: 'considering' })],
-      { session: { ...detail([]).session, status: 'running' } },
-    ));
-    expect(answered[0]).toMatchObject({ kind: 'reasoning', running: false });
-  });
-
-  it('skips empty user messages and tool-role messages', () => {
-    const rows = deriveRows(detail([
-      message({ id: 'u1', role: 'user', content: '   ' }),
-      message({ id: 't1', role: 'tool', content: 'raw result', toolCallId: 'x' }),
-    ]));
-    expect(rows).toEqual([]);
-  });
-
-  it('appends queued messages after the transcript', () => {
-    const rows = deriveRows(detail(
-      [message({ id: 'u1', role: 'user', content: 'first' })],
-      { queue: { items: [{ id: 'q1', sessionId: 's1', content: 'later', attachments: [], createdAt: 1_700_000_000_000 }], paused: false } },
-    ));
-    expect(rows.at(-1)).toMatchObject({ kind: 'queued', content: 'later' });
-  });
-
-  it('suppresses the footer while a plain text turn is still streaming', () => {
-    const rows = deriveRows(detail(
-      [message({ id: 'a1', content: 'stream…' })],
-      { session: { ...detail([]).session, status: 'running' } },
-    ));
-    expect(rows.map(row => row.kind)).toEqual(['text']);
-  });
-
-  it('adds a footer to the last message when the session is idle even without usage', () => {
-    const rows = deriveRows(detail([message({ id: 'a1', content: 'plain' })]));
-    expect(rows.map(row => row.kind)).toEqual(['text', 'footer']);
-  });
-});
-
-describe('marginAbove', () => {
-  it('packs single-line rows and separates multiline ones', () => {
-    const rows = deriveRows(detail([
-      message({
-        id: 'a1', content: '',
-        toolCalls: [
-          call({ name: 'read_file', args: { path: 'a.ts' } }),
-          call({ name: 'read_file', args: { path: 'b.ts' } }),
-        ],
-        usage: { inputTokens: 1, outputTokens: 1 },
-      }),
-    ]));
-    // two inline tool rows then footer
-    expect(rows.map(row => row.kind)).toEqual(['tool', 'tool', 'footer']);
-    expect(marginAbove(rows, 0)).toBe(0);
-    expect(marginAbove(rows, 1)).toBe(0); // packed inline rows
-    expect(marginAbove(rows, 2)).toBe(1); // footer always separates
   });
 });
 

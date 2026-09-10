@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { SseParser, parseSlash, summarizeArgs, terminalText, clip } from '../tui/protocol';
-import { clipVisible, composerView, tailClip, visibleLength } from '../tui/render';
 import { applyEvent } from '../shared/events';
 import type { RunEvent, SessionDetail } from '../shared/types';
 
@@ -78,34 +77,6 @@ describe('terminal text and clipping', () => {
   it('clip keeps short strings and ellipsizes long ones', () => {
     expect(clip('short', 10)).toBe('short');
     expect(clip('0123456789X', 10)).toBe('012345678…');
-  });
-});
-
-describe('render helpers', () => {
-  it('visibleLength ignores color sequences', () => {
-    expect(visibleLength('[32mok[0m')).toBe(2);
-  });
-  it('clipVisible clips by visible width and closes color state', () => {
-    const colored = `[31m${'x'.repeat(20)}[0m`;
-    const clipped = clipVisible(colored, 5);
-    expect(visibleLength(clipped)).toBe(5);
-    expect(clipped.endsWith('[0m')).toBe(true);
-    expect(clipVisible('plain', 10)).toBe('plain');
-  });
-  it('tailClip keeps the end of long input visible', () => {
-    expect(tailClip('abcdef', 10)).toBe('abcdef');
-    expect(tailClip('abcdefghij', 5)).toBe('…ghij');
-  });
-  it('composerView windows around the cursor and maps its column', () => {
-    const long = 'abcdefghijklmnopqrstuvwxyz';
-    const atEnd = composerView(long, long.length, 10);
-    expect(atEnd.view).toHaveLength(10);
-    expect(atEnd.view.endsWith('z')).toBe(true);
-    expect(atEnd.column).toBe(10);
-    const atStart = composerView(long, 0, 10);
-    expect(atStart.view.startsWith('a')).toBe(true);
-    expect(atStart.column).toBe(0);
-    expect(composerView('a\nb', 3, 20)).toEqual({ view: 'a␤b', column: 3 });
   });
 });
 

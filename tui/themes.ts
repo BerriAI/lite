@@ -1,5 +1,5 @@
 /** Built-in theme catalog for the terminal client. Generated data: each entry is
- * a raw ThemeJson (defs + theme token map) resolved by tui2/theme.ts. The
+ * a raw ThemeJson (defs + theme token map) resolved by tui/theme.ts. The
  * default theme is `lite`. */
 import type { ThemeJson } from './theme.js';
 

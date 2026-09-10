@@ -1,6 +1,6 @@
 # Fusion delivery audit
 
-September 10, 2026. Implements the approved product plan on top of `33f45d6` using the compact UI principles. File Pipeline and TUI product work are deferred by request. Single model, Plan/Build, provider configuration, read-only research, and existing sessions remain supported.
+September 10, 2026. Implements the approved product plan on top of `33f45d6` using the compact UI principles. File Pipeline remains deferred. TUI work was deferred for this Fusion delivery and is now covered by the [terminal replacement audit](tui-parity-plan.md). Single model, Plan/Build, provider configuration, read-only research, and existing sessions remain supported.
 
 ## Requirement-by-requirement evidence
 

@@ -25,14 +25,14 @@ test('asks before changing files and records an approved tool result',async({pag
   await fresh(page);await send(page,'create fixture');await expect(page.getByRole('region',{name:'Permission requested'})).toBeVisible();
   await page.getByRole('button',{name:'Allow once'}).click();await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);
   await expect(page.getByRole('article',{name:'Assistant message'}).last()).toContainText('The file operation is complete.');
-  await page.locator('.work-log > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText(/(?:Created|Updated|Wrote) result\.txt/)).toBeVisible();
+  await page.getByLabel('Response steps').filter({hasText:'step'}).locator(':scope > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText(/(?:Created|Updated|Wrote) result\.txt/)).toBeVisible();
   await page.screenshot({path:'test-results/tool-approved.png',fullPage:true,animations:'disabled'});
 });
 
 test('can deny a tool without leaving an approval spinner',async({page})=>{
   await fresh(page);await send(page,'create fixture denied');await expect(page.getByRole('button',{name:'Deny',exact:true})).toBeVisible();await page.getByRole('button',{name:'Deny',exact:true}).click();
   await expect(page.getByRole('button',{name:'Stop generation'})).toHaveCount(0);await expect(page.getByRole('region',{name:'Permission requested'})).toHaveCount(0);
-  await page.locator('.work-log > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText('The user denied or cancelled this action.',{exact:false})).toBeVisible();
+  await page.getByLabel('Response steps').filter({hasText:'step'}).locator(':scope > summary').click();await page.getByText('Write file',{exact:true}).click();await expect(page.getByText('The user denied or cancelled this action.',{exact:false})).toBeVisible();
 });
 
 test('stops a live stream and sends a follow-up',async({page})=>{

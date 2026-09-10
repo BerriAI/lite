@@ -7,8 +7,8 @@ import {
   loadTuiConfig, mergeDeep, normalizeShape, parseJsonc, resolvePlatform,
   substituteVariables, validateConfig,
   type LoadOptions, type TuiConfig,
-} from '../tui2/tuiConfig.js';
-import { KEYBIND_DEFAULTS } from '../tui2/keybinds.js';
+} from '../tui/tuiConfig.js';
+import { KEYBIND_DEFAULTS } from '../tui/keybinds.js';
 
 function fakeFs(files: Record<string, string>): Pick<LoadOptions, 'exists' | 'readFile'> {
   return {

@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
+import { ensureTuiServer } from './tui-server.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const raw = process.argv.slice(2);
@@ -14,11 +15,11 @@ const options = new Map();
 const positional = [];
 let base;
 const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills', '--days']);
-const booleanOptions = new Set(['--plan', '--build', '--auto', '--json', '--reindex', '--legacy']);
+const booleanOptions = new Set(['--plan', '--build', '--auto', '--json', '--reindex']);
 const supported = {
   serve: new Set(['--port', '--workspace']),
   run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
-  tui: new Set(['--url', '--workspace', '--model', '--provider', '--session', '--plan', '--build', '--auto', '--legacy']),
+  tui: new Set(['--url', '--workspace', '--model', '--provider', '--session', '--plan', '--build', '--auto']),
   profiles: new Set(['--url', '--workspace', '--json']),
   sessions: new Set(['--url']), models: new Set(['--url', '--provider']), export: new Set(['--url']),
   plugin: new Set(['--url', '--workspace', '--json']),
@@ -411,8 +412,7 @@ Server: --port 3210, --workspace PATH
 Client: --url URL (or LITE_URL)
 Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
         --profile ID, --skills ID,ID (or none)
-Tui:    --model ID, --provider ID, --session ID, --plan, --build, --auto,
-        --legacy (plain-Node fallback client)
+Tui:    --workspace PATH, --model ID, --provider ID, --session ID, --plan, --build, --auto
 Models: --provider ID
 Profiles: --workspace PATH (default current directory), --json
 Usage:   --days N (1-90, default 30), --json. Token counts are provider-
@@ -444,24 +444,18 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });
     process.on('SIGINT', () => child.kill('SIGINT')); process.on('SIGTERM', () => child.kill('SIGTERM'));
   } else if (command === 'tui') {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('lite tui needs an interactive terminal. Use lite run for scripted work.');
     const forwarded = ['--url', base, '--workspace', option('--workspace', process.cwd())];
     for (const name of ['--session', '--model', '--provider']) if (options.has(name)) forwarded.push(name, option(name));
     for (const name of ['--plan', '--build', '--auto']) if (options.has(name)) forwarded.push(name);
-    // The default TUI renders with a native terminal engine that requires the
-    // Bun runtime; the server never needs Bun. --legacy keeps the plain-Node
-    // fallback client.
-    let runtime, entry;
-    if (options.has('--legacy')) {
-      runtime = process.execPath;
-      entry = existsSync(resolve(root, 'dist/tui/app.js')) ? [resolve(root, 'dist/tui/app.js')] : ['--import', 'tsx', resolve(root, 'tui/app.ts')];
-    } else {
-      const bun = resolve(root, 'node_modules', '.bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
-      if (!existsSync(bun)) throw new Error('The TUI needs the bundled Bun runtime. Run npm install in the Lite directory, or use lite tui --legacy.');
-      runtime = bun;
-      entry = [resolve(root, 'tui2/main.tsx')];
-    }
+    if (options.has('--session') && ['--model', '--provider', '--plan', '--build', '--auto'].some(name => options.has(name))) throw new Error('An existing session keeps its configuration. Use the TUI Models or Settings menu to change it.');
+    const runtime = resolve(root, 'node_modules', '.bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
+    if (!existsSync(runtime)) throw new Error('The TUI needs the bundled Bun runtime. Run npm install in the Lite directory.');
+    const entry = [resolve(root, 'tui/main.tsx')];
     // cwd stays at the package root so the entry resolves; the caller's
     // directory travels as --workspace.
+    const started = await ensureTuiServer({ base, root, workspace: option('--workspace', process.cwd()), explicit: options.has('--url') || Boolean(process.env.LITE_URL) });
+    if (started) process.stderr.write(`Started Lite at ${base}. The server stays available after you exit. Stop it with: kill ${started.pid}\n`);
     const child = spawn(runtime, [...entry, ...forwarded], { cwd: root, stdio: 'inherit', env: process.env });
     child.on('error', error => { console.error(`Lite: ${terminalText(error.message)}`); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });

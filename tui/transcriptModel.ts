@@ -3,7 +3,7 @@
  * onto renderer elements. Keeping the derivation pure means the collapse
  * rules, icons, labels, and spacing algorithm are all unit-testable without a
  * terminal. */
-import type { Message, SessionDetail, Todo, ToolCall } from '../shared/types.js';
+import type { Todo, ToolCall } from '../shared/types.js';
 
 // ---------------------------------------------------------------------------
 // Formatting primitives
@@ -244,93 +244,6 @@ export const TODO_MARKERS: Record<Todo['status'], string> = {
 export function stripAnsi(text: string): string {
   // eslint-disable-next-line no-control-regex
   return text.replace(/\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\][^]*(?:|\\)?/g, '');
-}
-
-// ---------------------------------------------------------------------------
-// Message → row derivation
-
-export type TranscriptRow =
-  | { kind: 'user'; message: Message; queued: boolean; separate: true; multiline: true }
-  | { kind: 'reasoning'; message: Message; running: boolean; title: string | null; body: string; separate: true; multiline: boolean }
-  | { kind: 'text'; message: Message; text: string; separate: true; multiline: true }
-  | { kind: 'tool'; message: Message; row: ToolRowModel; separate: boolean; multiline: boolean }
-  | { kind: 'error'; message: Message; error: string; separate: true; multiline: true }
-  | { kind: 'footer'; message: Message; mode: string; model: string; duration: string; interrupted: boolean; separate: true; multiline: false }
-  | { kind: 'queued'; content: string; separate: true; multiline: true };
-
-export const INTERRUPTED_CONTENT = 'Response stopped.';
-
-export function isInterrupted(message: Message): boolean {
-  return message.role === 'assistant' && message.content === INTERRUPTED_CONTENT && !message.error;
-}
-
-/** A turn's final assistant message carries usage (set from the provider's
- * usage frame at end of stream) — that is the footer anchor. */
-export function isFinalAssistant(message: Message): boolean {
-  return message.role === 'assistant' && (Boolean(message.usage) || isInterrupted(message) || Boolean(message.error));
-}
-
-export function deriveRows(detail: SessionDetail): TranscriptRow[] {
-  const rows: TranscriptRow[] = [];
-  const messages = detail.messages;
-  const busy = detail.session.status === 'running' || detail.session.status === 'waiting';
-  for (let index = 0; index < messages.length; index++) {
-    const message = messages[index];
-    if (message.role === 'user') {
-      if (!message.content.trim() && !(message.attachments?.length)) continue;
-      rows.push({ kind: 'user', message, queued: false, separate: true, multiline: true });
-      continue;
-    }
-    if (message.role !== 'assistant') continue; // tool/system messages carry no chrome of their own
-    const isLast = index === messages.length - 1;
-    if (message.reasoning?.trim()) {
-      const { title, body } = reasoningSummary(message.reasoning);
-      const running = isLast && busy && !message.content.trim() && !(message.toolCalls?.length);
-      rows.push({ kind: 'reasoning', message, running, title, body, separate: true, multiline: false });
-    }
-    const interrupted = isInterrupted(message);
-    if (message.content.trim() && !interrupted) {
-      rows.push({ kind: 'text', message, text: message.content.trim(), separate: true, multiline: true });
-    }
-    for (const call of message.toolCalls ?? []) {
-      const row = toolRow(call);
-      rows.push({
-        kind: 'tool', message, row,
-        separate: row.shape === 'block' || row.separate,
-        multiline: row.shape === 'block' || row.text.includes('\n'),
-      });
-    }
-    if (message.error) {
-      rows.push({ kind: 'error', message, error: message.error, separate: true, multiline: true });
-    }
-    // The last message earns its footer only once the turn is fully settled —
-    // a completed provider stream can still be mid-turn while tools run.
-    const footerReady = isLast ? !busy : isFinalAssistant(message);
-    if (footerReady && (message.content.trim() || message.toolCalls?.length || message.error)) {
-      rows.push({
-        kind: 'footer', message,
-        mode: titlecase(detail.session.mode),
-        model: detail.session.model,
-        duration: message.usage?.durationMs ? formatDuration(message.usage.durationMs) : '',
-        interrupted, separate: true, multiline: false,
-      });
-    }
-  }
-  for (const item of detail.queue?.items ?? []) {
-    rows.push({ kind: 'queued', content: item.content, separate: true, multiline: true });
-  }
-  return rows;
-}
-
-/** Sibling spacing: a row gets a blank line above when the previous sibling is
- * multi-line or either side is marked always-separate; adjacent single-line
- * rows pack together. The first row never gets a margin. */
-export function marginAbove(rows: TranscriptRow[], index: number): 0 | 1 {
-  if (index === 0) return 0;
-  const previous = rows[index - 1];
-  const current = rows[index];
-  if (previous.multiline || previous.separate || current.separate) return 1;
-  return 0;
 }
 
 // ---------------------------------------------------------------------------
