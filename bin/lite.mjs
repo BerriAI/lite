@@ -10,7 +10,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const raw = process.argv.slice(2);
 const optionArgs = raw.includes('--') ? raw.slice(0, raw.indexOf('--')) : raw;
 const help = ['help', '--help', '-h'].includes(raw[0]) || optionArgs.some(value => value === '--help' || value === '-h');
-const command = help ? 'help' : !raw.length || raw[0].startsWith('--') ? 'serve' : raw[0];
+const command = help ? 'help' : !raw.length || raw[0].startsWith('--') ? 'tui' : raw[0];
 const options = new Map();
 const positional = [];
 let base;
@@ -393,9 +393,10 @@ try {
   if (command === 'help') console.log(`
 ≋ Lite — your ideas, up to speed.
 
-  lite [serve]              Start the local app
+  lite [options]            Open terminal chat in the current directory
+  lite serve                Start the local web server
   lite run "your prompt"    Run a coding task on a running server
-  lite tui                  Interactive terminal chat on a running server
+  lite tui                  Alias for lite
   lite sessions            List recent sessions
   lite models              List available models
   lite profiles            List project profiles, skills, and diagnostics
@@ -412,7 +413,8 @@ Server: --port 3210, --workspace PATH
 Client: --url URL (or LITE_URL)
 Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
         --profile ID, --skills ID,ID (or none)
-Tui:    --workspace PATH, --model ID, --provider ID, --session ID, --plan, --build, --auto
+Lite:   --workspace PATH, --model ID, --provider ID, --session ID, --plan, --build, --auto
+        The terminal starts its local server automatically when needed.
 Models: --provider ID
 Profiles: --workspace PATH (default current directory), --json
 Usage:   --days N (1-90, default 30), --json. Token counts are provider-
@@ -444,7 +446,7 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });
     process.on('SIGINT', () => child.kill('SIGINT')); process.on('SIGTERM', () => child.kill('SIGTERM'));
   } else if (command === 'tui') {
-    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('lite tui needs an interactive terminal. Use lite run for scripted work.');
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('lite needs an interactive terminal. Use lite run for scripted work.');
     const forwarded = ['--url', base, '--workspace', option('--workspace', process.cwd())];
     for (const name of ['--session', '--model', '--provider']) if (options.has(name)) forwarded.push(name, option(name));
     for (const name of ['--plan', '--build', '--auto']) if (options.has(name)) forwarded.push(name);

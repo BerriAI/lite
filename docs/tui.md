@@ -1,29 +1,37 @@
 # Terminal interface
 
-`lite tui` opens a full-screen client for the same local sessions, providers, Fusion runner, approvals, and history as the web app. There is one terminal implementation, in `tui/`, using OpenTUI and React with the bundled Bun runtime. The server runs on Node.
+Run `lite` in any project directory to open a full-screen client for the same local sessions, providers, Fusion runner, approvals, and history as the web app. There is one terminal implementation, in `tui/`, using OpenTUI and React with the bundled Bun runtime. The server runs on Node.
 
 ## Start here
 
-From a checkout:
+Install the command once from a checkout:
 
 ```sh
 npm install
 npm run build
-node bin/lite.mjs tui --workspace /path/to/project
+npm link
 ```
 
-To install the local command, run `npm link` once in the checkout. Then run `lite tui` from your project directory. Node 22.13 or later is required; npm installs Bun and the native terminal dependencies. Use a UTF-8 terminal, preferably at least 80 columns by 24 rows.
+Then, from any project:
+
+```sh
+cd /path/to/project
+lite
+```
+
+The current directory becomes the workspace. `lite tui` remains an alias. `lite serve` runs the web server separately; you do not need it to use the terminal. Without linking, use `node /path/to/lite/bin/lite.mjs` from your project instead.
+
+Node 22.13 or later is required; npm installs Bun and the native terminal dependencies. Use a UTF-8 terminal, preferably at least 80 columns by 24 rows.
 
 The launcher attaches to the default local server if it is already running. Otherwise it starts one and prints its PID and stop command. **Exiting the TUI leaves that server and its tasks running.** Stop a response before quitting if you want it cancelled. Server output goes to `.lite/tui-server.log` under the installation, or your `LITE_DATA_DIR`.
 
 Explicit connections attach only and never start a replacement server:
 
 ```sh
-lite tui --url http://localhost:3210
-lite tui --session SESSION_ID
+lite --url http://localhost:3210
 ```
 
-`LITE_URL` and `LITE_PORT` are also supported. Each normal launch creates a new session. Use **Sessions** to return to an existing conversation and restore its draft. Existing sessions keep their saved configuration; change it in Models or Settings. `--model`, `--provider`, `--plan`, `--build`, and `--auto` apply to new sessions.
+`LITE_URL` and `LITE_PORT` are also supported. Each normal launch creates a new session. Use **Sessions** or `lite --session SESSION_ID` to return to an existing conversation and restore its draft. Existing sessions keep their saved configuration; change it in Models or Settings. `--model`, `--provider`, `--plan`, `--build`, and `--auto` apply to new sessions.
 
 ## Your first task
 

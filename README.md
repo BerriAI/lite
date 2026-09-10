@@ -39,12 +39,24 @@ npm start
 
 ## Terminal interface
 
+Install the command once from this checkout:
+
 ```sh
-node bin/lite.mjs tui --workspace /path/to/project
-# Or run npm link once, then use: lite tui
+npm install
+npm run build
+npm link
 ```
 
-The TUI attaches to your local server or starts one automatically. Open **Settings → Providers**, choose an architecture and models from **Models**, then type a task. **Ctrl+P** opens commands and session navigation. Handle approvals and questions in place, inspect worker evidence and changed files, and Undo/Redo from file history. Drafts survive session switches and terminal restarts. Exiting leaves the backend running; Escape twice stops the current task.
+Then open any project directory and run `lite`:
+
+```sh
+cd /path/to/project
+lite
+```
+
+The current directory becomes your workspace. Lite starts its local server automatically when needed; there is no separate server command to run. `lite tui` remains an alias, and `lite serve` is available to run the web server on its own.
+
+Open **Settings → Providers**, choose an architecture and models from **Models**, then type a task. **Ctrl+P** opens commands and session navigation. Handle approvals and questions in place, inspect worker evidence and changed files, and Undo/Redo from file history. Drafts survive session switches and terminal restarts. Exiting leaves the backend running; Escape twice stops the current task.
 
 The terminal uses bundled Bun; the shared backend stays on Node. See the [terminal guide](docs/tui.md) for keyboard controls, configuration, startup ownership, and tested platform scope.
 

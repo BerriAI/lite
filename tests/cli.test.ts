@@ -179,6 +179,18 @@ describe('spawned lite executable against a real local provider', () => {
     expect(await requests()).toEqual([]);
   });
 
+  it.each([
+    { label: 'bare lite', args: [] },
+    { label: 'options-only lite', args: ['--model', 'cli-default'] },
+    { label: 'explicit tui alias', args: ['tui'] },
+  ])('requires an interactive terminal for $label without starting a session', async ({ args }) => {
+    const result = await run(args, { LITE_URL: base }, false);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain('needs an interactive terminal');
+    expect((await api<{ sessions: Session[] }>('/sessions')).sessions).toEqual([]);
+    expect(await requests()).toEqual([]);
+  });
+
   it('lists discovered models with explicit provider and LITE_URL configuration', async () => {
     const models = await run(['models']);
     expect(models.code).toBe(0); expect(models.stderr).toBe('');
