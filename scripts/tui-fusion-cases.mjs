@@ -21,6 +21,30 @@ export async function fusionCases({ api, terminal, screen, waitFor, save, settin
     terminal.write('\x1b[F\x1b[A\r');
     await waitFor(async () => (await detail()).session.architecture?.kind === kind, `${kind} saved`);
     await idle();
+    if (kind === 'team-fusion' || kind === 'expert-fusion') {
+      assert.equal((await detail()).session.architecture.concurrency, undefined, 'new worker arrangements retain automatic parallelism');
+      terminal.write('/models\r');
+      await waitFor(() => screen().includes('Workers at once: Automatic'), 'automatic worker setting');
+      terminal.write('\x1b[H' + '\x1b[B'.repeat(5) + '\r');
+      await waitFor(() => screen().includes('3 · parallel'), 'worker limit choices');
+      terminal.write('\x1b[H' + '\x1b[B'.repeat(3) + '\r');
+      await waitFor(() => screen().includes('Workers at once: 3'), 'worker limit chosen');
+      terminal.write('\x1b[F\x1b[A\r');
+      await waitFor(async () => (await detail()).session.architecture?.concurrency === 3, 'worker limit saved');
+      await idle(); terminal.write('/models\r');
+      await waitFor(() => screen().includes('Workers at once: 3'), 'saved worker limit restored');
+      terminal.write('\x1b[F\x1b[A\r'); await idle();
+      assert.equal((await detail()).session.architecture.concurrency, 3, 'saving models preserves an existing worker limit');
+      terminal.write('/models\r');
+      await waitFor(() => screen().includes('Workers at once: 3'), 'worker limit editor reopened');
+      terminal.write('\x1b[H' + '\x1b[B'.repeat(5) + '\r');
+      await waitFor(() => screen().includes('3 · parallel'), 'worker limit choices reopened');
+      terminal.write('\x1b[H\r');
+      await waitFor(() => screen().includes('Workers at once: Automatic'), 'automatic workers restored');
+      terminal.write('\x1b[F\x1b[A\r');
+      await waitFor(async () => (await detail()).session.architecture?.concurrency === undefined, 'worker limit removed');
+      await idle();
+    }
   };
   const approve = async () => {
     let permission;

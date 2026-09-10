@@ -5,7 +5,7 @@ import type { ClientSurface } from '../shared/client.js';
 export function clientContext(surface: ClientSurface, workspace: string, defaultWorkspace: string): string {
   const interfaces: Record<ClientSurface, string> = {
     web: 'Interface: Lite web UI in a browser. To work in another project: open Settings using the gear at the bottom of the sidebar, select General, set Workspace path, click Save settings, then click New session. On mobile, open navigation first to see the sidebar.',
-    terminal: 'Interface: Lite terminal UI. To work in another project, start a new terminal session with lite tui --workspace /absolute/project/path (without --session, which would reopen the old workspace).',
+    terminal: 'Interface: Lite terminal UI. To work in another project, open that directory in your shell and run lite. The launch directory becomes the new session workspace and the local backend starts automatically when needed. You can also use lite --workspace /absolute/project/path (without --session, which would reopen the old workspace).',
     cli: 'Interface: Lite command-line run. New runs use the launch directory; resuming an existing session retains its saved workspace.',
     api: 'Interface: API or unspecified client. No web or terminal interface was reported; do not infer one from the project directory. If the user names their interface, use that information.',
   };

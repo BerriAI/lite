@@ -34,7 +34,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   const [worker, setWorker] = useState<ModelRoute | null>(initial.architecture ? architectureWorker(initial.architecture) : null);
   const [planner, setPlanner] = useState<ModelRoute | null>(initial.planner ?? null);
   const [reasoning, setReasoning] = useState<ModelReasoning>(initial.modelReasoning ?? {});
-  const [concurrency, setConcurrency] = useState(initial.architecture?.kind === 'team-fusion' ? initial.architecture.concurrency ?? 1 : 1);
+  const [concurrency, setConcurrency] = useState<1 | 2 | 3 | 4 | undefined>(initial.architecture?.kind === 'team-fusion' || initial.architecture?.kind === 'expert-fusion' ? initial.architecture.concurrency : undefined);
   const [style, setStyle] = useState(initial.outputStyle ?? ''), [styles, setStyles] = useState(['concise', 'explanatory', 'learning']);
   const [view, setView] = useState('main'), [catalog, setCatalog] = useState<Model[]>([]);
   useEffect(() => { let live = true; controller.client.api<{ styles: string[] }>(`/styles?workspace=${encodeURIComponent(initial.workspace)}`).then(result => { if (live) setStyles([...new Set([...styles, ...result.styles])]); }).catch(() => {}); return () => { live = false; }; }, []);
@@ -58,7 +58,10 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
     const supported = catalog.find(item => item.id === route.model)?.reasoningEfforts ?? REASONING_EFFORTS;
     return <Menu title={`Reasoning · ${route.model}`} search={false} onClose={back} items={['', ...supported].map(effort => ({ id: effort || 'default', label: effort || 'Default', action: () => { const next = { ...reasoning }; if (effort) next[key] = effort as typeof REASONING_EFFORTS[number]; else delete next[key]; setReasoning(next); back(); } }))} />;
   }
-  if (view === 'concurrency') return <Menu title="Workers at once" search={false} onClose={back} items={[1, 2, 3, 4].map(count => ({ id: String(count), label: count === 1 ? '1 · sequential' : `${count} · parallel`, action: () => { setConcurrency(count as 1 | 2 | 3 | 4); back(); } }))} />;
+  if (view === 'concurrency') return <Menu title="Workers at once" search={false} onClose={back} items={[
+    { id: 'auto', label: 'Automatic', description: 'Run independent assignments together within the turn budget.', action: () => { setConcurrency(undefined); back(); } },
+    ...([1, 2, 3, 4] as const).map(count => ({ id: String(count), label: count === 1 ? '1 · sequential' : `${count} · parallel`, action: () => { setConcurrency(count); back(); } })),
+  ]} />;
   if (view === 'style') return <Menu title="Output style" onClose={back} items={['', ...styles].map(value => ({ id: value || 'default', label: value || 'Default', action: () => { setStyle(value); back(); } }))} />;
   const fields = (id: string, label: string, value: ModelRoute | null): MenuItem[] => [
     { id: `model:${id}`, label: `${label}: ${value?.model || 'Choose a model'}`, description: value?.providerId, action: () => setView(`model:${id}`) },
@@ -67,7 +70,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   const save = async () => {
     try {
       const architecture = kind !== 'single' && worker ? selectArchitecture(kind, worker) : null;
-      if (architecture?.kind === 'team-fusion') architecture.concurrency = concurrency;
+      if (architecture?.kind === 'team-fusion' || architecture?.kind === 'expert-fusion') architecture.concurrency = concurrency;
       if (await controller.configure({ ...driver, architecture, planner, modelReasoning: reasoning, outputStyle: style || null }, initial.configRevision ?? 0)) onClose();
     } catch (error) { controller.notice(String((error as Error).message)); }
   };
@@ -75,7 +78,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
     { id: 'architecture', label: `Architecture: ${name}`, action: () => setView('architecture') },
     ...fields('driver', kind === 'single' ? 'Model' : 'Driver', driver),
     ...(kind !== 'single' ? fields('worker', workerLabel, worker) : []),
-    ...(kind === 'team-fusion' ? [{ id: 'workers', label: `Workers at once: ${concurrency}`, action: () => setView('concurrency') }] : []),
+    ...(kind === 'team-fusion' || kind === 'expert-fusion' ? [{ id: 'workers', label: `Workers at once: ${concurrency ?? 'Automatic'}`, action: () => setView('concurrency') }] : []),
     { id: 'planner', separatorBefore: true, label: `Planner model: ${planner ? 'On' : 'Off'}`, description: 'Use a different model in Plan mode.', action: () => { if (planner) setPlanner(null); else setView('model:planner'); } },
     ...(planner ? fields('planner', 'Planner', planner) : []),
     { id: 'style', separatorBefore: true, label: `Output style: ${style || 'Default'}`, action: () => setView('style') },
