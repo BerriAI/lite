@@ -2,6 +2,8 @@
 
 Lite treats the arrangement of models as a session setting. The web picker exposes Single model, Sidekick Fusion, Team Fusion, and Expert Fusion. Models are configurable routes to connected providers, not models bundled with Lite. File Pipeline is not implemented.
 
+The aim is to reserve stronger models for the work that benefits from them while cheaper models handle suitable assignments. Persistent sidekick context is inspired by [Cognition’s Devin Fusion](https://cognition.com/blog/devin-fusion). Quality, cost, and latency need to be measured for each model combination and task.
+
 ## Arrangements
 
 - **Single model:** the existing general-purpose tool loop.
@@ -41,7 +43,7 @@ Worker file-tool changes belong to the root turn with actor and invocation attri
 
 Approvals belong to the root UI and name the actual action and actor. Worker PreToolUse/PostToolUse hooks inherit the captured parent policy. Sidecar configurations are captured at acceptance; changing them during a response blocks remaining intercepted calls until a new response. Sidecar modifications retain original arguments and pass approval again. Read-only researchers retain their stricter tool ceiling and do not inherit mutating hooks.
 
-Stop aborts active child requests and approvals and waits for owned background jobs to stop before settling their reports. A worker that returns with unfinished background commands is failed and those commands are stopped. Approval wait time is excluded from worker execution time limits. Steering is recorded before acknowledgement, forwarded to active workers, and applied at a safe tool/model boundary. A note that arrives too late remains visible for continuation; recovery restores acknowledged notes even if the process stopped before delivery.
+Stop aborts active child requests and approvals and waits for owned background jobs to stop before settling their reports. A worker that returns with unfinished background commands is failed and those commands are stopped. Approval wait time is excluded from worker execution time limits. Steering is recorded before acknowledgement and sent to the driver, stopping active delegated work so the driver can apply the new instruction. A note that arrives too late remains visible for continuation; recovery restores acknowledged notes even if the process stopped before delivery.
 
 All Fusion workers share a per-root-turn budget: eight invocations, 120 model steps, and 30 cumulative active minutes. Each invocation is limited to 50 steps, ten active minutes, 16 MiB of transcript, and a 64 KiB report; the configured max-step ceiling may be lower. These limits bound repair and fallback activity. Read-only research has its separate, smaller budget.
 

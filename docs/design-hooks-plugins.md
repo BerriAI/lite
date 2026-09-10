@@ -12,7 +12,16 @@ Ordering with existing layers: permission rules and approval decide first; PreTo
 
 ## 4.4 Plugin packages (install-time trust)
 
-`lite plugin install <git-url|path>` (CLI) and Settings → Plugins (UI): a package is a directory with `lite-plugin.json` (`{name, version, description, skills?, commands?, mcpServers?, hooks?}`) whose entries are relative paths/config fragments. Install = **dry-run plan first** (exact list: which files land in `.lite/skills/`, `.lite/commands/`, which MCP servers and hooks would be added to settings with their commands visible), then explicit confirm. Provenance recorded per installed item (`installedBy: <plugin>@<version>`) so uninstall is exact. MCP servers from a plugin land **disabled** — connecting stays the explicit act it is today. Hooks from a plugin land under the same workspace-trust gate. Compatible manifests (`.claude-plugin/plugin.json`) are read where the shapes map.
+Packages are local directories with `lite-plugin.json` (`{name, version, description, skills?, commands?, mcpServers?, hooks?}`) whose entries are relative paths/config fragments. Clone a Git package first; the CLI does not install directly from URLs.
+
+```sh
+lite plugin plan /path/to/package
+lite plugin install /path/to/package
+lite plugin list
+lite plugin remove package-name
+```
+
+`plan` previews the exact files, MCP servers, hooks, and conflicts without changing anything. `install` plans and applies immediately; running it is the explicit install action. Existing conflicting items are skipped. Per-item hashes record provenance, so uninstall removes the installed content and leaves subsequently modified files with a warning. MCP servers land **disabled**; connect them explicitly in Settings. Hooks use the existing workspace-trust policy. Compatible manifests (`.claude-plugin/plugin.json`) are read where the shapes map.
 
 ## 4.5 Sidecar extensions
 

@@ -43,6 +43,8 @@ lite --url http://localhost:3210
 
 Workspace model preferences are shared with the web app. An editor opened before another client changes the session must be reopened before saving, so it cannot silently overwrite newer configuration.
 
+Team and Expert default to automatic parallel execution for independent assignments. **Workers at once** can cap concurrency at one to four; choosing **Automatic** removes the cap. The shared runner still enforces its turn budget.
+
 ## Keyboard and focus
 
 Ctrl+P is the main navigation surface: search actions or project commands, use ↑/↓, press Enter, and use Escape to return. You can also enter built-in slash commands into an empty composer.
@@ -76,7 +78,7 @@ For an approval, press **1 Allow once**, **2 Always**, or **3 Deny**. Ctrl+F ope
 
 Each response has one expandable work log. Tool arguments, output, reasoning, and intercepted-call provenance remain inspectable. Worker views are read-only and scoped to an individual assignment; revisiting an old Sidekick handoff does not append its later work. Sidekick reuses compatible context; Team and Expert use fresh assignment contexts. Final usage includes the task family and distinguishes unreported usage from zero.
 
-`/changes` shows recorded file changes, including worker edits. Wide terminals can show split diffs; narrower terminals use unified diffs. `/history` provides Undo, Redo, recovery details, and protected paths. The server checks external edits before restoring files. Undo/Redo never replay shell commands and do not reverse every external effect; see [history guarantees](../README.md#undo-redo-and-recovery).
+`/changes` shows recorded file changes, including worker edits. Wide terminals can show split diffs; narrower terminals use unified diffs. `/history` provides Undo, Redo, recovery details, and protected paths. The server checks external edits before restoring files. Undo/Redo never replay shell commands and do not reverse every external effect; see [history guarantees](local-data.md#undo-redo-and-recovery).
 
 Enter during a response queues a follow-up. `/queue` can pause, resume, or remove queued messages. Steering is separate and goes to the driver; it can stop delegated work so the driver can consider the new instruction. Session goals use a configurable turn limit and begin when you send a message. Stop pauses their continuation.
 

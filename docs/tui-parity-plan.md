@@ -52,3 +52,12 @@ The core replacement and the previously supported legacy task workflows are impl
 - Optional reference-client extras: reserved keybinding actions, sound packs, and richer shell/job dashboards. These are not advertised as implemented controls.
 
 File Pipeline remains a separate architecture experiment. The TUI uses the same four released arrangements as the web app.
+
+## Main integration verification (2026-09-10)
+
+Integrated `main` through `ab49d19`, including live worker activity and approved external-path access. Bare `lite` now launches from any project directory. Terminal model settings preserve automatic parallel execution and explicit concurrency limits for both Team and Expert. The browser workspace panel closes on narrow layouts while preserving its desktop preference.
+
+- TypeScript and production builds passed. The full unit/integration run passed 1,630 tests with one opt-in runtime test skipped; after the responsive-layout fix, all 117 affected client tests passed again.
+- Both terminal PTY suites passed, including real command discovery on PATH, automatic backend startup, caller workspace, suspend/foreground, and model-setting persistence.
+- The complete browser run passed 130 of 131 scenarios and exposed the mobile workspace overlay. After fixing it, all 32 affected browser scenarios passed, including the previously failing profile flow and a new resize/reload regression.
+- README reference material moved into linked usage, provider, CLI, local-data, and development guides. Local documentation links and anchors were checked.
