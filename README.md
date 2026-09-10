@@ -2,6 +2,8 @@
 
 Lite is a local-first coding harness built around **multi-model agents**. Choose how your models work together, give them a task, and review one conversation with shared approvals, changes, verification evidence, and history.
 
+Multi-model agents aim to lower cost by reserving strong models for planning and judgment while cheaper models handle exploration, implementation, and tests. Persistent sidekick context can also reduce repeated context processing—the idea behind [Cognition’s Devin Fusion](https://cognition.com/blog/devin-fusion).
+
 Built for LiteLLM, with OpenAI-compatible gateways, native Anthropic API support, and an explicit ChatGPT subscription connection. Your project stays on your machine; prompts and selected context go to the provider you choose.
 
 ## Model arrangements
@@ -10,12 +12,12 @@ Built for LiteLLM, with OpenAI-compatible gateways, native Anthropic API support
 | --- | --- |
 | **Single model** | One model investigates, implements, and checks the work. |
 | **Sidekick Fusion** | A strong lead plans and reviews; a cheaper persistent sidekick explores, implements, tests, and repairs across compatible handoffs. |
-| **Team Fusion** | A strong lead gives fresh cheaper workers scoped assignments, then verifies the integrated result. Optional parallel workers use separate workspace copies and controlled patch integration. |
+| **Team Fusion** | A strong lead gives fresh cheaper workers scoped assignments, then verifies the integrated result. Workers run in parallel by default, with separate workspace copies and controlled patch integration. |
 | **Expert Fusion** | A cheaper driver coordinates and verifies; a fresh strong expert implements each assignment or repair without inheriting the driver's conversation. |
 
 Assign any connected provider/model to each role. “Strong” and “cheaper” describe the intended arrangement; Lite does not assume a model's quality or guarantee savings. The lead in Team and the driver in Expert delegate source edits automatically; a demonstrated worker failure can trigger an explicit bounded takeover. **Plan mode** stays read-only and optionally uses a separate planner. Bounded read-only research remains available independently of Fusion. File Pipeline remains deferred. The terminal client supports the same four arrangements.
 
-Open the model picker from the composer. Choose one of four architectures from the dropdown, then choose the driver and worker models in their searchable dropdowns (Single model needs only one). The optional Planner model switch uses a separate model in Plan mode. Close the picker and send your task. Lite remembers the most recent model arrangement for each workspace; existing conversations retain their own configuration. Work appears behind one steps disclosure. Worker approvals stay in the main conversation, Stop cancels the task family, and completed responses include recorded changes, checks, and aggregate provider usage. See [architecture behavior and limits](docs/architectures.md).
+Open the model picker from the composer. Choose one of four architectures from the dropdown, then choose the driver and worker models in their searchable dropdowns (Single model needs only one). The optional Planner model switch uses a separate model in Plan mode. Close the picker and send your task. Lite remembers the most recent model arrangement for each workspace; existing conversations retain their own configuration. Tool calls appear live where they happen; consecutive calls fold into one steps summary when the assistant adds text. Each worker or expert has a numbered card and its own inline transcript. Worker approvals stay in the main conversation, Stop cancels the task family, and completed responses include recorded changes, checks, and aggregate provider usage. See [architecture behavior and limits](docs/architectures.md).
 
 ## Quick start
 
@@ -69,7 +71,7 @@ The terminal uses bundled Bun; the shared backend stays on Node. See the [termin
 - Bounded transient HTTP retries, repeated-tool-loop detection, advisory request-context estimates, and one-shot proactive/overflow compaction that preserves the latest task and archives older history.
 - Free context pruning before paid summarization: stale tool outputs shrink in the outbound request only, while the saved conversation stays complete; truncated tool results keep a hash receipt and can be read back losslessly with `tool_output_page`.
 - A real terminal per session: open it from the top bar, hide and reconnect without losing shell state, or explicitly end the shell.
-- Workspace file reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos.
+- File reads, exact edits, writes, glob/regex search, shell execution, public web retrieval, and session todos; outside-workspace paths go through tool permissions.
 - Background shell jobs: the agent can start a command with `run_in_background`, keep working, poll or stop it, and it learns of finished jobs automatically on your next message — with the same approval rules as any foreground command.
 - Mid-response steering: send a short note into a running response with the Steer button; it goes to the driver as your latest instruction, stopping active delegated work and appearing immediately in the conversation.
 - Loop guards beyond identical-batch blocking: a repeated failing call is refused after three attempts with a change-approach directive, and rounds that produce no new information first draw a nudge, then an honest stop.
@@ -168,7 +170,7 @@ MCP server commands are executable configuration. Save and review them in **Sett
 - **Permissions are not a sandbox.** Approved shell commands and MCP servers run with your local user's capabilities and may access the network or other files. Opening the terminal explicitly starts your login shell, independent of the agent's Plan mode; terminal input is direct user input, not model-approved execution.
 - Terminals currently support macOS/Linux and live only while the server runs. Hidden terminals expire after 30 minutes with no viewers. Reconnection replays up to 256 KiB of output, not a full-screen terminal snapshot. Login profiles can add their own environment variables; the app does not forward its provider credentials.
 - Automatic retries happen only for explicit transient HTTP failures, at most twice, before streaming begins. Ambiguous network failures and partial streams are not replayed. Failed attempts may still incur provider charges.
-- File tools enforce the workspace's real path, reject symlink escapes and `.git` writes, and guard bounded reads/edits. Discovery skips hidden and generated directories. These checks do not turn shell commands into isolated processes.
+- File tools resolve actual paths before approval. Outside-workspace targets require approval in Ask mode; Auto or an allow rule can approve them. Remembered external grants bind to the tool and resolved path. Credential protections and `.git` write restrictions still apply, and external edits are outside workspace Undo. Discovery skips hidden and generated directories. These checks do not turn shell commands into isolated processes.
 - Undo covers recorded file-tool mutations and supported observed foreground-command source changes; it does not reverse arbitrary external side effects. It preflights all targets and rechecks each file immediately before restoration. Conflicts preserve remaining snapshots; completed restorations are recorded separately. It is not a cross-file transaction or protection against arbitrary concurrent external writers.
 - Attachments are snapshotted when sent. Imported attachment paths never open local files; missing embedded content must be explicitly reattached. Command files use the same bounded regular-file protections and cannot redirect through symlinks.
 - `.env`, `.lite/`, logs, test outputs, and the local work log are ignored by Git. `.lite/` stores the local database and subscription tokens. Session exports may contain source code, paths, and tool output; review before sharing.

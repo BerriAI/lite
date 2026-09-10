@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile, symlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../server/store.js';
@@ -22,6 +22,19 @@ describe('isolated worker publication', () => {
     await writeFile(join(batch.workspaces.get('two')!.workspace, 'b.txt'), 'worker two');
     return batch;
   }
+  it('excludes state reached through a different filesystem alias from workspace copies', async () => {
+    const alias = directory + '-alias'; await symlink(directory, alias, 'dir');
+    const aliasStore = new Store(join(alias, 'state'));
+    try {
+      const workers = await ParallelWorkers.create(directory, id, ['one', 'two'], new History(aliasStore), new AbortController().signal);
+      for (const worker of workers.workspaces.values()) {
+        await expect(stat(join(worker.workspace, 'state'))).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(await readFile(join(worker.workspace, 'a.txt'), 'utf8')).toBe('before');
+      }
+      await Promise.all(['one', 'two'].map(key => workers.complete(key, true)));
+      await workers.cleanup();
+    } finally { aliasStore.close(); await rm(alias); }
+  });
   it('preserves an external edit while integrating the independent assignment', async () => {
     const workers = await batch(); await writeFile(join(directory, 'a.txt'), 'user edit');
     const results = await Promise.all([workers.complete('one', true), workers.complete('two', true)]);

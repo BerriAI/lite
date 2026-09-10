@@ -11,7 +11,8 @@ Lite should give most of its space and attention to the conversation and the nex
 - Keep readable type, keyboard navigation, accessible labels, focus indicators, and usable touch targets. Density should come from removing repetition and padding.
 - Model reasoning preferences belong to each provider/model pair in the session and should survive switching roles and models. Provider default means no override is sent.
 
-- Completed execution belongs behind one response-level steps disclosure. Tool cards, task transcripts, and reasoning should not interrupt the answer by default. Flag tool issues and modifications in the collapsed summary. Put the summary after the assistant’s text, and reveal delegated transcripts inline in muted italic text on the first expansion. Keep the main conversation as the only scrolling surface.
+- Show tool calls and reasoning live, anchored to the assistant message that initiated them. Combine consecutive tool-only rounds into one compact block; collapse it when the assistant adds text or finishes. Text and user/system messages are boundaries. Flag issues and modifications in the summary. Give every requested worker or expert a numbered card immediately, including queued calls, with its own assignment, status, and muted italic transcript. Bound worker transcript height so several workers remain visible; follow new activity unless the reader scrolls up.
+- Open the workspace panel by default on desktop and remember the reader’s choice. Keep it closed by default on narrow screens.
 - Project profiles belong in Settings, never in the composer. Show a single mode control and the main model; keep the sidekick's full configuration in the model picker.
 - Do not confuse density with tiny type. Use readable answer text, quiet table rules, and consistent alignment; reserve stronger styling for user actions.
 

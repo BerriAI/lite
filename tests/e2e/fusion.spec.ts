@@ -23,6 +23,9 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await page.getByRole('option', { name: 'test-fast', exact: true }).click();
       await expect(page.getByLabel(`${role} reasoning`, { exact: true })).toBeEnabled();
       await page.getByLabel(`${role} reasoning`, { exact: true }).selectOption('low');
+      await expect(page.getByLabel('Workers at once', { exact: true })).toHaveValue('auto');
+      await page.getByLabel('Workers at once', { exact: true }).selectOption('2');
+      await page.getByLabel('Workers at once', { exact: true }).selectOption('auto');
       await expect(page.getByRole('switch', { name: 'Use a planner model' })).toBeEnabled();
       await page.getByRole('switch', { name: 'Use a planner model' }).click();
       await expect(page.getByRole('button', { name: 'Planner model', exact: true })).toBeEnabled();
@@ -36,6 +39,7 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('npm test passed');
       await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
       const completed = await detail();
+      expect(completed.session.architecture).not.toHaveProperty('concurrency');
       expect(completed.delegations).toHaveLength(1); expect(completed.delegations![0].status).toBe('completed');
       expect(await readFile(join(workspace, 'answer.txt'), 'utf8')).toBe('42\n');
       const final = completed.messages.findLast(message => message.role === 'assistant')!;
@@ -44,8 +48,8 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await expect(page.locator('.usage')).toHaveCount(1);
       await page.locator('.usage-details > summary').click();
       await expect(page.locator('.usage-breakdown')).toContainText('test-fast');
-      await page.locator('.work-log > summary').click();
-      await expect(page.getByRole('region', { name: `${role} transcript`, exact: true })).toContainText('Implementation complete');
+      await page.locator('.work-log > summary').first().click();
+      await expect(page.getByRole('region', { name: `${role} 1 transcript`, exact: true })).toContainText('Implementation complete');
       await page.getByRole('button', { name: 'Session actions', exact: true }).click();
       await page.getByRole('button', { name: 'Undo last turn', exact: true }).click();
       await page.getByRole('dialog').getByRole('button', { name: 'Undo last turn', exact: true }).click();

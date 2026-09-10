@@ -64,9 +64,10 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     await expect(readFile(join(directory,'note.txt'),'utf8')).rejects.toThrow();
   });
 
-  it('runs independent Team assignments concurrently in private snapshots and integrates one undoable result',async()=>{
+  it.each(['team-fusion', 'expert-fusion'] as const)('runs all requested %s assignments concurrently by default in private snapshots',async kind=>{
     await writeFile(join(directory,'seed.txt'),'Uncommitted user baseline');
     await writeFile(join(directory,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}}));
+    const names=['alpha','beta','gamma','delta','epsilon'];
     const waiting=new Map<string,ServerResponse>();
     respond=(body,res)=>{
       if(side(body)) {
@@ -74,25 +75,51 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
         if(body.messages.some((m:any)=>m.role==='tool'))text(res,`Implemented ${brief}`);
         else {
           waiting.set(brief,res);
-          if(waiting.size===2)for(const [name,response] of waiting)tools(response,[{name:'write_file',args:{path:`${name}.txt`,content:`result ${name}`}}]);
+          if(waiting.size===names.length)for(const [name,response] of waiting)tools(response,[{name:'write_file',args:{path:`${name}.txt`,content:`result ${name}`}}]);
         }
       }else {
         const results=body.messages.filter((m:any)=>m.role==='tool');
-        if(!results.length)tools(res,[{name:'delegate',args:{description:'Component A',prompt:'alpha'}},{name:'delegate',args:{description:'Component B',prompt:'beta'}}]);
-        else if(results.length===2)tools(res,[{name:'verify',args:{command:'npm test'}}]);else text(res,'Both integrated and verified.');
+        if(!results.length)tools(res,names.map(name=>({name:'delegate',args:{description:name,prompt:name}})));
+        else if(results.length===names.length)tools(res,[{name:'verify',args:{command:'npm test'}}]);else text(res,'Both integrated and verified.');
       }
     };
-    const session=await create({architecture:{kind:'team-fusion',worker:ARCHITECTURE.sidekick,concurrency:2}});await run(session.id);
-    const records=runner.delegations.list(session.id);expect(records).toHaveLength(2);expect(waiting.size).toBe(2);
+    const architecture=kind==='team-fusion'?{kind,worker:ARCHITECTURE.sidekick}:{kind,expert:ARCHITECTURE.sidekick};
+    const session=await create({architecture});await run(session.id);
+    const records=runner.delegations.list(session.id);expect(records).toHaveLength(names.length);expect(waiting.size).toBe(names.length);
     expect(records.every(record=>record.status==='completed'&&record.isolated)).toBe(true);
-    expect(new Set(records.map(record=>store.session(record.childSessionId).workspace)).size).toBe(2);
+    expect(new Set(records.map(record=>store.session(record.childSessionId).workspace)).size).toBe(names.length);
     expect(await readFile(join(directory,'alpha.txt'),'utf8')).toBe('result alpha');
     expect(await readFile(join(directory,'beta.txt'),'utf8')).toBe('result beta');
     expect(await readFile(join(directory,'seed.txt'),'utf8')).toBe('Uncommitted user baseline');
-    expect(store.messages(session.id).at(-1)?.receipts).toMatchObject({filesChanged:['alpha.txt','beta.txt'],checksRun:['npm test'],unresolvedChecks:[]});
+    expect(store.messages(session.id).at(-1)?.receipts).toMatchObject({filesChanged:expect.arrayContaining(names.map(name=>`${name}.txt`)),checksRun:['npm test'],unresolvedChecks:[]});
     await runner.history.undo(session.id,runner.history.state(session.id).undoId!);
     await expect(readFile(join(directory,'alpha.txt'),'utf8')).rejects.toThrow();await expect(readFile(join(directory,'beta.txt'),'utf8')).rejects.toThrow();
     expect(await readFile(join(directory,'seed.txt'),'utf8')).toBe('Uncommitted user baseline');
+  });
+
+  it.each(['team-fusion', 'expert-fusion'] as const)('honors an explicit %s concurrency limit while running every requested worker',async kind=>{
+    const waiting=new Map<string,ServerResponse>();
+    respond=(body,res)=>{
+      if(side(body)) {
+        const brief=body.messages.find((m:any)=>m.role==='user').content;
+        if(body.messages.some((m:any)=>m.role==='tool'))text(res,`Implemented ${brief}`);
+        else waiting.set(brief,res);
+      } else if(body.messages.some((m:any)=>m.role==='tool'))text(res,'All three workers finished.');
+      else tools(res,['alpha','beta','gamma'].map(name=>({name:'delegate',args:{description:name,prompt:name}})));
+    };
+    const architecture=kind==='team-fusion'?{kind,worker:ARCHITECTURE.sidekick,concurrency:2}:{kind,expert:ARCHITECTURE.sidekick,concurrency:2};
+    const session=await create({architecture});
+    runner.start(session.id,'Run three workers');
+    await until(()=>waiting.size===2);
+    expect([...waiting.keys()]).toEqual(expect.arrayContaining(['alpha','beta']));
+    expect(runner.delegations.list(session.id).filter(record=>record.status==='running')).toHaveLength(2);
+    for(const [name,res] of waiting)tools(res,[{name:'write_file',args:{path:`${name}.txt`,content:name}}]);
+    await until(()=>waiting.has('gamma'));
+    expect(runner.delegations.list(session.id).filter(record=>record.status==='completed')).toHaveLength(2);
+    tools(waiting.get('gamma')!,[{name:'write_file',args:{path:'gamma.txt',content:'gamma'}}]);
+    await runner.whenIdle();
+    expect(runner.delegations.list(session.id).map(record=>record.status)).toEqual(['completed','completed','completed']);
+    for(const name of ['alpha','beta','gamma'])expect(await readFile(join(directory,`${name}.txt`),'utf8')).toBe(name);
   });
 
   it('preserves root files when isolated Team patches conflict',async()=>{
@@ -310,6 +337,12 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     await expect(readFile(join(directory,'note.txt'),'utf8')).rejects.toThrow();
     const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('failed');
     expect(observed.mock.calls[0][0]).toMatchObject({sessionId:s.id,actorSessionId:d.childSessionId,invocationId:d.id,tool:'write_file'});
+  });
+
+  it('gives the sidekick the interface of the parent user input',async()=>{
+    const session=await create();runner.start(session.id,'ROOT delegate',[],undefined,'web');await runner.whenIdle();
+    expect(calls.filter(side).length).toBeGreaterThan(0);
+    for(const call of calls.filter(side))expect(JSON.stringify(call.messages)).toContain('Interface: Lite web UI');
   });
 
   it('returns steering to the driver immediately while the sidekick provider is still streaming',async()=>{

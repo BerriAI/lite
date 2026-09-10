@@ -56,8 +56,8 @@ async function expectExactReply(page: Page, request: APIRequestContext, id: stri
   await expect(assistant.locator('.message-body > .markdown pre code')).toHaveText('const answer = 42;');
   await expect(assistant.locator('.message-body > .markdown')).toHaveCount(1);
   const workLog = assistant.locator('.work-log');
-  if (!(await workLog.getAttribute('open'))) await workLog.locator(':scope > summary').click();
-  await expect(workLog.locator('.thinking-inline')).toHaveText(reasoning);
+  if (await workLog.getAttribute('open') === null) await workLog.locator(':scope > summary').click();
+  await expect(assistant.locator('.thinking-inline')).toHaveText(reasoning);
 }
 
 test('reloads a genuinely partial stream and finishes with exactly-once text and reasoning', async ({ page, request }) => {

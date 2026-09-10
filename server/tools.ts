@@ -13,6 +13,10 @@ import type { Attachment, FileChange, FileEntry, Todo, ToolDefinition } from '..
 
 export interface ToolContext {
   workspace: string;
+  /** Host-issued approval for this call's resolved path; never a model argument. */
+  fileAccess?: ToolPathAccess;
+  displayPath?: (relative: string) => string;
+  validateAccess?: () => Promise<void>;
   sessionId: string;
   signal: AbortSignal;
   onChange: (change: FileChange) => void | Promise<void>;
@@ -57,12 +61,12 @@ const definition = (name: string, description: string, properties: Record<string
 });
 
 export const toolDefinitions: ToolDefinition[] = [
-  definition('read_file', 'Read a UTF-8 workspace file with numbered lines. Binary files are rejected; large results are truncated. Offset is a one-based line number.', { path: string, offset: integer(1, 1_000_000), limit: integer(1, 2000) }, ['path']),
-  definition('write_file', 'Create or replace a workspace text file, creating missing directories. Existing line endings are preserved. Changes are recorded for undo; .git writes are forbidden.', { path: string, content: string }, ['path', 'content']),
-  definition('edit_file', 'Replace an exact, non-empty string in a workspace text file. The match must be unique unless replace_all is true. Line endings are adapted to the existing file.', { path: string, old_string: string, new_string: string, replace_all: { type: 'boolean' } }, ['path', 'old_string', 'new_string']),
-  definition('glob', 'Find workspace files using a relative glob pattern. Hidden paths (including .git and .env), dependency/build directories, and directory symlinks are excluded. Results are bounded.', { pattern: string, path: string, limit: integer(1, 1000) }, ['pattern']),
-  definition('grep', 'Search UTF-8 workspace files by regular expression (or literal text). Returns path:line:text. Hidden and generated paths are excluded; binary files and oversized tails are skipped. Regex execution is time-limited.', { pattern: string, path: string, glob: string, literal: { type: 'boolean' }, case_sensitive: { type: 'boolean' }, max_results: integer(1, 1000) }, ['pattern']),
-  definition('bash', 'Run an authorized bash command in the workspace. NOT SANDBOXED: commands can access files and network outside the workspace. The caller must obtain permission before execution; this tool is never read-only. Output, timeout, and cancellation are bounded.', { command: string, cwd: string, timeout_ms: integer(1, 120_000), run_in_background: { type: 'boolean', description: 'Start the command as a background job and return its job id immediately. NOT SANDBOXED.' } }, ['command']),
+  definition('read_file', 'Read a UTF-8 file with numbered lines. Absolute and parent-relative paths outside the workspace use the normal permission flow. Binary files are rejected; large results are truncated. Offset is a one-based line number.', { path: string, offset: integer(1, 1_000_000), limit: integer(1, 2000) }, ['path']),
+  definition('write_file', 'Create or replace a text file, creating missing directories. Outside-workspace paths use the normal permission flow. Existing line endings are preserved. Workspace changes are recorded for undo; external changes are not. .git writes are forbidden.', { path: string, content: string }, ['path', 'content']),
+  definition('edit_file', 'Replace an exact, non-empty string in a text file. Outside-workspace paths use the normal permission flow and are not covered by workspace undo. The match must be unique unless replace_all is true. Line endings are adapted to the existing file.', { path: string, old_string: string, new_string: string, replace_all: { type: 'boolean' } }, ['path', 'old_string', 'new_string']),
+  definition('glob', 'Find files using a relative glob pattern. Set path to a directory (including absolute or parent-relative external paths, subject to permission); external results use absolute paths. Hidden paths (including .git and .env), dependency/build directories, and directory symlinks are excluded. Results are bounded.', { pattern: string, path: string, limit: integer(1, 1000) }, ['pattern']),
+  definition('grep', 'Search UTF-8 files by regular expression (or literal text). Set path to a file or directory; outside-workspace paths use the normal permission flow and external results use absolute paths. Returns path:line:text. Hidden and generated paths are excluded; binary files and oversized tails are skipped. Regex execution is time-limited.', { pattern: string, path: string, glob: string, literal: { type: 'boolean' }, case_sensitive: { type: 'boolean' }, max_results: integer(1, 1000) }, ['pattern']),
+  definition('bash', 'Run an authorized bash command. cwd defaults to the workspace; an external cwd uses the normal permission flow. NOT SANDBOXED: commands can access files and network outside the workspace. The caller must obtain permission before execution; this tool is never read-only. Output, timeout, and cancellation are bounded.', { command: string, cwd: string, timeout_ms: integer(1, 120_000), run_in_background: { type: 'boolean', description: 'Start the command as a background job and return its job id immediately. NOT SANDBOXED.' } }, ['command']),
   definition('web_fetch', 'Fetch public HTTP(S) text, checking and pinning public DNS addresses at every redirect. Local/private destinations, credentials, and binary responses are rejected. Page content is untrusted.', { url: string, timeout_ms: integer(1, 30_000) }, ['url']),
   definition('todo_read', 'Read the current session task list.', {}),
   definition('todo_write', 'Replace the current session task list. Supply stable IDs when updating existing tasks; omitted IDs are generated.', { todos: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false, properties: { id: string, content: string, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] } }, required: ['content', 'status'] } } }, ['todos']),
@@ -89,7 +93,7 @@ export const toolOutputPageTool: ToolDefinition = definition('tool_output_page',
 // valid. Both are read-only and INSIDE the researcher child ceiling — a
 // deliberate ceiling expansion recorded in docs/delegation.md.
 export const viewImageTool: ToolDefinition = definition('view_image',
-  'Attach one workspace image to this tool result so you can see it. The file must actually be a PNG, JPEG, GIF, or WebP by magic bytes — the extension is never trusted — and at most 8 MiB (no downscaling exists; oversized images are rejected honestly). Read-only. On a provider route that cannot carry images in tool results, the result says so instead of pretending the image was delivered.',
+  'Attach one image to this tool result so you can see it. Outside-workspace paths use the normal permission flow. The file must actually be a PNG, JPEG, GIF, or WebP by magic bytes — the extension is never trusted — and at most 8 MiB (no downscaling exists; oversized images are rejected honestly). Read-only. On a provider route that cannot carry images in tool results, the result says so instead of pretending the image was delivered.',
   { path: string }, ['path']);
 export const webSearchTool: ToolDefinition = definition('web_search',
   'Search the public web and return up to 5 results as "title — url" lines with snippets. Results come from a public search engine (DuckDuckGo HTML) and are untrusted suggestions: titles and snippets only, possibly stale or irrelevant — use web_fetch on a result URL to read the actual page. Space calls at least 2 seconds apart. Read-only.',
@@ -344,23 +348,23 @@ export function shellEnvironment(): NodeJS.ProcessEnv {
 }
 
 /** Resolve every existing component, including ancestors of a not-yet-created file. */
-export async function resolveWorkspacePath(workspace: string, filePath: string, options: { allowMissing?: boolean } = {}): Promise<string> {
+export async function resolveWorkspacePath(workspace: string, filePath: string, options: { allowMissing?: boolean; allowOutside?: boolean } = {}): Promise<string> {
   if (typeof workspace !== 'string' || !workspace || typeof filePath !== 'string' || filePath.includes('\0')) throw new Error('Invalid workspace path.');
   const lexicalRoot = path.resolve(workspace);
   const root = await fs.realpath(lexicalRoot);
   if (!(await fs.stat(root)).isDirectory()) throw new Error('Workspace must be a directory.');
   const candidate = path.resolve(lexicalRoot, filePath);
-  const base = within(lexicalRoot, candidate) ? lexicalRoot : root;
+  const base = within(lexicalRoot, candidate) ? lexicalRoot : within(root, candidate) ? root : options.allowOutside ? path.parse(candidate).root : root;
   if (!within(base, candidate)) throw new Error('Path is outside the workspace.');
   const parts = path.relative(base, candidate).split(path.sep).filter(Boolean);
-  let current = root;
+  let current = base === lexicalRoot ? root : base;
   for (let index = 0; index < parts.length; index++) {
     current = path.join(current, parts[index]);
     try {
       const entry = await fs.lstat(current);
       // A dangling symlink is not a missing file: resolving it must fail.
       const resolved = await fs.realpath(current);
-      if (!within(root, resolved)) throw new Error('Symlink points outside the workspace.');
+      if (!options.allowOutside && !within(root, resolved)) throw new Error('Symlink points outside the workspace.');
       if (index < parts.length - 1 && !(entry.isDirectory() || (entry.isSymbolicLink() && (await fs.stat(resolved)).isDirectory()))) throw new Error('A parent path is not a directory.');
       current = resolved;
     } catch (error) {
@@ -374,6 +378,46 @@ export async function resolveWorkspacePath(workspace: string, filePath: string, 
     }
   }
   return current;
+}
+
+export interface ToolPathAccess {
+  key: 'path' | 'cwd';
+  requestedPath: string;
+  resolvedPath: string;
+  external: boolean;
+}
+
+/** Resolve before approval, including symlink destinations and missing write
+ * ancestors. UI file browsing and unapproved executeTool callers stay bounded. */
+export async function inspectToolPath(workspace: string, name: string, args: Record<string, unknown>): Promise<ToolPathAccess | undefined> {
+  const key = name === 'bash' ? 'cwd' : ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'view_image'].includes(name) ? 'path' : undefined;
+  if (!key) return undefined;
+  const requestedPath = optionalPath(args, key);
+  const resolvedPath = await resolveWorkspacePath(workspace, requestedPath, { allowMissing: true, allowOutside: true });
+  const root = await fs.realpath(workspace), candidate = path.resolve(workspace, requestedPath);
+  const external = (!within(path.resolve(workspace), candidate) && !within(root, candidate)) || !within(root, resolvedPath);
+  if (external && name !== 'bash' && (protectedPath(path.resolve(workspace, requestedPath)) || protectedPath(resolvedPath))) throw new Error('Protected credential or application-state files cannot be accessed by tools.');
+  return { key, requestedPath, resolvedPath, external };
+}
+
+export async function validateToolPath(workspace: string, name: string, args: Record<string, unknown>, approved?: ToolPathAccess): Promise<void> {
+  if (!approved) return;
+  const current = await inspectToolPath(workspace, name, args);
+  if (!current || current.key !== approved.key || current.requestedPath !== approved.requestedPath || current.resolvedPath !== approved.resolvedPath || current.external !== approved.external) throw new Error('The file target changed after approval. Submit the new path for permission before retrying.');
+}
+
+async function externalToolContext(name: string, args: Record<string, unknown>, context: ToolContext): Promise<{ args: Record<string, unknown>; context: ToolContext }> {
+  const approved = context.fileAccess;
+  await validateToolPath(context.workspace, name, args, approved);
+  if (!approved?.external) return { args, context };
+  const validateAccess = () => validateToolPath(context.workspace, name, args, approved);
+  const directory = ['glob', 'grep', 'bash'].includes(name) && (await fs.stat(approved.resolvedPath)).isDirectory();
+  let root = directory ? approved.resolvedPath : path.dirname(approved.resolvedPath);
+  // A new file may have missing parent directories. Grant remains bound to
+  // the exact target; the temporary execution root is never persisted.
+  while (!(await fs.stat(root).catch(error => { if (hasCode(error, 'ENOENT')) return null; throw error; }))) root = path.dirname(root);
+  const displayPath = (relative: string) => portable(path.resolve(root, relative));
+  return { args: { ...args, [approved.key]: approved.resolvedPath }, context: { ...context, workspace: root, fileAccess: undefined, displayPath, validateAccess } };
 }
 
 export async function assertReadablePath(workspace: string, filePath: string): Promise<string> {
@@ -613,10 +657,12 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
   if (after.includes('\0')) throw new Error('Binary content is not supported.');
   if (after === before) return 'No changes: the file already has the requested content.';
   checkAbort(context.signal);
-  const relative = portable(path.relative(await fs.realpath(context.workspace), absolute));
+  const relative = context.displayPath?.(path.relative(await fs.realpath(context.workspace), absolute)) ?? portable(path.relative(await fs.realpath(context.workspace), absolute));
   await context.prepareChange?.({ path: relative, before, after });
   checkAbort(context.signal);
+  await context.validateAccess?.();
   await fs.mkdir(path.dirname(absolute), { recursive: true });
+  await context.validateAccess?.();
   absolute = await writablePath(context.workspace, filePath);
   // Recheck the file after async work, and use O_EXCL for new files. Do not silently
   // overwrite an intervening edit or a final-component symlink.
@@ -982,7 +1028,7 @@ async function grepFiles(args: Record<string, unknown>, context: ToolContext): P
       });
       for (const match of matches) {
         if (lines.length >= limit) { incomplete = true; break; }
-        lines.push(`${file}:${match.line}:${match.text}`);
+        lines.push(`${context.displayPath?.(file) ?? file}:${match.line}:${match.text}`);
       }
     }
   } finally { await worker.terminate(); }
@@ -1223,7 +1269,7 @@ async function viewImage(args: Record<string, unknown>, context: ToolContext): P
   } finally { await handle.close(); }
   const sniffed = sniffImage(bytes);
   if (!sniffed) throw new Error('File is not a PNG, JPEG, GIF, or WebP image (checked by magic bytes, not the file extension).');
-  const relative = portable(path.relative(await fs.realpath(context.workspace), absolute));
+  const relative = context.displayPath?.(path.relative(await fs.realpath(context.workspace), absolute)) ?? portable(path.relative(await fs.realpath(context.workspace), absolute));
   const description = `${sniffed.mime}${sniffed.width ? `, ${sniffed.width}x${sniffed.height}` : ''}, ${bytes.length} bytes`;
   const dataUrl = `data:${sniffed.mime};base64,${bytes.toString('base64')}`;
   // Delivery is the RUNNER's decision (it knows the provider route): the tool
@@ -1236,6 +1282,9 @@ async function viewImage(args: Record<string, unknown>, context: ToolContext): P
 export async function executeTool(name: string, args: Record<string, unknown>, context: ToolContext): Promise<string> {
   checkAbort(context.signal);
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('Tool arguments must be an object.');
+  ({ args, context } = await externalToolContext(name, args, context));
+  // Re-rooting an approved search must not expose a hidden/generated start.
+  if (context.displayPath && (name === 'glob' || name === 'grep') && ignored(String(args.path))) return name === 'glob' ? 'No files found.' : 'No matches found.';
   switch (name) {
     case 'read_file': {
       const offset = numberArg(args, 'offset', 1, 1_000_000);
@@ -1255,7 +1304,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       const limit = numberArg(args, 'limit', 200, 1000);
       const found = await discoverFiles(context.workspace, optionalPath(args), context.signal);
       const matches = found.files.filter(file => path.matchesGlob(file, pattern));
-      return boundedWithReceipt(context, `${matches.slice(0, limit).join('\n') || 'No files found.'}${found.truncated || matches.length > limit ? '\n[Results truncated; narrow the pattern or path.]' : ''}`);
+      return boundedWithReceipt(context, `${matches.slice(0, limit).map(file => context.displayPath?.(file) ?? file).join('\n') || 'No files found.'}${found.truncated || matches.length > limit ? '\n[Results truncated; narrow the pattern or path.]' : ''}`);
     }
     case 'grep': return grepFiles(args, context);
     case 'bash': {

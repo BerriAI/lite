@@ -5,7 +5,7 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import type { Session, SessionDetail } from '../../shared/types';
 import type { DelegationSummary } from '../../shared/delegation';
 
-async function expandSteps(page: Page) { const log = page.locator('.conversation-content > article .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
+async function expandSteps(page: Page) { const log = page.locator('.conversation-shell').first().locator(':scope > .conversation-scroll > .conversation-content > article > .message-body > .work-log').last(); await expect(log).toBeVisible(); if (await log.getAttribute('open') === null) await log.locator(':scope > summary').click(); }
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite', exact: true });
 const taskCard = (page: Page) => page.getByRole('region', { name: 'Research task', exact: true, includeHidden: true });
 const transcript = (page: Page) => page.getByRole('region', { name: 'Research transcript', exact: true });
@@ -98,7 +98,7 @@ test('streamed child progress survives parent reload without clearing the draft 
   const before = await calls(request, session); await page.reload(); await expect(composer(page)).toHaveValue('A separate draft survives research.');
   expect((await latest(request, session)).id).toBe(delegation.id); expect(await calls(request, session)).toHaveLength(before.length);
   await expandSteps(page); await expect(transcript(page)).toContainText('Researcher is reviewing');
-  await request.post('/fixture/delegations/release', { data: {} }); await done(request, session); await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED');
+  await request.post('/fixture/delegations/release', { data: {} }); await done(request, session); await expandSteps(page); await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED');
   await expect(composer(page)).toHaveValue('A separate draft survives research.');
   expect(await calls(request, session)).toHaveLength(4); await assertUnchanged();
 });
@@ -216,7 +216,8 @@ test('desktop and mobile research transcript controls fit without horizontal ove
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true); await page.screenshot({ path: 'test-results/delegation-desktop.png', fullPage: true, animations: 'disabled' });
+  await page.getByRole('button', { name: 'Close workspace', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 }); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/delegation-mobile.png', fullPage: true, animations: 'disabled' });
-  await request.post('/fixture/delegations/release', { data: {} }); await done(request, session); await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED');
+  await request.post('/fixture/delegations/release', { data: {} }); await done(request, session); await expandSteps(page); await expect(transcript(page)).toContainText('RESEARCH_FILE_VERIFIED');
 });

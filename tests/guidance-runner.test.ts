@@ -15,7 +15,7 @@ const tools = (res: ServerResponse, calls: { name: string; args?: Record<string,
 describe('storm breaker, no-progress guidance and mid-turn steering', () => {
   let directory: string, store: Store, server: Server, provider: Server, url: string, runner: ReturnType<typeof createApp>['runner'];
   let calls: any[], respond: (body: any, res: ServerResponse) => void;
-  const api = async (path: string, data?: unknown, method?: string) => { const response = await fetch(url + '/api' + path, { method: method ?? (data === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json' }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
+  const api = async (path: string, data?: unknown, method?: string, surface?: string) => { const response = await fetch(url + '/api' + path, { method: method ?? (data === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', ...(surface ? { 'X-Lite-Client': surface } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
   const create = async (extra: Record<string, unknown> = {}) => { const result = await api('/sessions', { permissionMode: 'auto', ...extra }); expect(result.status).toBe(201); return result.body; };
   const run = async (id: string, content = 'Do the task') => { runner.start(id, content); await runner.whenIdle(); };
   beforeEach(async () => {
@@ -27,6 +27,36 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     const app = createApp({ store }); runner = app.runner; server = createServer(app.app); url = await listen(server);
   });
   afterEach(async () => { runner.stopAll(); await runner.whenIdle(); await close(server); await close(provider); store.close(); await rm(directory, { recursive: true, force: true }); });
+
+  it('identifies the submitting client per turn without changing the static system prompt', async () => {
+    const session = await create();
+    for (const surface of ['web', 'terminal', 'cli']) {
+      expect((await api(`/sessions/${session.id}/messages`, { content: 'How do I change workspace?' }, 'POST', surface)).status).toBe(202);
+      await runner.whenIdle();
+      expect(store.messages(session.id).findLast(message => message.role === 'user')?.clientSurface).toBe(surface);
+      const request = calls.at(-1), runtime = request.messages.find((message: any) => String(message.content).includes('<session-context'))?.content;
+      expect(runtime).toContain(surface === 'web' ? 'Lite web UI' : surface === 'terminal' ? 'Lite terminal UI' : 'Lite command-line run');
+      expect(runtime).toContain(session.workspace);
+      if (surface === 'web') { expect(runtime).toContain('Save settings'); expect(runtime).toContain('New session'); }
+    }
+    expect(new Set(calls.map(request => request.messages[0].content)).size).toBe(1);
+    expect(calls[0].messages[0].content).toContain('absolute and parent-relative paths outside the workspace');
+    expect(calls[0].messages[0].content).toContain('normal permission flow');
+    expect(calls[0].messages[0].content).toContain('External edits are not covered by workspace Undo');
+  });
+
+  it('keeps queued client identity while rejecting arbitrary interface text', async () => {
+    const session = await create();
+    const queued = await api(`/sessions/${session.id}/queue`, { content: 'Queued from the browser' }, 'POST', 'web');
+    expect(queued.body.items[0].clientSurface).toBe('web');
+    runner.resumeQueue(session.id); await runner.whenIdle();
+    expect(JSON.stringify(calls.at(-1).messages)).toContain('Interface: Lite web UI');
+    expect((await api(`/sessions/${session.id}/messages`, { content: 'Unspecified client', clientSurface: 'web' }, 'POST', 'untrusted-interface-text')).status).toBe(202);
+    await runner.whenIdle();
+    expect(store.messages(session.id).findLast(message => message.role === 'user')?.clientSurface).toBe('api');
+    expect(JSON.stringify(calls.at(-1).messages)).toContain('API or unspecified client');
+    expect(JSON.stringify(calls.at(-1).messages)).not.toContain('untrusted-interface-text');
+  });
 
   it('answers the 4th identical failing call without executing it and resets on a different success', async () => {
     const session = await create();
