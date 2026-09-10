@@ -8,11 +8,12 @@ import { ModelField } from './ModelPicker';
 import { Logo, Modal } from './ui';
 import { errorMessage, post } from './api';
 
-export function Onboarding({ settings, selection, onSave, onClose, renderProviders, onSettings }: { settings: Settings; selection: Selection; onSave: (next: Selection) => Promise<void>; onClose: () => void; onSettings: (settings: Settings) => void; renderProviders: (close: () => void) => ReactNode }) {
+export function Onboarding({ settings, selection, onSave, onClose, renderProviders, onSettings, quick = false }: { settings: Settings; quick?: boolean; selection: Selection; onSave: (next: Selection) => Promise<void>; onClose: () => void; onSettings: (settings: Settings) => void; renderProviders: (close: () => void) => ReactNode }) {
   const [providers, setProviders] = useState(false);
-  const [step, setStep] = useState(0), [kind, setKind] = useState<'single' | ArchitectureKind>(selection.architecture?.kind ?? 'single');
+  const [simple, setSimple] = useState(quick);
+  const [step, setStep] = useState(quick && settings.providers.some(p => p.id === selection.providerId && p.baseUrl) ? 2 : 0), [kind, setKind] = useState<'single' | ArchitectureKind>(quick ? 'single' : selection.architecture?.kind ?? 'single');
   const [draft, setDraft] = useState(selection), [worker, setWorker] = useState(selection.architecture ? architectureWorker(selection.architecture) : null);
-  const [open, setOpen] = useState<string | null>(null), [saving, setSaving] = useState(false), [error, setError] = useState('');
+  const [open, setOpen] = useState<string | null>(quick ? 'driver' : null), [saving, setSaving] = useState(false), [error, setError] = useState('');
   const [gateway, setGateway] = useState(() => setupGateway(settings, selection.providerId));
   const [baseUrl, setBaseUrl] = useState(gateway.baseUrl), [apiKey, setApiKey] = useState('');
   const [connection, setConnection] = useState('');
@@ -25,7 +26,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
       onSettings(result.settings); setGateway({providerId: result.providerId, baseUrl: baseUrl.trim(), existing: true}); setApiKey('');
       setDraft(current => ({...current, providerId: result.providerId, model: current.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current.model : ''}));
       setWorker(current => current?.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current : null);
-      setConnection(`Connected · ${result.models.length} models available`); setStep(1);
+      setConnection(`Connected · ${result.models.length} models available`); setStep(simple ? 2 : 1); if (simple) setOpen('driver');
     } catch (error) { setError(errorMessage(error)); } finally { setSaving(false); }
   }
   async function save() {
@@ -35,7 +36,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
   }
   if (providers) return renderProviders(() => { const next = setupGateway(settings, settings.defaultProvider); setGateway(next); setBaseUrl(next.baseUrl); setApiKey(''); setProviders(false); });
   return <Modal title="Set up Lite" onClose={() => { if (!saving) onClose(); }}>
-    <div className="setup-intro"><Logo /><div><p>{step === 0 ? 'Connect your LiteLLM gateway' : step === 1 ? 'How would you like to work?' : 'Choose your models'}</p><small>{step + 1} of 3 · You can change this later.</small></div></div>
+    <div className="setup-intro"><Logo /><div><p>{step === 0 ? 'Connect your LiteLLM gateway' : step === 1 ? 'How would you like to work?' : 'Choose your models'}</p><small>{simple ? step === 0 ? 'Enter your connection to get started.' : 'Pick a model and start chatting.' : `${step + 1} of 3 · You can change this later.`}</small></div></div>
     <div className="setup-content">
       {step === 0 ? <form id="gateway-setup" className="setup-gateway" onSubmit={event => { event.preventDefault(); if (!saving) void connect(); }}>
         <label>Gateway base URL<input type="url" autoFocus required placeholder="https://your-gateway.example.com" value={baseUrl} disabled={saving} onChange={event => setBaseUrl(event.target.value)} spellCheck={false} /><span className="field-hint">{GATEWAY_URL_HINT}</span></label>
@@ -44,18 +45,19 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
         <button type="button" className="text-button" disabled={saving} onClick={() => setProviders(true)}>Use another provider</button>
         {settings.providers.filter(provider => provider.kind !== 'openai').map(provider => <button key={provider.id} type="button" className="text-button" onClick={() => { setDraft(current => ({...current, providerId: provider.id, model: current.providerId === provider.id ? current.model : ''})); setError(''); setStep(1); }}>Continue with {provider.name}</button>)}
       </form> : step === 1 ? <div className="setup-options" role="group" aria-label="Architecture">{SETUP_ARCHITECTURES.map(item => <button key={item.kind} className={`setup-option ${kind === item.kind ? 'selected' : ''}`} aria-pressed={kind === item.kind} onClick={() => setKind(item.kind)}><span><strong>{item.name}</strong><small>{item.description}</small></span>{kind === item.kind && <Check size={16} />}</button>)}</div> : <>
-        <p className="field-hint">{SETUP_ARCHITECTURES.find(item => item.kind === kind)?.description}</p>
+        <p className="field-hint">{simple ? 'You can add Sidekick, workers, or experts later in Models.' : SETUP_ARCHITECTURES.find(item => item.kind === kind)?.description}</p>
         {!settings.providers.length ? <p className="field-hint">Connect a provider to see its models.</p> : <div className="setup-models">
           <ModelField simple label={kind === 'single' ? 'Model' : 'Driver'} settings={settings} selection={draft} value={draft.model ? draft : null} onChange={route => setDraft({ ...draft, ...route })} onReasoning={() => {}} open={open === 'driver'} onOpen={value => setOpen(value ? 'driver' : null)} />
           {kind !== 'single' && <ModelField simple label={label} settings={settings} selection={draft} value={worker} onChange={setWorker} onReasoning={() => {}} open={open === 'worker'} onOpen={value => setOpen(value ? 'worker' : null)} />}
         </div>}
-        <button className="text-button" onClick={() => setProviders(true)}>Manage providers</button>
-        <label className="model-setting-row setup-permissions">Permissions<select aria-label="Setup permissions" value={draft.permissionMode} onChange={event => setDraft({ ...draft, permissionMode: event.target.value as 'ask' | 'auto' })}><option value="ask">Ask first</option><option value="auto">Allow all tools</option></select></label>
-        <p className="field-hint">{SETUP_PERMISSIONS}</p>
+        <button className="text-button" onClick={() => simple ? setStep(0) : setProviders(true)}>{simple ? 'Change gateway' : 'Manage providers'}</button>
+        {simple && <button className="text-button" onClick={() => { setSimple(false); setStep(1); setOpen(null); }}>Customize setup</button>}
+        {!simple && <><label className="model-setting-row setup-permissions">Permissions<select aria-label="Setup permissions" value={draft.permissionMode} onChange={event => setDraft({ ...draft, permissionMode: event.target.value as 'ask' | 'auto' })}><option value="ask">Ask first</option><option value="auto">Allow all tools</option></select></label>
+        <p className="field-hint">{SETUP_PERMISSIONS}</p></>}
       </>}
       {step > 0 && connection && <p className="field-hint">{connection}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
     </div>
-    <div className="model-picker-footer"><button className="text-button" disabled={saving} onClick={() => { setError(''); step === 0 ? onClose() : setStep(step - 1); }}>{step === 0 ? 'Set up later' : 'Back'}</button><button className="button primary" type={step === 0 ? "submit" : "button"} form={step === 0 ? "gateway-setup" : undefined} disabled={saving || step === 0 && !baseUrl.trim() || step === 2 && !valid} onClick={() => { if (step === 1) setStep(2); else if (step === 2) void save(); }}>{saving ? step === 0 ? 'Connecting…' : 'Saving…' : step === 0 ? 'Connect & continue' : step === 1 ? 'Continue' : 'Start with this setup'}</button></div>
+    <div className="model-picker-footer"><button className="text-button" disabled={saving} onClick={() => { setError(''); step === 0 ? onClose() : setStep(simple ? 0 : step - 1); }}>{step === 0 ? 'Set up later' : 'Back'}</button><button className="button primary" type={step === 0 ? "submit" : "button"} form={step === 0 ? "gateway-setup" : undefined} disabled={saving || step === 0 && !baseUrl.trim() || step === 2 && !valid} onClick={() => { if (step === 1) setStep(2); else if (step === 2) void save(); }}>{saving ? step === 0 ? 'Connecting…' : 'Saving…' : step === 0 ? 'Connect & continue' : step === 1 ? 'Continue' : simple ? 'Start chatting' : 'Start with this setup'}</button></div>
   </Modal>;
 }

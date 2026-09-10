@@ -25,8 +25,8 @@ lite
 
 That directory becomes your workspace. Lite starts its local backend automatically. Keep the cloned checkout in place: `npm link` points the command to it.
 
-1. Follow **Set up Lite**: enter your **LiteLLM gateway base URL** and **API key** (a virtual key or gateway key). Lite checks the connection and loads the models available to your key. Then choose your architecture and models.
-2. Choose **Ask first** or **Allow all tools**. Setup is remembered for this workspace in both clients; reopen it from the web sidebar or `/setup`.
+1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then pick a model. You can start chatting immediately. Lite remembers the connection and model; running `lite` in another project opens chat directly.
+2. Use **Models** or `/models` to add a Sidekick, workers, or experts. **Ask first** is the default; **Allow all tools** is available in permissions. The full setup is available from the web sidebar or `/setup`.
 3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. **Ctrl+P** opens terminal commands and navigation.
 
 See the [terminal guide](docs/tui.md) for shortcuts, resuming sessions, and configuration.

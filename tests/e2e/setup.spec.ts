@@ -6,6 +6,7 @@ test('setup explains roles, saves a workspace default, and keeps advanced contro
   try {
     await request.post('/api/workspace-preferences', { data: { ...original, workspace:settings.workspace, providerId:'fixture', model:'test-model', setupComplete:false } });
     await page.goto('/');
+    await page.getByRole('button',{name:'Set up Lite',exact:true}).click();
     const dialog = page.getByRole('dialog', { name:'Set up Lite', exact:true });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name:'Connect & continue', exact:true }).click();
@@ -56,7 +57,7 @@ test('gateway setup asks for the URL and key, handles failure inline, and then s
   const original=await (await request.get(`/api/workspace-preferences?workspace=${encodeURIComponent(settings.workspace)}`)).json();
   try {
     await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',setupComplete:false}});
-    await request.patch('/api/settings',{data:{providers:[]}});
+    await request.patch('/api/settings',{data:{providers:[],defaultModel:''}});
     await page.goto('/');
     const dialog=page.getByRole('dialog',{name:'Set up Lite',exact:true});
     const url=dialog.getByLabel('Gateway base URL'),key=dialog.getByLabel('API key',{exact:false});
@@ -70,17 +71,29 @@ test('gateway setup asks for the URL and key, handles failure inline, and then s
     await expect(dialog.getByRole('alert')).toContainText('API key');
     expect((await (await request.get('/api/settings')).json()).providers).toEqual([]);
     await key.fill('fixture-key');await dialog.getByRole('button',{name:'Connect & continue'}).click();
-    await expect(dialog.getByRole('group',{name:'Architecture'})).toBeVisible();
-    await dialog.getByRole('button',{name:'Continue',exact:true}).click();
-    await dialog.getByRole('button',{name:'Model',exact:true}).click();
-    await dialog.getByRole('option',{name:'test-model',exact:true}).click();
-    await dialog.getByRole('button',{name:'Start with this setup'}).click();
+    await expect(dialog.getByRole('group',{name:'Architecture'})).toHaveCount(0);
+    await expect(dialog.getByRole('combobox',{name:'Setup permissions'})).toHaveCount(0);
+    await dialog.getByRole('option',{name:'test-fast',exact:true}).click();
+    await dialog.getByRole('button',{name:'Start chatting'}).click();
     await expect(dialog).toHaveCount(0);
     const saved=await (await request.get('/api/settings')).json();
     expect(saved.providers[0].baseUrl).toBe(settings.providers[0].baseUrl+'/setup-auth');expect(JSON.stringify(saved)).not.toContain('fixture-key');
+    expect(saved.defaultModel).toBe('test-fast');
+    const next=await (await request.post('/api/sessions',{data:{workspace:settings.workspace+'/src'}})).json();expect(next.model).toBe('test-fast');
     await page.reload();await expect(dialog).toHaveCount(0);
   } finally {
-    await request.patch('/api/settings',{data:{providers:settings.providers,defaultProvider:settings.defaultProvider}});
+    await request.patch('/api/settings',{data:{providers:settings.providers,defaultProvider:settings.defaultProvider,defaultModel:settings.defaultModel}});
     await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',setupComplete:true}});
   }
+});
+
+
+test('a configured install opens straight into chat even without a workspace setup flag',async({page,request})=>{
+  const settings=await(await request.get('/api/settings')).json();
+  await request.post('/api/workspace-preferences',{data:{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:null,setupComplete:false}});
+  await page.goto('/');
+  await page.getByRole('textbox',{name:'Message Lite',exact:true}).fill('Hello from the configured startup check');
+  await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await expect(page.getByRole('article',{name:'Assistant message'})).toContainText('Hello from Lite.');
+  await expect(page.getByRole('dialog',{name:'Set up Lite',exact:true})).toHaveCount(0);
 });

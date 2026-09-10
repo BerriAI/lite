@@ -26,3 +26,7 @@ export function gatewayBaseUrl(value: string): string {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('Use an HTTP or HTTPS base URL without credentials, query parameters, or fragments.');
   return base;
 }
+
+export function needsSetup(settings: Settings, route: {providerId: string; model: string}) {
+  return !route.model.trim() || !settings.providers.some(provider => provider.id === route.providerId && provider.baseUrl);
+}

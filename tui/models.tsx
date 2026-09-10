@@ -6,7 +6,7 @@ import { ARCHITECTURES, architectureWorker, selectArchitecture, type Architectur
 import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, type MenuItem } from './ui.js';
 
-export function ModelChooser({ controller, settings, value, title, onChange, onClose }: { controller: TerminalController; settings: Settings; value: ModelRoute; title: string; onChange: (route: ModelRoute) => void; onClose: () => void }) {
+export function ModelChooser({ controller, settings, value, title, onChange, onClose, simple = false, feedback }: { simple?: boolean; feedback?: string; controller: TerminalController; settings: Settings; value: ModelRoute; title: string; onChange: (route: ModelRoute) => void; onClose: () => void }) {
   const [provider, setProvider] = useState(settings.providers.some(provider => provider.id === value.providerId) ? value.providerId : settings.providers[0]?.id || ''), [models, setModels] = useState<Model[]>([]);
   const [view, setView] = useState<'models' | 'providers' | 'custom'>('models'), [error, setError] = useState(''), [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -18,10 +18,11 @@ export function ModelChooser({ controller, settings, value, title, onChange, onC
   if (view === 'custom') return <TextPrompt title="Model ID" placeholder="provider/model-name" onClose={() => setView('models')} onSave={model => { if (model.trim()) onChange({ providerId: provider, model: model.trim() }); }} />;
   const configured = settings.providers.find(item => item.id === provider);
   const all = [...models, ...(configured?.models ?? []).filter(id => !models.some(model => model.id === id)).map(id => ({ id, name: id, providerId: provider }))];
-  return <Menu key={provider} title={title} onClose={onClose} items={[
-    { id: 'provider', label: `Provider: ${configured?.name ?? provider}`, description: 'Change provider', action: () => setView('providers') },
-    { id: 'custom', label: 'Enter a model ID…', description: error || (loading ? 'Loading models…' : undefined), action: () => setView('custom') },
+  return <Menu key={provider} title={title} onClose={onClose} footer={simple ? feedback || error || (loading ? 'Loading your models…' : 'Type to search · Enter starts chatting · Esc change gateway') : undefined} items={[
+    ...(!simple ? [{ id: 'provider', label: `Provider: ${configured?.name ?? provider}`, description: 'Change provider', action: () => setView('providers') },
+    { id: 'custom', label: 'Enter a model ID…', description: error || (loading ? 'Loading models…' : undefined), action: () => setView('custom') }] : []),
     ...all.map(model => ({ id: `model:${model.id}`, label: `${model.id === value.model && provider === value.providerId ? '✓ ' : ''}${model.name || model.id}`, description: model.name && model.name !== model.id ? model.id : undefined, action: () => onChange({ providerId: provider, model: model.id }) })),
+    ...(simple && !loading && !all.length ? [{id:'retry',label:'Change gateway',action:onClose}] : []),
   ]} />;
 }
 

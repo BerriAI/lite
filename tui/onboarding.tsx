@@ -9,9 +9,9 @@ import { ModelChooser } from './models.js';
 import { GatewaySetup } from './gateway.js';
 import { Providers } from './providers.js';
 
-export function Onboarding({ controller, initial, onClose }: { controller: TerminalController; initial: Session; onClose: () => void }) {
+export function Onboarding({ controller, initial, onClose, quick = false }: { controller: TerminalController; quick?: boolean; initial: Session; onClose: () => void }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState);
-  const [step, setStep] = useState(0), [kind, setKind] = useState<'single' | ArchitectureKind>(initial.architecture?.kind ?? 'single');
+  const [step, setStep] = useState(quick && state.settings?.providers.some(p => p.id === initial.providerId && p.baseUrl) ? 2 : 0), [kind, setKind] = useState<'single' | ArchitectureKind>(initial.architecture?.kind ?? 'single');
   const [driver, setDriver] = useState({ providerId: initial.providerId, model: initial.model });
   const [worker, setWorker] = useState(initial.architecture ? architectureWorker(initial.architecture) : null);
   const [permissionMode, setPermissionMode] = useState(initial.permissionMode), [view, setView] = useState('main');
@@ -21,16 +21,17 @@ export function Onboarding({ controller, initial, onClose }: { controller: Termi
   if (!state.settings) return null;
   if (view === 'providers') return <Providers controller={controller} onClose={back} />;
   if (view === 'driver' || view === 'worker') return <ModelChooser controller={controller} settings={state.settings} title={view === 'driver' ? kind === 'single' ? 'Model' : 'Driver' : label} value={view === 'worker' ? worker ?? driver : driver} onClose={back} onChange={route => { if (view === 'worker') setWorker(route); else setDriver(route); back(); }} />;
-  async function save() {
-    const patch = { ...driver, architecture: kind === 'single' ? null : selectArchitecture(kind, worker!), permissionMode };
+  async function save(route = driver) {
+    const patch = { ...route, architecture: quick || kind === 'single' ? null : selectArchitecture(kind, worker!), permissionMode };
     if (!await controller.configure(patch, revision)) return;
     setRevision(controller.detail!.session.configRevision ?? 0);
     if (await controller.action('Remembering setup', () => controller.client.api('/workspace-preferences', { ...controller.detail!.session, ...patch, setupComplete: true }))) onClose();
   }
-  if (step === 0) return <GatewaySetup controller={controller} settings={state.settings} providerId={driver.providerId} onClose={onClose} onProviders={() => setView('providers')} onContinue={providerId => { setDriver(current => ({providerId,model: current.providerId === providerId ? current.model : ''})); setStep(1); }} onConnected={result => {
+  if (quick && step === 2) return <ModelChooser simple feedback={state.notice} controller={controller} settings={state.settings} value={driver} title={state.pending ? 'Starting…' : 'Choose a model'} onClose={() => setStep(0)} onChange={route => { if (!state.pending) { setDriver(route); void save(route); } }} />;
+  if (step === 0) return <GatewaySetup quick={quick} controller={controller} settings={state.settings} providerId={driver.providerId} onClose={onClose} onProviders={() => setView('providers')} onContinue={providerId => { setDriver(current => ({providerId,model: current.providerId === providerId ? current.model : ''})); setStep(1); }} onConnected={result => {
     setDriver(current => ({providerId: result.providerId, model: current.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current.model : ''}));
     setWorker(current => current?.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current : null);
-    setStep(1);
+    setStep(quick ? 2 : 1);
   }} />;
   if (step === 1) return <Menu title="Set up Lite · 2 of 3" search={false} onClose={() => setStep(0)} footer="Choose how to work. You can change this later with /setup." items={[
     ...SETUP_ARCHITECTURES.map(item => ({ id: item.kind, label: `${kind === item.kind ? '●' : '○'} ${item.name}`, description: item.description, action: () => { setKind(item.kind); setStep(2); } })),

@@ -1,4 +1,4 @@
-import { gatewayBaseUrl } from '../shared/setup.js';
+import { gatewayBaseUrl, needsSetup } from '../shared/setup.js';
 import { clientSurface } from '../shared/client.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { WorkspacePreferences } from './workspace-preferences.js';
@@ -186,7 +186,11 @@ export function createApp(options:AppOptions = {}) {
   app.post('/api/workspace-preferences',async(req,res)=>{
     const input=sessionSchema.required({providerId:true,model:true}).extend({setupComplete:z.boolean().optional()}).parse(req.body), root=await workspace(input.workspace);
     checkProvider(input.providerId);if(input.architecture)checkProvider(architectureWorker(input.architecture).providerId);if(input.planner)checkProvider(input.planner.providerId);
-    preferences.save(root,{...input,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined});res.json({ok:true});
+    if(input.setupComplete&&!input.model.trim())throw httpError(400,'Choose a model to finish setup.');
+    preferences.save(root,{...input,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined});
+    const settings=store.settings();
+    if(input.setupComplete&&needsSetup(settings,{providerId:settings.defaultProvider,model:settings.defaultModel}))store.saveSettings({defaultProvider:input.providerId,defaultModel:input.model});
+    res.json({ok:true});
   });
   app.get('/api/sessions',(req,res)=>res.json({sessions:store.sessions(queryString(req.query.q),req.query.archived==='true')}));
   app.post('/api/sessions',async(req,res)=>{

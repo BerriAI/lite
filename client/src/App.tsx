@@ -5,6 +5,7 @@ import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings
 import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft, visibleDelegations } from './api';
 import { TaskCard, delegationPath } from './TaskCard';
 import type { DelegationSummary } from '../../shared/delegation';
+import { needsSetup } from '../../shared/setup';
 import { Onboarding } from './Onboarding';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
@@ -41,7 +42,7 @@ export default function App() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(readSessionHash);
   const [detail, setDetail] = useState<SessionDetail | null>(null);
-  const [setup, setSetup] = useState<{selection: Selection; id: string | null; revision: number; workspace: string} | null>(null);
+  const [setup, setSetup] = useState<{selection: Selection; id: string | null; revision: number; workspace: string; quick?: boolean} | null>(null);
   const setupSeen = useRef(new Set<string>());
   const [selection, setSelection] = useState<Selection>({ providerId: '', model: '', mode: 'build', permissionMode: 'ask' });
   const configOperation = useRef(false);
@@ -185,7 +186,7 @@ export default function App() {
       if(live&&!currentId.current&&selectionRequest.current===request&&!pendingSession.current) {
         const next = {...selection,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}};
         setSelection(next);
-        if (!preferred.setupComplete && !setupSeen.current.has(workspace) && !currentDraft.current.text.trim() && !currentDraft.current.attachments.length) { setupSeen.current.add(workspace); setSetup({selection:next,id:null,revision:0,workspace}); }
+        if (needsSetup(settings, next) && !setupSeen.current.has(workspace) && !currentDraft.current.text.trim() && !currentDraft.current.attachments.length) { setupSeen.current.add(workspace); setSetup({selection:next,id:null,revision:0,workspace,quick:true}); }
       }
     }).catch(()=>{});
     return()=>{live=false;};
@@ -663,7 +664,7 @@ export default function App() {
     <input type="file" accept="application/json,.json" hidden tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
     {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {contextSession && contextSession === activeId && !running && latestContext && <Modal title="Context details" onClose={() => setContextSession(null)}><div className="context-dialog"><ContextIndicator context={latestContext} /></div></Modal>}
-    {setup && settings && <Onboarding key={`${setup.id}:${setup.workspace}`} selection={setup.selection} settings={settings} onSave={saveSetup} onSettings={saveSettings} onClose={() => setSetup(null)} renderProviders={close => <Settings settings={settings} onClose={close} onSave={saveSettings} />} />}
+    {setup && settings && <Onboarding key={`${setup.id}:${setup.workspace}`} selection={setup.selection} settings={settings} quick={setup.quick} onSave={saveSetup} onSettings={saveSettings} onClose={() => setSetup(null)} renderProviders={close => <Settings settings={settings} onClose={close} onSave={saveSettings} />} />}
     {settingsOpen && settings && <Settings settings={settings} profilesDisabled={selectionDisabled} onProfiles={() => { setSidebarOpen(false); openProfiles(); }} profiles={profileDialog && profileDialog.id === activeId ? <ProfilePicker embedded key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeSettings} onApply={applyProfile} /> : null} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
     {goalModal && activeId && <Modal title="Set session goal" onClose={closeGoal}><form className="rename-form" onSubmit={e => { e.preventDefault(); void setSessionGoal(); }}><label>Goal<textarea autoFocus rows={3} maxLength={2000} placeholder="One objective to pursue across multiple turns…" value={goalText} onChange={e => setGoalText(e.target.value)} /></label><label>Max turns (1-25)<input type="number" min={1} max={25} value={goalTurns} onChange={e => setGoalTurns(e.target.value)} /></label><p className="goal-hint">The assistant reports progress each turn and the host continues automatically until the goal completes, blocks, or reaches the turn limit. Cancelling a response pauses continuation; your next message resumes it.</p><div className="form-actions"><button className="button secondary" type="button" onClick={closeGoal}>Cancel</button><button className="button primary" disabled={!goalText.trim() || busy}>Set goal</button></div></form></Modal>}

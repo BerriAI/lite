@@ -50,6 +50,7 @@ try{
     terminal.onData(chunk=>emulator.write(chunk));await waitFor(()=>screen().includes('Ctrl+P Commands'),'ready');
   }
   const session=await api('/sessions',{workspace:settings.workspace});await launch(session,80,24);
+  assert(!screen().includes('Connect your LiteLLM gateway'));terminal.write('/setup\r');
   await waitFor(()=>screen().includes('Connect your LiteLLM gateway · 1 of 3'),'gateway setup');await save('00-setup-gateway');
   terminal.write('\r');await waitFor(()=>screen().includes('Gateway base URL')&&screen().includes('Enter save'),'gateway URL');terminal.write('\r');await waitFor(()=>screen().includes('LiteLLM API key'),'gateway key');terminal.write('fixture-key');await waitFor(()=>screen().includes('•••'),'masked key');assert(!screen().includes('fixture-key'));terminal.write('\r');
   await waitFor(()=>screen().includes('Set up Lite · 2 of 3'),'first-run setup');await save('01-setup-architecture');
@@ -95,18 +96,17 @@ try{
   console.log(`Typing latency with 240 historical messages: ${Math.round(performance.now()-started)} ms.`);
   await api('/workspace-preferences',{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:null,setupComplete:false});
   const fresh=await api('/sessions',{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:null});
-  await api('/settings',{providers:[]},'PATCH');await launch(fresh,80,24);
-  await waitFor(()=>screen().includes('Gateway base URL: Enter your URL'),'fresh gateway fields');assert(!screen().includes('localhost:4000'));await save('08-fresh-gateway');
-  terminal.write('\r');await waitFor(()=>screen().includes('Enter save'),'enter fresh URL');terminal.write(settings.providers[0].baseUrl+'/setup-auth\r');
+  await api('/settings',{providers:[],defaultModel:''},'PATCH');await launch(fresh,80,24);
+  await waitFor(()=>screen().includes('Gateway base URL')&&screen().includes('Enter save'),'fresh gateway prompt');assert(!screen().includes('localhost:4000'));await save('08-fresh-gateway');
+  terminal.write(settings.providers[0].baseUrl+'/setup-auth\r');
   await waitFor(()=>screen().includes('LiteLLM API key'),'enter fresh key');terminal.write('wrong-key\r');
   await waitFor(()=>screen().includes('HTTP 401'),'gateway error stays in setup');assert.equal((await api('/settings')).providers.length,0);
-  terminal.write('\x1b[H\x1b[B\r');await waitFor(()=>screen().includes('LiteLLM API key'),'correct key');terminal.write('fixture-key\r');
-  await waitFor(()=>screen().includes('Set up Lite · 2 of 3'),'fresh gateway connected');terminal.write('\r');
-  await waitFor(()=>screen().includes('Model: Choose a model'),'fresh model selection');terminal.write('\x1b[H\x1b[B\r');
-  await waitFor(()=>screen().includes('Enter a model ID'),'fresh catalog');terminal.write('test-model');await waitFor(()=>screen().includes('› test-model'),'gateway model found');terminal.write('\r');
-  await waitFor(()=>screen().includes('Model: test-model'),'fresh model chosen');terminal.write('\x1b[F\r');
+  terminal.write('\x1b[H\r');await waitFor(()=>screen().includes('LiteLLM API key'),'correct key');terminal.write('fixture-key\r');
+  await waitFor(()=>screen().includes('Choose a model'),'fresh model chooser');assert(!screen().includes('Provider:'));terminal.write('test-fast');await waitFor(()=>screen().includes('› test-fast'),'gateway model found');await save('09-simple-model-choice');terminal.write('\r');
   await waitFor(async()=>(await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).setupComplete===true,'fresh setup persisted');
   const freshSettings=await api('/settings');assert.equal(freshSettings.providers[0].baseUrl,settings.providers[0].baseUrl+'/setup-auth');assert(!JSON.stringify(freshSettings).includes('fixture-key'));
+  assert.equal(freshSettings.defaultModel,'test-fast');
+  const next=await api('/sessions',{workspace:settings.workspace+'/src'});await launch(next,80,24);await waitFor(()=>screen().includes('A fresh start.'),'next folder opens chat');assert(!screen().includes('Gateway base URL'));assert.equal(next.model,'test-fast');await save('10-next-folder-ready');
   console.log('Fresh TUI gateway setup passed: blank URL, masked key, failed authentication, model discovery, and saved setup.');
   console.log('TUI interactions passed: first-run setup, saved models, live Allow all, two workers, two experts, Sidekick handoff, and narrow/wide rendering.');
 }finally{await stopTerminal();await browser?.close();server.kill('SIGTERM');await rm(config,{recursive:true,force:true});}

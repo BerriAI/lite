@@ -62,3 +62,10 @@ it('honors an explicitly supplied gateway environment without persisting its key
   store.saveSettings({theme:'dark'});
   expect(JSON.stringify(store.db.prepare('SELECT data FROM settings').get())).not.toContain('env-private-key');
 });
+
+it('remembers the first selected model for a different project without replacing an existing default',async()=>{
+  store.saveSettings({providers:[{id:'p',name:'Gateway',kind:'openai',baseUrl:url}],defaultProvider:'p',defaultModel:''});
+  const saved=await request('/workspace-preferences',{workspace:directory,providerId:'p',model:'chosen-model',setupComplete:true});expect(saved.status).toBe(200);
+  const next=await request('/sessions',{workspace:tmpdir()});expect(next.data.model).toBe('chosen-model');expect(next.data.providerId).toBe('p');
+  await request('/workspace-preferences',{workspace:directory,providerId:'p',model:'project-specific',setupComplete:true});expect(store.settings().defaultModel).toBe('chosen-model');
+});

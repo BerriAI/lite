@@ -23,6 +23,7 @@ import { attachmentFromFile, editDraft, openShell, suspendTerminal } from './ter
 import { Changes, WorkInspector, WorkerInspector } from './inspectors.js';
 import { conversationGroups, usageDetails } from './conversation.js';
 import { Brand } from './brand.js';
+import { needsSetup } from '../shared/setup.js';
 import { Onboarding } from './onboarding.js';
 import { workerLabels } from '../shared/worker-presentation.js';
 import { ModelSettings } from './models.js';
@@ -115,7 +116,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     controller.configurationReady();
     setPanel(<ModelSettings controller={controller} initial={controller.detail.session} settings={controller.getState().settings!} onClose={close} onProviders={() => setPanel(<Providers controller={controller} onClose={close} />)} />);
   };
-  const openSetup = () => { controller.configurationReady(); if (controller.detail) setPanel(<Onboarding controller={controller} initial={controller.detail.session} onClose={close} />); };
+  const openSetup = (quick = false) => { controller.configurationReady(); if (controller.detail) setPanel(<Onboarding quick={quick} controller={controller} initial={controller.detail.session} onClose={close} />); };
   const inspect = useCallback((steps: Message[]) => { if (controller.detail) setPanel(<WorkInspector controller={controller} steps={steps} detail={controller.detail} onClose={() => setPanel(null)} />); }, [controller]);
   const showUsage = useCallback((message: Message, usage?: import('../shared/types.js').Usage) => setPanel(<TextViewer title="Turn usage" text={usageDetails(message, usage)} onClose={() => setPanel(null)} />), []);
   const attach = (filename: string) => controller.action('Attaching file', async () => {
@@ -159,7 +160,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'workers', label: 'Worker assignments', description: 'Brief, report, evidence, and invocation transcript', action: () => menu('Worker assignments', (controller.detail?.delegations ?? []).map(task => ({ id: task.id, label: `${workerLabels(controller.detail!).get(`${task.parentMessageId}:${task.toolCallId}`) || 'Research'} · ${task.description}`, description: `${task.role ?? 'research'} · ${task.status}`, action: () => setPanel(<WorkerInspector controller={controller} invocation={task} onClose={close} />) }))) },
     { id: 'fork', label: 'Fork session', description: 'Continue from a copy of this conversation', disabled: busy, action: () => { close(); run(() => controller.fork()); } },
     { id: 'compact', label: 'Compact context', description: 'Summarize earlier context for the next response', disabled: busy, action: () => { close(); run(() => controller.action('Compacting context', () => controller.client.api(controller.path('/compact'), {}))); } },
-    { id: 'setup', label: 'Set up Lite', description: 'A quick guide to architecture, models, and permissions', disabled: busy, action: () => run(openSetup) },
+    { id: 'setup', label: 'Set up Lite', description: 'A quick guide to architecture, models, and permissions', disabled: busy, action: () => run(() => openSetup()) },
     { id: 'models', label: 'Choose models', description: 'Architecture, driver, worker, planner, and output style', disabled: busy, action: () => run(openModels) },
     { id: 'permissions', label: 'Permissions', description: 'Ask first or allow all tools, including workers', action: permissions },
     { id: 'settings', label: 'Settings', description: 'Providers, project profiles, permissions, integrations, and usage', action: openSettings },
@@ -199,12 +200,8 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   };
   const setupSeen = useRef(new Set<string>());
   useEffect(() => {
-    if (!detail || !state.settings || detail.messages.length || busy || setupSeen.current.has(detail.session.workspace)) return;
-    const workspace = detail.session.workspace; let live = true;
-    void controller.client.api<{setupComplete?:boolean}>(`/workspace-preferences?workspace=${encodeURIComponent(workspace)}`).then(preferred => {
-      if (live && !preferred.setupComplete && !isRunning(controller.detail) && !controller.detail?.messages.length) { setupSeen.current.add(workspace); openSetup(); }
-    }).catch(() => {});
-    return () => { live = false; };
+    if (!detail || !state.settings || detail.messages.length || busy || setupSeen.current.has(detail.session.workspace) || !needsSetup(state.settings, detail.session)) return;
+    setupSeen.current.add(detail.session.workspace); openSetup(true);
   }, [detail?.session.id, Boolean(state.settings)]);
   useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   useKeyboard(key => {
