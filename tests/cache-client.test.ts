@@ -2,7 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Conversation } from '../client/src/Conversation';
+import { ContextIndicator } from '../client/src/ContextIndicator';
 import type { CacheDiagnostics } from '../shared/cache';
 import type { ContextSnapshot, Message, SessionDetail, Session } from '../shared/types';
 
@@ -17,7 +17,7 @@ function detail(context: ContextSnapshot): SessionDetail {
   return { session: session(), messages: [message], todos: [], permissions: [], questions: [], queue: { items: [], paused: false }, lastEventId: 10 };
 }
 async function mount(context: ContextSnapshot) {
-  await act(async () => root().render(createElement(Conversation, { detail: detail(context), connection: 'connected' as const, onDecide: vi.fn(), onFork: vi.fn(), renderQuestion: () => null, busy: false })));
+  await act(async () => root().render(createElement(ContextIndicator, { context })));
 }
 const indicator = () => el('details[aria-label="Context estimate"]');
 const summary = () => indicator().querySelector('summary')!.textContent ?? '';

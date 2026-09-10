@@ -157,7 +157,8 @@ export class Store {
       // architecture selects the multi-model arrangement of future turns, the
       // same class of decision as `model`: revision bump + queue hold.
       const architectureChanged = architecture !== undefined && JSON.stringify(architecture ?? undefined) !== JSON.stringify(previous.architecture);
-      const changed = plannerChanged || styleChanged || architectureChanged || (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
+      const reasoningChanged = safe.modelReasoning !== undefined && JSON.stringify(safe.modelReasoning) !== JSON.stringify(previous.modelReasoning);
+      const changed = reasoningChanged || plannerChanged || styleChanged || architectureChanged || (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
       if (safe.workspace !== undefined && safe.workspace !== previous.workspace && (previous.profile || this.db.prepare('SELECT 1 FROM session_profiles WHERE session_id=?').get(id))) throw Object.assign(new Error('Clear the profile before changing the workspace.'), { status: 409 });
       const session = { ...previous, ...safe, id, updatedAt: Date.now(), configRevision: previous.configRevision! + (changed ? 1 : 0) };
       if (planner !== undefined) { if (planner === null) delete session.planner; else session.planner = planner; }

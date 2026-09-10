@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookOpen, Check, Clock3, Zap } from 'lucide-react';
+import { BookOpen, Check, Clock3, X, Zap } from 'lucide-react';
 import type { DelegationDetail, DelegationSummary } from '../../shared/delegation';
 import type { RunEvent, ToolCall } from '../../shared/types';
 import { api, applyEvent, errorMessage } from './api';
 import { Conversation } from './Conversation';
-import { CopyButton, Modal, SpeedRail } from './ui';
+import { Modal, SpeedRail } from './ui';
 
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
 const sidekick = (task: DelegationSummary) => task.role === 'sidekick';
@@ -14,14 +14,11 @@ export function TaskCard({ task, tool, onOpen, onCancel, cancelling, error }: { 
   const running = task.status === 'running';
   const fusion = sidekick(task);
   return <section className="research-task" role="region" aria-label={fusion ? 'Sidekick task' : 'Research task'}>
-    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong><span role="status">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></div>
-    <p className="research-scope">{fusion ? 'Sidekick · persistent delegated executor. Writes, edits, and shell commands each go through your approval in this session.' : 'Read-only research · bounded foreground task. No edits, shell commands, MCP, or further delegation.'}</p>
-    {running && <p>The parent response is waiting for this task’s report.</p>}
+    <div className="research-task-heading">{fusion ? <Zap size={16} /> : <BookOpen size={16} />}<strong title={fusion ? "Sidekick · edits and commands use this session’s permissions" : "Read-only research"}>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong><span className="task-state" role="status">{!running && (task.status === 'completed' ? <Check size={12} /> : <X size={12} />)}<span className="sr-only">{cancelling ? 'Cancelling…' : statusLabel(task)}</span></span><div className="research-task-actions"><button className="text-button" onClick={onOpen}>Open transcript</button>{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
     {task.error && <p className="error-text" role="status">{task.error}</p>}
-    <div className="research-task-actions"><button className="button secondary" onClick={onOpen}>Open transcript</button>{running && <button className="button secondary" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div>
+
     {error && <p className="error-text" role="alert">{error}</p>}
-    {tool.output !== undefined && <details className="research-report"><summary>{fusion ? 'Sidekick report' : 'Task report'}</summary><CopyButton text={tool.output} /><pre>{tool.output || '(No output)'}</pre></details>}
-    {running && <SpeedRail active compact />}
+
   </section>;
 }
 
@@ -90,8 +87,8 @@ export function TaskTranscript({ task, onClose }: { task: DelegationSummary; onC
   const summary = detail?.delegation ?? task;
   return <Modal title={fusion ? 'Sidekick transcript' : 'Research transcript'} onClose={onClose} wide>
     <div className="research-transcript">
-      <div className="research-transcript-header"><div><strong>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong><p>Read-only child transcript. Viewing or refreshing never starts another run.</p></div><span className="research-transcript-status" role="status">{summary.status === 'running' ? <Clock3 size={13} /> : <Check size={13} />}{statusLabel(summary)}</span></div>
-      <div className="research-transcript-toolbar"><p>No composer, settings, approvals, or history actions. Return to the parent task to cancel.</p><button className="button secondary" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}>Refresh transcript</button></div>
+      <div className="research-transcript-header"><div><strong title={fusion ? "Sidekick · edits and commands use this session’s permissions" : "Read-only research"}>{task.description || (fusion ? 'Sidekick task' : 'Research task')}</strong></div><span className="research-transcript-status" role="status">{summary.status === 'running' ? <Clock3 size={13} /> : <Check size={13} />}{statusLabel(summary)}</span></div>
+      <div className="research-transcript-toolbar"><p>Read-only transcript</p><button className="button secondary" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}>Refresh transcript</button></div>
       {error && <div className="inline-alert" role="alert">{error}</div>}
       {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}
       {detail && <Conversation detail={detail} connection={connection} busy={false} readOnly onDecide={() => {}} onFork={() => {}} renderQuestion={() => null} />}

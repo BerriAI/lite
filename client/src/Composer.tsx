@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, File, Hammer, Image, ListPlus, ListTree, Navigation, Paperclip, Pause, Play, Search, Shield, ShieldCheck, Square, X, Zap } from 'lucide-react';
-import type { ArchitectureSelection, Attachment, Mode, Model, PermissionMode, QueueState, Settings } from '../../shared/types';
+import { ArrowUp, AtSign, Check, ChevronDown, CornerDownLeft, Cpu, File, Hammer, Image, ListPlus, ListTree, Navigation, Paperclip, Pause, Play, Search, Shield, ShieldCheck, Square, X, Zap } from 'lucide-react';
+import type { ArchitectureSelection, Attachment, Mode, Model, ModelReasoning, ReasoningEffort, PermissionMode, QueueState, Settings } from '../../shared/types';
 import { ARCHITECTURES } from '../../shared/architectures';
 import { api, errorMessage, query } from './api';
 import { Modal, SpeedRail } from './ui';
@@ -9,7 +9,7 @@ import { Modal, SpeedRail } from './ui';
  * untouched, null = explicitly cleared in the next PATCH). outputStyle and
  * architecture follow the same tri-state contract: undefined = untouched,
  * null = cleared. */
-export interface Selection { providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; outputStyle?: string | null; architecture?: ArchitectureSelection | null; }
+export interface Selection { modelReasoning?: ModelReasoning; providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; outputStyle?: string | null; architecture?: ArchitectureSelection | null; }
 interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;
@@ -21,9 +21,9 @@ interface Props {
   text: string; setText: (value: string) => void;
   attachments: Attachment[]; setAttachments: (value: Attachment[]) => void;
   draftNotice?: string; onSettings: () => void;
-  profileLabel?: string; onProfiles?: () => void; selectionDisabled?: boolean;
+  selectionDisabled?: boolean;
 }
-export function Composer({ settings, selection, onSelection, onSend, onQueue, onSteer, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, profileLabel, onProfiles, selectionDisabled }: Props) {
+export function Composer({ settings, selection, onSelection, onSend, onQueue, onSteer, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, selectionDisabled }: Props) {
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextQuery, setContextQuery] = useState('');
@@ -44,7 +44,7 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, on
   const queueMode = Boolean(onQueue && (running || queueCount));
   const queueFull = queueCount >= 20;
   const configDisabled = Boolean(selectionDisabled || disabled || running || sending);
-  useEffect(() => { if (configDisabled) setModelOpen(false); }, [configDisabled]);
+  useEffect(() => { if (running || sending) setModelOpen(false); }, [running, sending]);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     if (!input.current) return;
@@ -118,12 +118,11 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, on
     if (e.key === 'Escape') setContextOpen(false);
   }
   return <>
-    {queue && (queueCount > 0 || queue.reason) && <section className="message-queue" aria-label="Queued messages">
+    {queue && queueCount > 0 && <section className="message-queue" aria-label="Queued messages">
       <div className="queue-header"><strong><ListPlus size={14} />Next messages <span>{queueCount}/20</span></strong><span className="queue-status" role="status">{queue.paused ? 'Paused' : running ? 'After this response' : 'Ready'}</span>
         {queueCount > 0 && <button className="text-button" disabled={disabled || queueBusy} onClick={() => onQueueAction?.(queue.paused || !running ? 'resume' : 'pause')}>{queue.paused || !running ? <Play size={12} /> : <Pause size={12} />}{queue.paused || !running ? 'Resume queue' : 'Pause queue'}</button>}
       </div>
       {queue.reason && <p className="queue-reason">{queue.reason}</p>}
-      {queue.paused && queueCount > 0 && <p className="queue-note">Queued messages stay paused until you choose Resume queue.</p>}
       {queueFull && <p className="queue-reason" role="status">Queue is full. Remove a message or resume to make room.</p>}
       {queueCount > 0 && <ol className="queue-items">{queue.items.map((item, index) => <li key={item.id}><span className="queue-position" aria-hidden="true">{index + 1}</span><div className="queue-item-content"><p title={item.content}>{item.content || 'Attached files'}</p>{item.attachments?.length > 0 && <span>{item.attachments.length} attachment{item.attachments.length === 1 ? '' : 's'} · {item.attachments.map(attachment => attachment.name).join(', ')}</span>}</div><button className="icon-button" aria-label={`Remove queued message ${index + 1}`} disabled={disabled || queueBusy} onClick={() => onQueueAction?.('remove', item.id)}><X size={13} /></button></li>)}</ol>}
     </section>}
@@ -133,26 +132,28 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, on
       <label className="sr-only" htmlFor="message-input">Message Lite</label><textarea ref={input} id="message-input" placeholder={welcome ? 'What do you want to build?' : queueMode ? 'Add the next message to your queue…' : 'Ask a follow-up, or start something new…'} value={text} maxLength={200000} rows={welcome ? 3 : 2} onKeyDown={onKey} disabled={disabled || sending} onChange={e => { setText(e.target.value); const mention = e.target.value.match(/(?:^|\s)@([^\s]*)$/); if (mention) { setContextOpen(true); setContextQuery(mention[1]); } else setContextOpen(false); }} />
       {contextOpen && <div className="context-picker"><div className="context-search"><Search size={15} /><input autoFocus aria-label="Search workspace files" placeholder="Find a file in your workspace…" value={contextQuery} onChange={e => setContextQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') { setContextOpen(false); input.current?.focus(); } if (e.key === 'Enter' && files.length) { e.preventDefault(); addContext(files[0]); } }} /><button className="icon-button" aria-label="Close file picker" onClick={() => setContextOpen(false)}><X size={14} /></button></div>{fileLoading ? <div className="picker-empty"><SpeedRail compact active />Finding files…</div> : files.length ? <div className="context-results">{files.slice(0, 30).map(f => <button key={f} onClick={() => addContext(f)}><File size={14} /><span>{f}</span>{attachments.some(a => a.path === f) && <Check size={14} />}</button>)}</div> : <div className="picker-empty">No files found. Try a different name.</div>}</div>}
       <div className="composer-toolbar"><div className="composer-tools">
-        <div className="mode-switch" role="group" aria-label="Agent mode"><button className={selection.mode === 'build' ? 'selected' : ''} aria-pressed={selection.mode === 'build'} disabled={configDisabled} onClick={() => onSelection({ ...selection, mode: 'build' })}><Hammer size={13} />Build</button><button className={selection.mode === 'plan' ? 'selected' : ''} aria-pressed={selection.mode === 'plan'} disabled={configDisabled} onClick={() => onSelection({ ...selection, mode: 'plan' })}><ListTree size={14} />Plan</button></div>
-        <span className="toolbar-divider" />
+        <div className="mode-switch"><select aria-label="Agent mode" value={selection.mode} disabled={configDisabled} onChange={event => { if (!configDisabled) onSelection({ ...selection, mode: event.target.value as Mode }); }}><option value="build">Build</option><option value="plan">Plan</option></select></div>
         {/* The trigger names the model that will run the NEXT turn: the planner
             on Plan-mode turns when one is set, else the executor (session model). */}
-        <button className="model-trigger" onClick={() => setModelOpen(true)} disabled={configDisabled} title={selection.architecture?.kind === 'sidekick-fusion' ? `Sidekick Fusion · main: ${selection.model || 'none'} + sidekick: ${selection.architecture.sidekick.model}` : selection.mode === 'plan' && selection.planner ? `Planner · ${selection.planner.model} (executor: ${selection.model || 'none'})` : `${provider?.name || 'Choose provider'} · ${selection.model || 'Choose model'}${selection.planner ? ` (+planner: ${selection.planner.model})` : ''}`}><span className="model-dot" /><span>{selection.architecture?.kind === 'sidekick-fusion' ? `⚡ ${selection.model?.split('/').at(-1) || '?'} + ${selection.architecture.sidekick.model.split('/').at(-1)}` : (selection.mode === 'plan' && selection.planner ? selection.planner.model : selection.model)?.split('/').at(-1) || 'Select model'}</span>{selection.mode === 'plan' && selection.planner && <span className="planner-tag">planner</span>}<ChevronDown size={12} /></button>
-        {onProfiles && <button className="profile-trigger" aria-label="Project profiles" title={`Project profiles · ${profileLabel || 'Default'}`} disabled={configDisabled} onClick={onProfiles}><span>{profileLabel || 'Default'}</span><ChevronDown size={12} /></button>}
+        <button className="model-trigger" onClick={() => setModelOpen(true)} disabled={configDisabled} title={selection.architecture?.kind === 'sidekick-fusion' ? `Sidekick Fusion · main: ${selection.model || 'none'} + sidekick: ${selection.architecture.sidekick.model}` : selection.mode === 'plan' && selection.planner ? `Planner · ${selection.planner.model} (executor: ${selection.model || 'none'})` : `${provider?.name || 'Choose provider'} · ${selection.model || 'Choose model'}${selection.planner ? ` (+planner: ${selection.planner.model})` : ''}`}><span>{(selection.mode === 'plan' && selection.planner ? selection.planner.model : selection.model)?.split('/').at(-1) || 'Select model'}</span>{selection.architecture?.kind === 'sidekick-fusion' && <span className="model-companion" title={`Sidekick: ${selection.architecture.sidekick.model}`}>+ sidekick</span>}{selection.mode === 'plan' && selection.planner && <span className="planner-tag">planner</span>}<ChevronDown size={12} /></button>
+
+        <details className="permission-select"><summary><Shield size={12} />{selection.mode === 'plan' ? 'Read only' : selection.permissionMode === 'ask' ? 'Ask first' : 'Auto-approve'}<ChevronDown size={10} /></summary><div className="permission-menu"><strong>Permissions</strong><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'ask' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Shield size={16} /><span>Ask before changes<small>Review edits and commands first</small></span>{selection.permissionMode === 'ask' && <Check size={14} />}</button><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'auto' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><ShieldCheck size={16} /><span>Auto-approve<small>Allow edits and shell commands</small></span>{selection.permissionMode === 'auto' && <Check size={14} />}</button></div></details>
       </div><div className="composer-actions"><input ref={fileInput} type="file" multiple className="sr-only" tabIndex={-1} aria-label="Attach files" onChange={e => { if (e.target.files) void addFiles(e.target.files).catch(e => setError(errorMessage(e))); e.target.value = ''; }} /><button className="icon-button attach-button" title="Attach files" aria-label="Attach files" onClick={() => fileInput.current?.click()}><Paperclip size={17} /></button><button className="icon-button context-button" title="Add workspace file" aria-label="Add workspace file context" onClick={() => { setContextOpen(v => !v); setContextQuery(''); }}><AtSign size={17} /></button>
         {onSteer && running && <button className="text-button steer-button" aria-label="Steer the running response" title="Send a steering note to the running response" disabled={disabled || sending || queueBusy || !text.trim()} onClick={() => void steer()}><Navigation size={13} />Steer</button>}
-        {queueMode ? <button className="send-button queue-send" aria-label="Add to queue" title="Add to queue (Enter)" disabled={disabled || sending || readingFiles || queueBusy || queueFull || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ListPlus size={16} />}<span>Queue</span></button> : !running && <button className="send-button" aria-label="Send message" title="Send message (Enter)" disabled={disabled || sending || readingFiles || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ArrowUp size={20} />}</button>}
+        {queueMode ? <button className="send-button queue-send" aria-label="Add to queue" title="Add to queue (Enter)" disabled={disabled || sending || readingFiles || queueBusy || queueFull || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ListPlus size={16} />}<span>Queue</span></button> : !running && <button className="send-button" aria-label="Send message" title="Send (Enter) · New line (Shift + Enter)" disabled={disabled || sending || readingFiles || (!text.trim() && !attachments.length)} onClick={() => void send()}>{sending ? <span className="send-loading" /> : <ArrowUp size={20} />}</button>}
         {running && <button className="send-button stop" aria-label="Stop generation" title="Stop generation and pause queued messages" disabled={disabled} onClick={onCancel}><Square size={14} fill="currentColor" /></button>}
       </div></div>
     </div>
-    <div className="composer-below"><details className="permission-select"><summary><Shield size={12} />{selection.mode === 'plan' ? 'Read-only plan' : selection.permissionMode === 'ask' ? 'Ask before changes' : 'Auto-approve changes'}<ChevronDown size={10} /></summary><div className="permission-menu"><strong>Permissions</strong><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'ask' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><Shield size={16} /><span>Ask before changes<small>Review edits and commands first</small></span>{selection.permissionMode === 'ask' && <Check size={14} />}</button><button disabled={configDisabled} onClick={e => { onSelection({ ...selection, permissionMode: 'auto' }); e.currentTarget.closest('details')?.removeAttribute('open'); }}><ShieldCheck size={16} /><span>Auto-approve<small>Allow edits and shell commands</small></span>{selection.permissionMode === 'auto' && <Check size={14} />}</button></div></details><span className="enter-hint"><CornerDownLeft size={11} />{queueMode ? 'Queue' : 'Send'}<span>·</span>Shift + Enter for a new line</span></div>
+
     {draftNotice && <div className="draft-notice" role="status">{draftNotice}</div>}
     {error && <div className="inline-alert" role="alert">{error}<button className="icon-button" aria-label="Dismiss attachment error" onClick={() => setError('')}><X size={13} /></button></div>}
-    {modelOpen && !configDisabled && <ModelPicker settings={settings} selection={selection} onChange={onSelection} onClose={closeModel} onSettings={onSettings} workspace={workspace} />}
+    {modelOpen && <ModelPicker disabled={configDisabled} settings={settings} selection={selection} onChange={onSelection} onClose={closeModel} onSettings={onSettings} workspace={workspace} />}
   </>;
 }
 
-function ModelPicker({ settings, selection, onChange, onClose, onSettings, workspace }: { settings: Settings; selection: Selection; onChange: (s: Selection) => void; onClose: () => void; onSettings: () => void; workspace: string }) {
+type PickerRole = 'model' | 'sidekick' | 'planner';
+
+function ModelPicker({ disabled, settings, selection, onChange, onClose, onSettings, workspace }: { disabled?: boolean; settings: Settings; selection: Selection; onChange: (s: Selection) => void; onClose: () => void; onSettings: () => void; workspace: string }) {
   // Output style (5.7) shares this surface with the model/planner pair because
   // all three are session-constant config PATCHed through one code path.
   // Workspace .lite/styles/*.md names are appended after the builtins.
@@ -165,21 +166,23 @@ function ModelPicker({ settings, selection, onChange, onClose, onSettings, works
   const builtinStyles = ['concise', 'explanatory', 'learning'];
   const styleOptions = [...builtinStyles, ...workspaceStyles.filter(name => !builtinStyles.includes(name))];
   const currentStyle = selection.outputStyle ?? '';
-  // One picker, three slots: the same list assigns the executor (session
-  // model), the optional planner (runs Plan-mode turns when set), or an
-  // architecture role — currently the Sidekick Fusion sidekick model. Keeping
-  // all of them in this surface means one code path PATCHes every half.
-  const [slot, setSlot] = useState<'executor' | 'planner'>('executor');
-  // Non-null while the user is filling an architecture's model role: the same
-  // searchable list assigns that role instead of the executor.
-  const [architectureRole, setArchitectureRole] = useState<'sidekick' | null>(null);
-  const active = architectureRole === 'sidekick' ? selection.architecture?.sidekick ?? null : slot === 'planner' ? selection.planner ?? null : { providerId: selection.providerId, model: selection.model };
+  const fusion = ARCHITECTURES[0];
+  const fusionActive = selection.architecture?.kind === 'sidekick-fusion';
+  // The picker's first decision is the ARRANGEMENT — a single model or Sidekick
+  // Fusion. `view` tracks it locally so entering Fusion shows both role slots
+  // before a sidekick exists; the architecture PATCHes once it has one.
+  const [view, setView] = useState<'single' | 'fusion'>(fusionActive ? 'fusion' : 'single');
+  // The armed slot is what the searchable list below assigns.
+  const [role, setRole] = useState<PickerRole>('model');
+  const [showAdvanced, setShowAdvanced] = useState(Boolean(selection.planner || selection.outputStyle));
   const [providerId, setProviderId] = useState(selection.providerId || settings.providers[0]?.id || '');
-  useEffect(() => { setProviderId((architectureRole === 'sidekick' ? selection.architecture?.sidekick.providerId : slot === 'planner' ? selection.planner?.providerId : selection.providerId) || settings.providers[0]?.id || ''); }, [slot, architectureRole]);
   const [search, setSearch] = useState('');
   const [models, setModels] = useState<Model[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const slotValue = (target: PickerRole) => target === 'planner' ? selection.planner ?? null : target === 'sidekick' ? selection.architecture?.sidekick ?? null : selection.model ? { providerId: selection.providerId, model: selection.model } : null;
+  const active = slotValue(role);
+  function arm(target: PickerRole) { setRole(target); setSearch(''); setProviderId(slotValue(target)?.providerId || selection.providerId || settings.providers[0]?.id || ''); }
   useEffect(() => {
     let alive = true; setLoading(true); setError(''); setModels([]);
     if (!providerId) { setLoading(false); return; }
@@ -190,38 +193,64 @@ function ModelPicker({ settings, selection, onChange, onClose, onSettings, works
   const all = [...models, ...configured.filter(id => id && !models.some(m => m.id === id)).map(id => ({ id, name: id, providerId }))];
   const filtered = all.filter(m => `${m.name} ${m.id}`.toLowerCase().includes(search.toLowerCase()));
   function choose(model: string) {
-    // Picking the sidekick role activates (or updates) the architecture;
-    // picking a plain executor model clears it — the two are the top-level
-    // either/or of the picker. Planner assignment leaves both untouched.
-    onChange(architectureRole === 'sidekick' ? { ...selection, architecture: { kind: 'sidekick-fusion', sidekick: { providerId, model } } }
-      : slot === 'planner' ? { ...selection, planner: { providerId, model } }
-      : { ...selection, providerId, model, architecture: null });
-    onClose();
+    if (role === 'planner') { onChange({ ...selection, planner: { providerId, model } }); return; }
+    if (role === 'sidekick') { onChange({ ...selection, architecture: { kind: 'sidekick-fusion', sidekick: { providerId, model } } }); return; }
+    if (view === 'fusion') {
+      // Changing the main model never drops the architecture. If Fusion still
+      // lacks its sidekick, keep the picker open and move to that slot.
+      onChange({ ...selection, providerId, model });
+      if (!fusionActive) { setRole('sidekick'); setSearch(''); }
+      return;
+    }
+    onChange({ ...selection, providerId, model, architecture: null });
   }
-  const fusion = ARCHITECTURES[0];
-  return <Modal title="Choose a model" onClose={onClose}><div className="model-picker">
-    {/* Architectures pinned at the top: the picker's first choice is not a
-        model but an ARRANGEMENT of models — Lite's multi-model opinion. */}
-    {architectureRole === null && slot === 'executor' && <div className="architecture-group" role="group" aria-label="Architectures">
-      <strong className="picker-group-label">Architectures</strong>
-      <button className={`architecture-option ${selection.architecture?.kind === 'sidekick-fusion' ? 'active' : ''}`} onClick={() => setArchitectureRole('sidekick')}>
-        <Zap size={16} /><span><strong>{fusion.name}</strong><small>{fusion.description}</small>{selection.architecture?.kind === 'sidekick-fusion' && <small className="architecture-current">Sidekick: {selection.architecture.sidekick.model.split('/').at(-1)} — click to change</small>}</span>{selection.architecture?.kind === 'sidekick-fusion' && <Check size={16} />}
+  const listLabel = role === 'planner' ? 'Planner model' : role === 'sidekick' ? fusion.roles[0].label : view === 'fusion' ? 'Main model' : 'Model';
+  const slot = (target: PickerRole, label: string, hint: string) => {
+    const value = slotValue(target);
+    const armed = role === target;
+    return <button type="button" className={`slot-card ${armed ? 'armed' : ''}`} title={hint} aria-pressed={armed} onClick={() => arm(target)}>
+      <span className="slot-label">{label}</span>
+      <strong className={value ? '' : 'slot-empty'}>{value ? value.model.split('/').at(-1) : 'Choose below'}</strong>
+
+    </button>;
+  };
+  return <Modal title="Choose a model" onClose={onClose}><fieldset className="model-picker" disabled={disabled}>
+    {/* The top-level either/or: one model, or an arrangement of models —
+        Lite's multi-model opinion, rendered from the registry. */}
+    <div className="picker-arrangements" role="group" aria-label="Arrangement">
+      <button className={`arrangement-option ${view === 'single' ? 'active' : ''}`} aria-pressed={view === 'single'} onClick={() => { if (view === 'single') return; setView('single'); arm('model'); if (fusionActive) onChange({ ...selection, architecture: null }); }}>
+        <Cpu size={16} /><span><strong>Single model</strong></span>{view === 'single' && <Check size={16} />}
       </button>
-      {selection.architecture && <button className="text-button" onClick={() => { onChange({ ...selection, architecture: null }); onClose(); }}>Turn off {fusion.name}</button>}
-      <strong className="picker-group-label">Single model</strong>
-    </div>}
-    {architectureRole === 'sidekick' && <p className="field-hint"><Zap size={12} /> Choosing the <strong>{fusion.roles[0].label}</strong> ({fusion.roles[0].hint}) for {fusion.name}. Your current model stays the main agent. <button className="text-button" onClick={() => setArchitectureRole(null)}>Back</button></p>}
-    {architectureRole === null && <div className="mode-switch model-slot-switch" role="group" aria-label="Model role"><button className={slot === 'executor' ? 'selected' : ''} aria-pressed={slot === 'executor'} onClick={() => { setSlot('executor'); setSearch(''); }}>Executor</button><button className={slot === 'planner' ? 'selected' : ''} aria-pressed={slot === 'planner'} onClick={() => { setSlot('planner'); setSearch(''); }}>Planner{selection.planner ? '' : ': none'}</button></div>}
-    {slot === 'planner' && architectureRole === null && <p className="field-hint">Plan-mode turns run on the planner when set; Build turns use the executor.</p>}
+      <button className={`arrangement-option ${view === 'fusion' ? 'active' : ''}`} aria-pressed={view === 'fusion'} onClick={() => { if (view === 'fusion') return; setView('fusion'); arm(fusionActive ? 'model' : 'sidekick'); }}>
+        <Zap size={16} /><span><strong>{fusion.name}</strong></span>{view === 'fusion' && <Check size={16} />}
+      </button>
+    </div>
+    {view === 'fusion' && <>
+      <div className="picker-slots" role="group" aria-label="Fusion roles">
+        {slot('model', 'Main model', 'Plans, delegates, and reviews. Pick your strongest model.')}
+        {slot('sidekick', fusion.roles[0].label, 'Explores, writes code, and fixes bugs. Cheaper and faster works well.')}
+      </div>
+      {!fusionActive && <p className="field-hint fusion-pending"><Zap size={12} /> Pick a sidekick model below to turn on {fusion.name}.</p>}
+    </>}
+    <div className="picker-current"><span title={active?.model}>{view === 'single' && role === 'model' && <strong>{active?.model.split('/').at(-1) || 'Choose a model'}</strong>}</span><label>Reasoning<select aria-label={`${listLabel} reasoning`} disabled={!active} value={active ? selection.modelReasoning?.[JSON.stringify([active.providerId, active.model])] ?? '' : ''} onChange={event => {
+      if (!active) return;
+      const modelReasoning = { ...selection.modelReasoning }, key = JSON.stringify([active.providerId, active.model]);
+      if (event.target.value) modelReasoning[key] = event.target.value as ReasoningEffort; else delete modelReasoning[key];
+      onChange({ ...selection, modelReasoning });
+    }} title="Saved per model for this session. Requires a model that supports reasoning effort."><option value="">Default</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label></div>
     <label>Provider<select value={providerId} onChange={e => { setProviderId(e.target.value); setSearch(''); }}>{settings.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label><div className="search-field"><Search size={16} /><input placeholder="Search models or enter a model ID…" aria-label="Search models" value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && search.trim()) choose(search.trim()); }} /></div>
     {loading && <SpeedRail active compact />}{error && <p className="field-hint error-text">{error} You can still enter a model ID manually.</p>}
     <div className="model-list">{filtered.map(m => <button key={m.id} onClick={() => choose(m.id)}><span className="model-dot" /><span><strong>{m.name}</strong>{m.name !== m.id && <small>{m.id}</small>}</span>{m.id === active?.model && providerId === active?.providerId && <Check size={16} />}</button>)}{!loading && !filtered.length && <div className="picker-empty">{search ? 'No matching models.' : 'No models discovered. Enter a model ID above or check your provider settings.'}</div>}{search.trim() && !all.some(m => m.id === search.trim()) && <button className="custom-model" onClick={() => choose(search.trim())}>Use <strong>{search.trim()}</strong><CornerDownLeft size={14} /></button>}</div>
-    {slot === 'planner' && selection.planner && <button className="text-button" onClick={() => { onChange({ ...selection, planner: null }); onClose(); }}>Clear planner</button>}
-    <label className="style-picker">Output style<select aria-label="Output style" value={currentStyle} onChange={e => onChange({ ...selection, outputStyle: e.target.value || null })}>
-      <option value="">default</option>
-      {styleOptions.map(name => <option key={name} value={name}>{name}</option>)}
-      {currentStyle && !styleOptions.includes(currentStyle) && <option value={currentStyle}>{currentStyle}</option>}
-    </select><span className="field-hint">Shapes how responses are written. Custom styles come from .lite/styles/*.md in the workspace.</span></label>
-    <button className="text-button" onClick={() => { onClose(); onSettings(); }}>Manage providers and API keys</button>
-  </div></Modal>;
+    <button className="text-button picker-advanced-toggle" aria-expanded={showAdvanced} onClick={() => { const next = !showAdvanced; setShowAdvanced(next); if (!next && role === 'planner') arm(view === 'fusion' && !fusionActive ? 'sidekick' : 'model'); }}><ChevronDown size={12} className={showAdvanced ? 'open' : ''} />Planner and output style</button>
+    {showAdvanced && <div className="picker-advanced">
+      <div className="picker-slots">{slot('planner', 'Planner model', 'Runs Plan-mode turns when set. Build turns use the main model.')}</div>
+      {selection.planner && <button className="text-button" onClick={() => onChange({ ...selection, planner: null })}>Clear planner</button>}
+      <label className="style-picker">Output style<select aria-label="Output style" value={currentStyle} onChange={e => onChange({ ...selection, outputStyle: e.target.value || null })}>
+        <option value="">default</option>
+        {styleOptions.map(name => <option key={name} value={name}>{name}</option>)}
+        {currentStyle && !styleOptions.includes(currentStyle) && <option value={currentStyle}>{currentStyle}</option>}
+      </select></label>
+    </div>}
+    <div className="picker-footer"><button className="text-button" onClick={() => { onClose(); onSettings(); }}>Manage providers</button><button className="button primary" onClick={onClose}>Done</button></div>
+  </fieldset></Modal>;
 }

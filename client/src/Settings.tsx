@@ -50,7 +50,7 @@ function parseContextRows(rows: ContextLimitRow[]): Record<string, number> {
   }
   return Object.fromEntries(entries);
 }
-export function Settings({ settings, onClose, onSave }: { settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
+export function Settings({ settings, onClose, onSave, onProfiles, profilesDisabled }: { onProfiles?: () => void; profilesDisabled?: boolean; settings: SettingsType; onClose: () => void; onSave: (settings: SettingsType) => void }) {
   const [draft, setDraft] = useState<SettingsType>(() => ({ ...settings, providers: settings.providers.map(({ apiKey: _key, ...p }) => p) }));
   const [contextRows, setContextRows] = useState(() => contextRowsFor(settings.providers));
   const [ruleRows, setRuleRows] = useState(() => ruleRowsFor(settings.permissionRules));
@@ -333,6 +333,7 @@ export function Settings({ settings, onClose, onSave }: { settings: SettingsType
     <div className="settings-layout"><nav className="settings-nav" aria-label="Settings sections">
       <button className={tab === 'providers' ? 'selected' : ''} onClick={() => setTab('providers')}><Server size={16} />Providers</button>
       <button className={tab === 'general' ? 'selected' : ''} onClick={() => setTab('general')}><Settings2 size={16} />Workspace</button>
+      {onProfiles && <button aria-label="Project profiles" disabled={profilesDisabled} onClick={onProfiles}><Star size={16} />Project profiles</button>}
       <button className={tab === 'permissions' ? 'selected' : ''} onClick={() => setTab('permissions')}><Shield size={16} />Permissions</button>
       <button className={tab === 'integrations' ? 'selected' : ''} onClick={() => setTab('integrations')}><Unplug size={16} />Integrations</button>
       <button className={tab === 'usage' ? 'selected' : ''} onClick={() => setTab('usage')}><Activity size={16} />Usage</button>

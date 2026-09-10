@@ -48,6 +48,7 @@ async function clickText(label: string, scope = document.body) {
   await act(async () => button!.click());
 }
 
+async function changeMode(mode: string) { await act(async () => { const select = element<HTMLSelectElement>('.mode-switch select'); if (select.disabled) return; select.value = mode; select.dispatchEvent(new Event('change', { bubbles: true })); }); }
 class TestEventSource {
   static instances: TestEventSource[] = [];
   onopen: (() => void) | null = null;
@@ -224,13 +225,13 @@ describe('session-scoped asynchronous responses', () => {
     server.mutation = (path, method) => {
       expect(`${method} ${path}`).toBe('PATCH /api/sessions/a'); return pending.promise;
     };
-    await mountApp(); await clickText('Plan'); await click('.session-link[title="Session b"]');
+    await mountApp(); await changeMode('plan'); await click('.session-link[title="Session b"]');
     expect(element('.topbar-title').textContent).toBe('Session b');
     await act(async () => { if (outcome === 'success') pending.resolve(session('a', { mode: 'plan' })); else pending.reject(new Error('old request failed')); });
     expect(window.location.hash).toBe('#session/b');
     expect(element('.topbar-title').textContent).toBe('Session b');
     expect(element('.breadcrumb-project').textContent).toBe('workspace-b');
-    expect(element('.mode-switch [aria-pressed="true"]').textContent).toBe('Plan');
+    expect(element<HTMLSelectElement>('.mode-switch select').selectedOptions[0].textContent).toBe('Plan');
     expect(element('.conversation-content').textContent).toContain('History b');
     expect(document.querySelector('.global-alert')).toBeNull();
   });
@@ -239,19 +240,19 @@ describe('session-scoped asynchronous responses', () => {
     const server = appServer([detail('a')]), first = deferred<Session>(), second = deferred<Session>();
     let calls = 0; server.mutation = () => ++calls === 1 ? first.promise : second.promise;
     await mountApp();
-    await clickText('Build');
-    expect(element<HTMLButtonElement>('.mode-switch button:last-child').disabled).toBe(true);
-    await clickText('Plan');
+    await changeMode('build');
+    expect(element<HTMLButtonElement>('.mode-switch select').disabled).toBe(true);
+    await changeMode('plan');
     expect(calls).toBe(1);
     await act(async () => first.reject(new Error('Configuration request failed')));
-    expect(element('.mode-switch [aria-pressed="true"]').textContent).toBe('Build');
-    expect(element<HTMLButtonElement>('.mode-switch button:last-child').disabled).toBe(false);
-    await clickText('Plan');
+    expect(element<HTMLSelectElement>('.mode-switch select').selectedOptions[0].textContent).toBe('Build');
+    expect(element<HTMLButtonElement>('.mode-switch select').disabled).toBe(false);
+    await changeMode('plan');
     expect(calls).toBe(2);
     const patches = vi.mocked(fetch).mock.calls.filter(([, options]) => options?.method === 'PATCH');
     expect(patches.map(([, options]) => JSON.parse(String(options?.body)).expectedConfigRevision)).toEqual([0, 0]);
     await act(async () => second.resolve(session('a', { mode: 'plan', configRevision: 1 })));
-    expect(element('.mode-switch [aria-pressed="true"]').textContent).toBe('Plan');
+    expect(element<HTMLSelectElement>('.mode-switch select').selectedOptions[0].textContent).toBe('Plan');
     expect(document.querySelector('.global-alert')).toBeNull();
   });
 
@@ -320,7 +321,8 @@ const undoable = { hasCheckpoints: true, canUndo: true, canRedo: false, undoId: 
 const redoable = { hasCheckpoints: true, canUndo: false, canRedo: true, redoId: 'turn-1' };
 const historyRegion = () => element<HTMLElement>('[aria-label="Turn history"]');
 async function confirmHistory(label: string) {
-  await clickText(label, historyRegion());
+  if (label === 'Recover history') await clickText(label, historyRegion());
+  else { await click('[aria-label="Session actions"]'); await clickText(label, element<HTMLElement>('.session-menu')); }
   expect(element('.modal h2').textContent).toBe(`${label}?`);
   await clickText(label, element<HTMLElement>('.modal'));
 }
@@ -335,12 +337,12 @@ describe('turn history UI', () => {
     await confirmHistory(action === 'undo' ? 'Undo last turn' : 'Redo turn');
     const request = vi.mocked(fetch).mock.calls.find(([path]) => path === `/api/sessions/a/history/${action}`)!;
     expect(JSON.parse(request[1]!.body as string)).toEqual({ checkpointId: 'turn-1' });
-    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect(element<HTMLTextAreaElement>('#message-input').disabled).toBe(true);
     server.details.set('a', detail('a', { history: action === 'undo' ? redoable : undoable, lastEventId: 15, queue: { items: [], paused: true, reason: 'History changed. Resume explicitly.' }, messages: [] }));
     await act(async () => pending.resolve({}));
     expect(element<HTMLTextAreaElement>('#message-input').value).toBe('keep my draft');
     expect(stored('a')?.attachments[0].content).toBe('keep context');
-    expect(element('.queue-status').textContent).toBe('Paused');
+    expect(document.querySelector('.queue-status')).toBeNull();
     expect(document.querySelector('.conversation-content')?.textContent).not.toContain('History a');
     expect(server.requests.filter(request => request.startsWith('POST'))).toEqual([`POST /api/sessions/a/history/${action}`]);
     expect(element('.toast').textContent).toContain(action === 'undo' ? 'Last turn undone' : 'without replay');
@@ -354,7 +356,7 @@ describe('turn history UI', () => {
     await act(async () => pending.reject(new Error('File changed during restoration')));
     expect(element('.global-alert').textContent).toContain('File changed');
     expect(element('.history-recovery').textContent).toContain('src/changed.ts');
-    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect(element<HTMLTextAreaElement>('#message-input').disabled).toBe(true);
     expect(element<HTMLTextAreaElement>('#message-input').disabled).toBe(true);
     server.mutation = (path, method) => {
       expect(`${method} ${path}`).toBe('POST /api/sessions/a/history/recover');
@@ -380,7 +382,7 @@ describe('turn history UI', () => {
 
   it('refuses a stale confirmation after SSE changes the current checkpoint', async () => {
     const server = appServer([detail('a', { history: undoable })]);
-    await mountApp(); await clickText('Undo last turn', historyRegion());
+    await mountApp(); await click('[aria-label="Session actions"]'); await clickText('Undo last turn', element<HTMLElement>('.session-menu'));
     server.details.set('a', detail('a', { lastEventId: 11, history: { ...undoable, undoId: 'turn-2' } }));
     await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, type: 'history', sessionId: 'a', data: { ...undoable, undoId: 'turn-2' } }));
     await clickText('Undo last turn', element<HTMLElement>('.modal'));
@@ -393,13 +395,13 @@ describe('turn history UI', () => {
     const server = appServer([detail('a', { history: undoable })]), pending = deferred<object>();
     server.mutation = () => pending.promise;
     await mountApp(); await click('[aria-label="Send message"]');
-    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
-    expect(historyRegion().textContent).toContain('message preparation');
+    await click('[aria-label="Session actions"]');
+    expect([...document.querySelectorAll<HTMLButtonElement>('.session-menu button')].find(button => button.textContent === 'Undo last turn')?.disabled).toBe(true);
     await act(async () => pending.reject(new Error('preparation failed')));
     expect(stored('a')?.text).toBe('prepare this');
-    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(false);
+    expect([...document.querySelectorAll<HTMLButtonElement>('.session-menu button')].find(button => button.textContent === 'Undo last turn')?.disabled).toBe(false);
     await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, type: 'session', sessionId: 'a', data: { status: 'running' } }));
-    expect(element<HTMLButtonElement>('.history-actions button').disabled).toBe(true);
+    expect([...document.querySelectorAll<HTMLButtonElement>('.session-menu button')].find(button => button.textContent === 'Undo last turn')?.disabled).toBe(true);
     expect(element<HTMLButtonElement>('[aria-label="Add to queue"]').disabled).toBe(false);
     expect(element<HTMLButtonElement>('[aria-label="Stop generation"]').disabled).toBe(false);
   });
@@ -432,8 +434,8 @@ describe('structured agent questions', () => {
     await mountApp();
     expect(questionRegion().querySelector('input:checked')).toBeNull();
     expect(element<HTMLButtonElement>('.question-actions .primary').disabled).toBe(true);
-    expect(element('.session-state').textContent).toBe('Needs answer');
-    expect(element('.run-status').textContent).toContain('Waiting for your answer');
+    expect(document.querySelector('.session-state')).toBeNull();
+    expect(document.querySelector('.run-status')).toBeNull();
     await click('.question-option input[value="postgres"]');
     expect(server.requests.some(request => request.startsWith('POST'))).toBe(false);
     const button = element<HTMLButtonElement>('.question-actions .primary');
@@ -532,7 +534,7 @@ describe('structured agent questions', () => {
     await act(async () => pending.reject(new Error('Question cancelled')));
     expect(server.requests).toContain('POST /api/sessions/a/cancel');
     expect(document.querySelector('.question-card')).toBeNull();
-    expect(element('.queue-status').textContent).toBe('Paused');
+    expect(document.querySelector('.queue-status')).toBeNull();
     expect(document.querySelector('.global-alert')).toBeNull();
     expect(server.requests.some(request => request.endsWith('/queue/resume'))).toBe(false);
   });
@@ -556,10 +558,10 @@ describe('structured agent questions', () => {
       source.emit({ id: 12, type: 'question', sessionId: 'a', data: question() });
     });
     expect(document.querySelectorAll('.question-card')).toHaveLength(1);
-    expect(element('.run-status').textContent).toContain('Waiting for your answer');
+    expect(document.querySelector('.run-status')).toBeNull();
     await act(async () => source.emit({ id: 13, type: 'question_resolved', sessionId: 'a', data: { id: 'q-a', status: 'answered' } }));
     expect(document.querySelectorAll('.question-card')).toHaveLength(0);
-    expect(element('.run-status').textContent).toContain('Waiting for your approval');
+    expect(document.querySelector('.run-status')).toBeNull();
   });
 });
 
@@ -619,21 +621,16 @@ describe('saved context estimate', () => {
     expect(indicator.querySelector('img,script,a')).toBeNull();
   });
 
-  it('renders persisted snapshots for streaming and historical responses but not legacy messages or composer drafts', async () => {
-    const initial = detail('a', { session: session('a', { status: 'running' }), messages: [
-      { id: 'legacy', sessionId: 'a', role: 'assistant', content: 'Earlier reply', createdAt: 1 },
-      { id: 'streaming', sessionId: 'a', role: 'assistant', content: '', context: contextSnapshot({ limitSource: 'catalog' }), createdAt: 2 },
-    ] });
-    appServer([initial]); localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'Unsent draft', attachments: [] }));
+  it('keeps context diagnostics out of streaming and completed conversation messages', async () => {
+    appServer([detail('a', { session: session('a', { status: 'running' }), messages: [
+      { id: 'reply', sessionId: 'a', role: 'assistant', content: 'Reply', context: contextSnapshot(), createdAt: 2, usage: { inputTokens: 100, outputTokens: 20 } },
+    ] })]);
     await mountApp();
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
-    const before = element('.context-estimate').textContent;
-    await fill('#message-input', 'A much longer unsent draft '.repeat(100));
-    expect(element('.context-estimate').textContent).toBe(before);
-    expect(element('.context-estimate').textContent).toContain('Model catalog');
+    expect(document.querySelector('.context-estimate')).toBeNull();
+    expect(document.querySelector('.usage')).toBeNull();
     await act(async () => TestEventSource.instances.at(-1)!.emit({ id: 11, sessionId: 'a', type: 'session', data: session('a') }));
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
-    expect(element('.context-estimate').textContent).toBe(before);
+    expect(document.querySelector('.context-estimate')).toBeNull();
+    expect(element('.usage').textContent).toContain('20 tokens');
   });
 });
 
@@ -654,19 +651,19 @@ describe('live context progress snapshot reconciliation', () => {
       source.emit({ id: 12, sessionId: 'a', type: 'message', data: accepted });
       source.emit({ id: 13, sessionId: 'a', type: 'message', data: liveMessage });
     });
-    expect(element('.context-estimate > summary').textContent).toContain('compaction needed');
+    expect(element('.run-status').textContent).toContain('Making room in context.');
     const reads = server.requests.filter(request => request === 'GET /api/sessions/a').length;
     await act(async () => pending.resolve({ messageId: accepted.id }));
     expect(server.requests.filter(request => request === 'GET /api/sessions/a').length).toBeGreaterThan(reads);
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     await act(async () => source.onopen?.());
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     const completed = { ...liveMessage, activity: '', content: 'Final answer', context: contextSnapshot({ reason: 'Older context was compacted before this request.' }) };
     await act(async () => source.emit({ id: 14, sessionId: 'a', type: 'message', data: completed }));
     expect(document.querySelectorAll('.assistant-message')).toHaveLength(1);
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     expect(element('.assistant-message').textContent).toContain('Final answer');
-    expect(element('.context-estimate > summary').textContent).not.toContain('compaction needed');
+    expect(document.querySelector('.run-status')).toBeNull();
   });
 
   it('does not revive another session’s pending progress when its old submission and stream settle', async () => {
@@ -679,7 +676,7 @@ describe('live context progress snapshot reconciliation', () => {
       source.emit({ id: 11, sessionId: 'a', type: 'session', data: session('a', { status: 'running' }) });
       source.emit({ id: 12, sessionId: 'a', type: 'message', data: liveMessage });
     });
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     await click('.session-link[title="Session b"]'); await fill('#message-input', 'Session b draft');
     await act(async () => {
       source.emit({ id: 13, sessionId: 'a', type: 'message', data: { ...liveMessage, content: 'Late session a reply' } });
@@ -696,10 +693,10 @@ describe('live context progress snapshot reconciliation', () => {
     const server = appServer([pendingSnapshot]);
     localStorage.setItem(draftKey('a'), JSON.stringify({ text: 'Keep pending draft', attachments: [] }));
     await mountApp(); const source = TestEventSource.instances.at(-1)!;
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     expect(element('[aria-label="Stop generation"]')).toBeDefined();
     await act(async () => source.onopen?.());
-    expect(document.querySelectorAll('.context-estimate')).toHaveLength(1);
+    expect(document.querySelectorAll('.context-estimate')).toHaveLength(0);
     const replacement = [{ id: 'summary', sessionId: 'a', role: 'system' as const, content: 'Saved context summary', createdAt: 4 }];
     server.details.set('a', detail('a', { session: session('a', { status: 'running' }), messages: replacement, lastEventId: 14 }));
     await act(async () => source.emit({ id: 14, sessionId: 'a', type: 'reset', data: { messages: replacement } }));

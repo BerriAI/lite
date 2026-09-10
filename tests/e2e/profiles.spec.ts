@@ -35,7 +35,7 @@ async function create(request: APIRequestContext, input: Record<string, unknown>
   expect(response.status()).toBe(201); const session: Session = await response.json(); sessions.push(session); return session;
 }
 async function open(page: Page, session: Session) { await page.goto(`/#session/${session.id}`); await expect(composer(page)).toBeVisible(); await expect(page.getByText('Connecting to live updates…', { exact: true })).toHaveCount(0); }
-async function picker(page: Page) { await page.getByRole('button', { name: 'Project profiles', exact: true }).click(); await expect(dialog(page)).toBeVisible(); await expect(dialog(page).getByLabel('Profile', { exact: true })).toBeVisible(); return dialog(page); }
+async function picker(page: Page) { if (await page.getByRole('button', { name: 'Open navigation', exact: true }).isVisible()) await page.getByRole('button', { name: 'Open navigation', exact: true }).click(); await page.getByRole('button', { name: 'Workspace settings', exact: true }).click(); await page.getByRole('button', { name: 'Project profiles', exact: true }).click(); await expect(dialog(page)).toBeVisible(); await expect(dialog(page).getByLabel('Profile', { exact: true })).toBeVisible(); return dialog(page); }
 async function choose(page: Page, name = 'Careful inspector', skill = false) { const panel = await picker(page); await panel.getByLabel('Profile', { exact: true }).selectOption({ label: name }); if (skill) await panel.getByRole('checkbox', { name: 'Review checklist', exact: true }).check(); return panel; }
 async function use(page: Page, name = 'Careful inspector', skill = false) { const panel = await choose(page, name, skill); await panel.getByRole('button', { name: 'Use profile', exact: true }).click(); await expect(panel).toHaveCount(0); }
 async function send(page: Page, request: APIRequestContext, session: Session, prompt: string) {
@@ -206,13 +206,13 @@ test('an unanswered agent question cannot be bypassed by changing the profile', 
   const session = await create(request); await open(page, session); await use(page);
   await composer(page).fill('PROFILE_BROWSER ask fixture question'); await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect.poll(async () => (await detail(request, session.id)).questions?.length).toBe(1);
-  await expect(page.getByRole('button', { name: 'Project profiles', exact: true })).toBeDisabled();
+  await expect(page.locator('.composer [aria-label="Project profiles"]')).toHaveCount(0);
   const current = (await detail(request, session.id)).session;
   const rejected = await request.post(`/api/sessions/${session.id}/profile`, { data: { expectedConfigRevision: current.configRevision ?? 0, choice: { profileId: null, skillIds: [] } } });
   expect(rejected.status()).toBe(409); expect((await detail(request, session.id)).session.profile).toEqual(current.profile);
   await composer(page).fill('Preserve draft while the question waits.'); await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
   await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
-  await expect(page.getByRole('button', { name: 'Project profiles', exact: true })).toBeEnabled();
+  await expect(page.locator('.composer [aria-label="Project profiles"]')).toHaveCount(0);
   await expect(composer(page)).toHaveValue('Preserve draft while the question waits.');
 });
 

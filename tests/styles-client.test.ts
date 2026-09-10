@@ -34,8 +34,10 @@ describe('output style picker', () => {
         text: '', setText: () => {}, attachments: [], setAttachments: () => {}, onSettings: () => {},
       } as any));
     });
-    // Open the model picker surface that hosts the style select.
+    // Open the model picker surface that hosts the style select. The style
+    // lives in the advanced section, auto-expanded only when a style is set.
     await act(async () => { (container.querySelector('.model-trigger') as HTMLButtonElement).click(); });
+    if (!document.querySelector('[aria-label="Output style"]')) await act(async () => { (document.querySelector('.picker-advanced-toggle') as HTMLButtonElement).click(); });
     return onSelection;
   };
   const select = () => document.querySelector('[aria-label="Output style"]') as HTMLSelectElement;

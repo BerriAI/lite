@@ -348,3 +348,14 @@ describe('provider protocol', () => {
     expect(chunks.filter(c => c.type === 'tool').map(c => c.tool?.arguments || '').join('')).toBe('{"path":"a"}');
   });
 });
+
+it.each(['openai', 'anthropic', 'codex'] as const)('sends optional reasoning effort in the %s request format', async kind => {
+  configureCodexAuth(async () => ({ accessToken: 'test-token' }));
+  const fetcher = vi.fn(async (_url: any, _init: any) => new Response(kind === 'anthropic' ? frame({ type: 'message_stop' }) : kind === 'codex' ? frame({ type: 'response.completed', response: {} }) : frame(choice({}, 'stop')) + 'data: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } }));
+  vi.stubGlobal('fetch', fetcher);
+  for (const reasoningEffort of ['high', undefined] as const) {
+    for await (const _ of streamCompletion({ provider: { ...provider('https://fixture.invalid'), kind }, model: 'model', messages: [], signal: new AbortController().signal, reasoningEffort })) {}
+    const body = JSON.parse(fetcher.mock.calls.at(-1)![1].body);
+    expect(kind === 'anthropic' ? body.output_config?.effort : kind === 'codex' ? body.reasoning?.effort : body.reasoning_effort).toBe(reasoningEffort);
+  }
+});

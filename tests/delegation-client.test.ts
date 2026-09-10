@@ -62,7 +62,7 @@ afterEach(async () => { await act(async () => roots.splice(0).forEach(root => ro
 
 describe('bound research task cards', () => {
   it('shows exact private links, scope and status without launching anything on render', async () => {
-    const api = server(); await mountApp(); expect(region().textContent).toContain('Read-only research'); expect(region().textContent).toContain('parent response is waiting'); expect(region().textContent).toContain('Researching');
+    const api = server(); await mountApp(); expect(region().querySelector('strong')?.title).toBe('Read-only research'); expect(region().textContent).not.toContain('parent response is waiting'); expect(region().textContent).toContain('Researching');
     expect(api.calls.every(call => call.method === 'GET')).toBe(true); expect(api.calls.some(call => call.path === bound)).toBe(false);
     await press('Open transcript', region()); expect(el('[role="dialog"]').textContent).toContain('Research transcript'); expect(api.calls.filter(call => call.method !== 'GET')).toHaveLength(0); expect(window.location.hash).toBe('#session/a');
   });

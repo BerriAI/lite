@@ -53,14 +53,11 @@ async function send(page: Page, request: APIRequestContext, session: Session, co
   const accepted = page.waitForResponse(response => response.url().endsWith(`/sessions/${session.id}/messages`) && response.request().method() === 'POST');
   await page.getByRole('button', { name: 'Send message', exact: true }).click(); expect((await accepted).status()).toBe(202);
   await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
-  await expect(indicator(page)).toBeVisible();
+  await expect(indicator(page)).toHaveCount(0);
   return detail(request, session.id);
 }
 function latestContext(state: SessionDetail) { return state.messages.filter(message => message.role === 'assistant').at(-1)!.context!; }
-async function expand(page: Page) {
-  const target = indicator(page); if (!await target.evaluate(element => (element as HTMLDetailsElement).open)) await target.locator('summary').click();
-  return target;
-}
+
 
 test('catalog context is an approximate request snapshot, survives reload, and never counts an unsent draft', async ({ page, request }) => {
   await discover(request); const session = await create(request); await open(page, session); const before = await calls(request);
@@ -68,9 +65,9 @@ test('catalog context is an approximate request snapshot, survives reload, and n
   const context = latestContext(completed);
   expect(context).toMatchObject({ providerId: provider.id, model: 'budget-model', contextWindow: 16384, limitSource: 'catalog', action: 'continue' });
   expect(context.estimatedInputTokens).toBeGreaterThan(0);
-  await expect(await expand(page)).toContainText(/estimat|approx/i);
+  expect(context.estimatedInputTokens).toBeGreaterThan(0);
   await composer(page).fill('This draft is not in the request estimate. '.repeat(100));
-  await page.reload(); await expect(indicator(page)).toBeVisible();
+  await page.reload(); await expect(indicator(page)).toHaveCount(0);
   expect(latestContext(await detail(request, session.id))).toEqual(context); expect(await calls(request)).toBe(before + 1);
   await expect(composer(page)).toHaveValue('This draft is not in the request estimate. '.repeat(100));
 });
@@ -79,7 +76,7 @@ test('unknown context limits remain unknown and do not block a large latest mess
   const session = await create(request, 'test-model'); await open(page, session); const before = await calls(request);
   const completed = await send(page, request, session, `LATEST_TASK\n${'Large latest task data. '.repeat(2500)}`);
   const context = latestContext(completed); expect(context.limitSource).toBe('unknown'); expect(context.contextWindow).toBeUndefined();
-  await expect(await expand(page)).toContainText(/unknown/i); expect(await calls(request)).toBe(before + 1);
+  expect(context.limitSource).toBe('unknown'); expect(await calls(request)).toBe(before + 1);
   expect(completed.messages.some(message => message.role === 'system')).toBe(false);
 });
 
@@ -127,7 +124,7 @@ test('image-bearing requests label uncertainty rather than presenting base64 as 
   expect((await request.post(`/api/sessions/${session.id}/messages`, { data: { content: 'Describe this image.', attachments: [{ name: 'pixel.png', mimeType: 'image/png', dataUrl }] } })).status()).toBe(202);
   await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle'); await open(page, session);
   expect(latestContext(await detail(request, session.id)).uncertain).toBe(true);
-  await expect(await expand(page)).toContainText(/uncertain|image/i); expect(await calls(request)).toBe(before + 1);
+  await expect(indicator(page)).toHaveCount(0); expect(await calls(request)).toBe(before + 1);
 });
 
 test('provider limits save explicitly, override catalog metadata, survive reload, and can be removed', async ({ page, request }) => {
@@ -164,18 +161,18 @@ test('reload during a proactive summary keeps live status and replaces progress 
   const before = await calls(request); await composer(page).fill('Continue after safely condensing the older notes.');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect.poll(async () => (await (await request.get('/fixture/summaries')).json()).pending).toBe(1);
-  await expect(indicator(page)).toBeVisible(); await page.reload();
+  await expect(indicator(page)).toHaveCount(0); await page.reload();
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
-  await expect(indicator(page)).toBeVisible();
+  await expect(indicator(page)).toHaveCount(0);
   expect(latestContext(await detail(request, session.id)).action).toBe('compact');
   await composer(page).fill('Draft kept through in-progress reload.');
   expect((await request.post('/fixture/summaries/release')).ok()).toBe(true);
   await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
-  await expect(indicator(page)).toHaveCount(1);
+  await expect(indicator(page)).toHaveCount(0);
   const completed = await detail(request, session.id);
   expect(completed.messages.filter(message => message.role === 'assistant')).toHaveLength(1);
   expect(latestContext(completed).action).toBe('continue');
-  await page.reload(); await expect(indicator(page)).toHaveCount(1);
+  await page.reload(); await expect(indicator(page)).toHaveCount(0);
   await expect(composer(page)).toHaveValue('Draft kept through in-progress reload.');
   expect(await calls(request)).toBe(before + 2);
 });
@@ -198,10 +195,10 @@ test('stopping a proactive summary preserves original history and pauses follow-
   expect(await calls(request)).toBe(before + 1);
 });
 
-test('mobile context details remain reachable without covering the composer or overflowing', async ({ page, request }) => {
+test('mobile conversation omits context diagnostics and keeps the composer usable', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 }); await discover(request); const session = await create(request); await open(page, session);
-  await send(page, request, session, 'Give a brief fixture overview.'); await expand(page);
-  await composer(page).fill('Keep the mobile composer usable.'); await indicator(page).scrollIntoViewIfNeeded();
+  await send(page, request, session, 'Give a brief fixture overview.'); await expect(indicator(page)).toHaveCount(0);
+  await composer(page).fill('Keep the mobile composer usable.');
   expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
   await page.screenshot({ path: 'test-results/context-mobile.png', fullPage: true, animations: 'disabled' });
   await expect(composer(page)).toHaveValue('Keep the mobile composer usable.');

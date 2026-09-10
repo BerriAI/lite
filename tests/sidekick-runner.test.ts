@@ -44,6 +44,23 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(store.messages(s.id).find(m=>m.role==='tool')?.content).toContain('Sidekick report: wrote the file');
   });
 
+  it('persists independent model effort, routes it to main and sidekick, and clears it', async () => {
+    const mainKey = JSON.stringify(['test', 'model']), sideKey = JSON.stringify(['test', 'side-model']);
+    const s = await create({ modelReasoning: { [mainKey]: 'high', [sideKey]: 'low' } });
+    await run(s.id);
+    expect(calls.filter(call => !side(call)).every(call => call.reasoning_effort === 'high')).toBe(true);
+    expect(calls.filter(side).every(call => call.reasoning_effort === 'low')).toBe(true);
+    const before = store.session(s.id)!;
+    const changed = await api(`/sessions/${s.id}`, { modelReasoning: {}, expectedConfigRevision: before.configRevision }, 'PATCH');
+    expect(changed.status).toBe(200);
+    expect(changed.body.configRevision).toBe(before.configRevision! + 1);
+    expect(store.session(s.id)?.modelReasoning).toEqual({});
+    calls = []; await run(s.id);
+    expect(calls.every(call => call.reasoning_effort === undefined)).toBe(true);
+    const invalid = await api(`/sessions/${s.id}`, { modelReasoning: { [mainKey]: 'invalid' } }, 'PATCH');
+    expect(invalid.status).toBe(400);
+  });
+
   it('reuses one persistent child across turns: same session, continuous transcript, single re-pointed delegation row',async()=>{
     const s=await create();await run(s.id,'ROOT first');
     const first=runner.delegations.list(s.id)[0];expect(first.status).toBe('completed');

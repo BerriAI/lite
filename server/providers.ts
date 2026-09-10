@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { validContextWindow } from './budget.js';
-import type { Model, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
+import type { Model, ReasoningEffort, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
 
 export interface ProviderMessage {
   role: 'user' | 'assistant' | 'tool' | 'system';
@@ -11,7 +11,7 @@ export interface ProviderMessage {
 }
 export interface CompletionOptions {
   provider: Provider; model: string; messages: ProviderMessage[]; tools?: ToolDefinition[];
-  signal: AbortSignal; system?: string;
+  signal: AbortSignal; system?: string; reasoningEffort?: ReasoningEffort;
   /** Reports a scheduled retry, not a guarantee that a failed attempt was unbilled. */
   onRetry?: (retry: ProviderRetry) => void;
 }
@@ -449,14 +449,14 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     // tool schema and the system block mark the stable prefix as cacheable.
     // Harmless when the provider or gateway has caching disabled.
     const anthropicTools = tools?.length ? tools.map((t, index) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters, ...(index === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) : undefined;
-    body = { model, max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model),
+    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model),
       ...(instructions ? { system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }] } : {}),
       ...(anthropicTools ? { tools: anthropicTools } : {}) };
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
   } else if (provider.kind === 'codex') {
     Object.assign(headers, codexHeaders(await getCodexCredential(provider)));
     headers['session-id'] = randomUUID();
-    body = { model, instructions: [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n') || 'You are a helpful coding assistant.',
+    body = { model, ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}), instructions: [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n') || 'You are a helpful coding assistant.',
       input: codexInput(messages, provider.id, model), stream: true, store: false, include: ['reasoning.encrypted_content'],
       ...(tools?.length ? { tools: tools.map(t => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters, strict: false })), tool_choice: 'auto', parallel_tool_calls: true } : {}) };
     // Subscription credentials must never be forwarded to a configurable endpoint.
@@ -468,7 +468,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     // convention. Scoped to models that require opt-in caching; other models
     // keep plain string content so strict endpoints see an unmodified request.
     const optInCache = /\bclaude\b|anthropic/i.test(model);
-    body = { model, messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
+    body = { model, ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}), messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
       stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
     url = endpoint(provider.baseUrl, 'chat/completions');
   }

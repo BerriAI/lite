@@ -6,7 +6,10 @@ import type { FileChange, Session, SessionDetail } from '../../shared/types';
 import type { HistoryState } from '../../shared/history';
 
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Lite' });
-const strip = (page: Page) => page.getByRole('region', { name: 'Turn history', exact: true });
+async function strip(page: Page) {
+  if (!await page.locator('.session-menu').isVisible()) await page.getByRole('button', { name: 'Session actions', exact: true }).click();
+  return page.locator('.session-menu');
+}
 const queued = (page: Page) => page.getByRole('region', { name: 'Queued messages', exact: true });
 const label = (direction: 'undo' | 'redo') => direction === 'undo' ? 'Undo last turn' : 'Redo turn';
 const written = (prompt: string) => `Created by the browser test.\n${prompt}\n`;
@@ -67,16 +70,14 @@ async function send(page: Page, request: APIRequestContext, session: Session, co
     await approval.getByRole('button', { name: 'Allow once', exact: true }).click();
   }
   await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
-  await expect(strip(page).getByRole('button', { name: 'Undo last turn', exact: true })).toBeEnabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Undo last turn', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close session actions', exact: true }).click();
 }
 async function move(page: Page, request: APIRequestContext, session: Session, direction: 'undo' | 'redo', options: { menu?: boolean; status?: number } = {}) {
   const state = await history(request, session.id);
   const checkpointId = direction === 'undo' ? state.undoId : state.redoId;
   expect(checkpointId).toBeTruthy();
-  if (options.menu) {
-    await page.getByRole('button', { name: 'Session actions', exact: true }).click();
-    await page.locator('.session-menu').getByRole('button', { name: label(direction), exact: true }).click();
-  } else await strip(page).getByRole('button', { name: label(direction), exact: true }).click();
+  await (await strip(page)).getByRole('button', { name: label(direction), exact: true }).click();
   const dialog = page.getByRole('dialog', { name: `${label(direction)}?`, exact: true });
   await expect(dialog).toBeVisible();
   // The action restores recorded state, not arbitrary side effects or another model call.
@@ -126,14 +127,14 @@ test('undoes and redoes two real file-tool turns exactly, survives reload, and n
   await restored(page, request, session, first, written(firstPrompt));
   await move(page, request, session, 'undo');
   await restored(page, request, session, empty, baseline);
-  await expect(strip(page).getByRole('button', { name: 'Undo last turn', exact: true })).toBeDisabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Undo last turn', exact: true })).toBeDisabled();
   await move(page, request, session, 'redo');
   await restored(page, request, session, first, written(firstPrompt));
   await page.reload();
   await restored(page, request, session, first, written(firstPrompt));
   await move(page, request, session, 'redo', { menu: true });
   await restored(page, request, session, second, written(secondPrompt));
-  await expect(strip(page).getByRole('button', { name: 'Redo turn', exact: true })).toBeDisabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Redo turn', exact: true })).toBeDisabled();
   expect(await calls(request)).toBe(completedCalls);
 });
 
@@ -169,7 +170,7 @@ test('a stale confirmation cannot undo a different turn after another client mov
   const first = await snapshot(request, session.id);
   await send(page, request, session, 'create fixture stale second', true);
   const expected = await history(request, session.id), beforeCalls = await calls(request);
-  await strip(page).getByRole('button', { name: 'Undo last turn', exact: true }).click();
+  await (await strip(page)).getByRole('button', { name: 'Undo last turn', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Undo last turn?', exact: true });
   await expect(dialog).toBeVisible();
   const otherClient = await request.post(`/api/sessions/${session.id}/history/undo`, { data: { checkpointId: expected.undoId } });
@@ -203,7 +204,8 @@ test('retains redo through drafts, reload, and rejected sends, and discards it o
   await composer(page).fill('A new branch only after acceptance');
   await page.reload();
   await expect(composer(page)).toHaveValue('A new branch only after acceptance');
-  await expect(strip(page).getByRole('button', { name: 'Redo turn', exact: true })).toBeEnabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Redo turn', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Close session actions', exact: true }).click();
   expect((await history(request, session.id)).redoId).toBe(undone.redoId);
   const invalid = await request.post(`/api/sessions/${session.id}/messages`, { data: { content: '' } });
   expect(invalid.status()).toBe(400);
@@ -221,7 +223,7 @@ test('retains redo through drafts, reload, and rejected sends, and discards it o
   expect(await history(request, session.id)).toMatchObject({ canUndo: true, canRedo: false });
   expect((await history(request, session.id)).redoId).toBeUndefined();
   await page.reload();
-  await expect(strip(page).getByRole('button', { name: 'Redo turn', exact: true })).toBeDisabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Redo turn', exact: true })).toBeDisabled();
   expect((await detail(request, session.id)).messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['A new branch only after acceptance']);
   expect(await readFile(join(workspace, 'result.txt'), 'utf8')).toBe(baseline);
   expect(await calls(request)).toBe(beforeCalls + 1);
@@ -276,9 +278,9 @@ test('keeps history controls reachable on mobile without covering the draft or o
   await page.setViewportSize({ width: 390, height: 844 });
   await page.reload();
   await expect(composer(page)).toHaveValue('Keep this mobile draft while reviewing history');
-  await expect(strip(page).getByRole('button', { name: 'Undo last turn', exact: true })).toBeEnabled();
-  await expect(strip(page).getByRole('button', { name: 'Redo turn', exact: true })).toBeEnabled();
-  await expect(strip(page)).toBeInViewport();
+  await expect((await strip(page)).getByRole('button', { name: 'Undo last turn', exact: true })).toBeEnabled();
+  await expect((await strip(page)).getByRole('button', { name: 'Redo turn', exact: true })).toBeEnabled();
+  await expect(await strip(page)).toBeInViewport();
   await expect(composer(page)).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/history-mobile.png', fullPage: true, animations: 'disabled' });

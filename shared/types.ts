@@ -22,6 +22,9 @@ export type { SidecarConfig, SidecarEvent } from './sidecars.js';
 import type { ArchitectureSelection } from './architectures.js';
 export type { ArchitectureSelection, ArchitectureKind, ArchitectureInfo, ArchitectureRole } from './architectures.js';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+/** Session preferences keyed by JSON.stringify([providerId, model]). */
+export type ModelReasoning = Record<string, ReasoningEffort>;
 export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
 export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
@@ -51,7 +54,7 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
  * refresh/disconnect never reshapes the advertised tool array
  * (docs/design-capability-proxy.md, Option 3). */
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; advertise?: boolean; }
-export interface Session { profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
+export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProfile; configRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
   goal?: SessionGoal;
   /** Optional planner half of a planner+executor pair. Plan-mode turns run on

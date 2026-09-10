@@ -12,11 +12,12 @@ const roots: Root[] = [];
 function root() { const host = document.createElement('div'); document.body.append(host); const value = createRoot(host); roots.push(value); return value; }
 function deferred<T>() { let resolve!: (value: T) => void, reject!: (reason: Error) => void; const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function el<T extends Element = HTMLElement>(selector: string): T { const found = document.querySelector<T>(selector); expect(found, selector).not.toBeNull(); return found!; }
-async function click(selector: string) { await act(async () => el<HTMLButtonElement>(selector).click()); }
+async function click(selector: string) { if (selector === '[aria-label="Project profiles"]' && !document.querySelector(selector)) await press('Settings'); await act(async () => el<HTMLButtonElement>(selector).click()); }
 function button(label: string) { const found = [...document.querySelectorAll('button')].find(value => value.textContent?.trim() === label); expect(found, label).toBeDefined(); return found!; }
 async function press(label: string) { await act(async () => button(label).click()); }
 async function choose(id: string) { await act(async () => { const input = el<HTMLSelectElement>('[aria-label="Profile"]'); input.value = id; input.dispatchEvent(new Event('change', { bubbles: true })); }); }
 async function fill(value: string) { await act(async () => { const input = el<HTMLTextAreaElement>('#message-input'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); }); }
+async function changeMode(mode: string) { await act(async () => { const select = el<HTMLSelectElement>('.mode-switch select'); if (select.disabled) return; select.value = mode; select.dispatchEvent(new Event('change', { bubbles: true })); }); }
 class EventSourceMock {
   static instances: EventSourceMock[] = [];
   onopen: (() => void) | null = null; onerror: (() => void) | null = null; onmessage: ((event: {data: string; lastEventId: string}) => void) | null = null;
@@ -167,14 +168,14 @@ describe('session profile integration', () => {
     expect(write.body).toEqual({ expectedConfigRevision: 3, choice: { profileId: 'review', skillIds: ['testing'], catalogRevision: 'catalog-v1' } });
     expect(api.details.get('a')!.session).toMatchObject({ mode: 'plan', model: 'model', permissionMode: 'ask', configRevision: 4 });
     expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Keep this draft'); expect(document.body.textContent).toContain('notes.txt');
-    expect(el('[aria-label="Project profiles"]').textContent).toContain('Review code');
+    expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull();
     expect(api.calls.filter(call => call.path === '/sessions/a' && call.method === 'GET').length).toBeGreaterThan(1);
-    expect(document.body.textContent).toContain('Project profile changed.');
+    expect(api.details.get('a')?.queue?.paused).toBe(true);
   });
   it('Apply defaults intentionally changes model and mode but keeps automatic permissions unchanged', async () => {
     const api = server([detail('a', { permissionMode: 'auto' })]); await mount(); await click('[aria-label="Project profiles"]'); await choose('review'); await press('Apply defaults');
     expect(api.details.get('a')!.session).toMatchObject({ model: 'alternate', mode: 'build', permissionMode: 'auto' });
-    expect(el('.mode-switch [aria-pressed="true"]').textContent).toBe('Build'); expect(el('.model-trigger').textContent).toContain('alternate');
+    expect(el<HTMLSelectElement>('.mode-switch select').selectedOptions[0].textContent).toBe('Build'); expect(el('.model-trigger').textContent).toContain('alternate');
     expect(api.calls.find(call => call.path === '/sessions/a/profile' && call.method === 'POST')!.body.selection).not.toHaveProperty('permissionMode');
   });
   it('retains dialog-open revision across external changes and requires explicit reopen after conflict', async () => {
@@ -196,22 +197,22 @@ describe('session profile integration', () => {
     await click('[aria-label="Close dialog"]'); await click('.session-link[title="Session b"]'); await fill('B draft');
     await act(async () => result === 'success' ? wait.resolve({ session: session('a', { profile: profile().active!, configRevision: 4 }), queue: { items: [], paused: true } }) : wait.reject(new Error('Old request failed')));
     expect(el('.topbar-title').textContent).toBe('Session b'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('B draft');
-    expect(el('[aria-label="Project profiles"]').textContent).toContain('Default'); expect(document.querySelector('.global-alert')).toBeNull();
+    expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull(); expect(document.querySelector('.global-alert')).toBeNull();
   });
   it('disables configuration during profile apply and sends selection PATCH with the current revision', async () => {
     const api = server(), wait = deferred<unknown>(); api.intercept = (path, method) => path === '/sessions/a/profile' && method === 'POST' ? wait.promise : undefined;
     await mount(); await click('[aria-label="Project profiles"]'); await choose('review'); await press('Use profile');
-    expect(el<HTMLButtonElement>('.mode-switch button').disabled).toBe(true); expect(el<HTMLButtonElement>('[aria-label="Project profiles"]').disabled).toBe(true);
-    await click('[aria-label="Close dialog"]'); await press('Build'); expect(api.calls.some(call => call.method === 'PATCH')).toBe(false);
+    expect(el<HTMLButtonElement>('.mode-switch select').disabled).toBe(true); expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull();
+    await click('[aria-label="Close dialog"]'); await changeMode('build'); expect(api.calls.some(call => call.method === 'PATCH')).toBe(false);
     const item = api.details.get('a')!; item.session.configRevision = 4;
     await act(async () => wait.resolve({ session: item.session, queue: item.queue }));
-    await press('Build'); expect(api.calls.find(call => call.method === 'PATCH')!.body.expectedConfigRevision).toBe(4);
+    await changeMode('build'); expect(api.calls.find(call => call.method === 'PATCH')!.body.expectedConfigRevision).toBe(4);
   });
   it('stages welcome choice until first send, preserves drafts, and never includes recommended skills', async () => {
     window.history.replaceState(null, '', '/'); const api = server(); await mount(); await fill('First message');
     await click('[aria-label="Project profiles"]'); await choose('review'); await press('Use profile');
     expect(api.calls.filter(call => call.path === '/sessions' && call.method === 'POST')).toEqual([]);
-    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('First message'); expect(el('[aria-label="Project profiles"]').textContent).toContain('review');
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('First message'); expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull();
     await click('[aria-label="Send message"]');
     expect(api.calls.find(call => call.path === '/sessions' && call.method === 'POST')!.body).toMatchObject({ profile: { profileId: 'review', skillIds: [], catalogRevision: 'catalog-v1' }, mode: 'build', model: 'model', permissionMode: 'ask' });
   });
@@ -219,7 +220,7 @@ describe('session profile integration', () => {
     window.history.replaceState(null, '', '/'); const api = server(); let fail = true;
     api.intercept = path => path === '/sessions/new/messages' && fail ? Promise.reject(new Error('Send failed')) : undefined;
     await mount(); await fill('Retry this'); await click('[aria-label="Project profiles"]'); await choose('review'); await press('Use profile'); await click('[aria-label="Send message"]');
-    expect(el<HTMLButtonElement>('[aria-label="Project profiles"]').disabled).toBe(true); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Retry this');
+    expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull(); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Retry this');
     fail = false; await click('[aria-label="Send message"]');
     expect(api.calls.filter(call => call.path === '/sessions' && call.method === 'POST')).toHaveLength(1);
     expect(api.calls.filter(call => call.path === '/sessions/new/messages')).toHaveLength(2);
@@ -227,7 +228,7 @@ describe('session profile integration', () => {
   });
   it.each(['running', 'waiting'] as const)('disables profile and selection controls while %s without touching drafts', async status => {
     server([detail('a', { status })]); await mount(); await fill('Next thought');
-    expect(el<HTMLButtonElement>('[aria-label="Project profiles"]').disabled).toBe(true); expect(el<HTMLButtonElement>('.model-trigger').disabled).toBe(true);
+    expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull(); expect(el<HTMLButtonElement>('.model-trigger').disabled).toBe(true);
     expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Next thought');
   });
   it('preserves a pending question answer and composer attachments when a profile dialog is blocked by a live run', async () => {
@@ -252,8 +253,8 @@ describe('session profile integration', () => {
     const api = server(); await mount(); await click('[aria-label="Project profiles"]'); await choose('review');
     api.intercept = (path, method) => path === '/sessions/a' && method === 'GET' ? Promise.reject(new Error('offline')) : undefined;
     await press('Use profile');
-    expect(el('[aria-label="Project profiles"]').textContent).toContain('Review code'); expect(document.body.textContent).toContain('Could not refresh the session');
-    expect(el('.mode-switch [aria-pressed="true"]').textContent).toBe('Plan');
+    expect(document.querySelector('.composer [aria-label="Project profiles"]')).toBeNull(); expect(document.body.textContent).toContain('Could not refresh the session');
+    expect(el<HTMLSelectElement>('.mode-switch select').selectedOptions[0].textContent).toBe('Plan');
   });
   it('clears an omitted profile from full revision-bearing SSE but preserves it for legacy partial status events', () => {
     const state = { ...detail('a'), session: session('a', { profile: profile().active!, configRevision: 4 }) };
