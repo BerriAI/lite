@@ -4,18 +4,13 @@ Run `speedrail` in any project directory to open a full-screen client for the sa
 
 ## Start here
 
-Install the command once from a checkout:
+On macOS with Node 26.4+ and npm, install the command once from a checkout. See the [quick start](../README.md#quick-start) for the full clone command.
 
 ```sh
-npm install
-npm run build
-npm run tui
-```
-
-This launches directly from the checkout, even if another tool is named `speedrail`. To enable the short command for other projects:
-
-```sh
-npm link
+npm ci &&
+npm run build &&
+npm link &&
+speedrail
 ```
 
 Then, from any project:
@@ -29,7 +24,7 @@ The current directory becomes the workspace. `speedrail tui` remains an alias. `
 
 There is no separate login command for this coding agent; first-run setup asks for your gateway URL and API key inside the TUI. The [upgrade guide](upgrading.md) covers moving saved state from earlier versions.
 
-Node 22.13 or later is required; npm installs Bun and the native terminal dependencies. Use a UTF-8 terminal, preferably at least 80 columns by 24 rows.
+Use Node 26.4 or later for the current dependency set; npm installs Bun and the native terminal dependencies. Use a UTF-8 terminal, preferably at least 80 columns by 24 rows. To launch directly from the checkout without linking the command, use `npm run tui` after building.
 
 The launcher attaches to the default local server if it is already running. Otherwise it starts one and prints its PID and stop command. **Exiting the TUI leaves that server and its tasks running.** Stop a response before quitting if you want it cancelled. Server output goes to `.speedrail/tui-server.log` under the installation, or your `SPEEDRAIL_DATA_DIR`.
 

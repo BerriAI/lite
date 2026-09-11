@@ -6,21 +6,18 @@ Connect through LiteLLM, OpenAI-compatible APIs, native Anthropic, or ChatGPT de
 
 ## Quick start
 
-Requires **Node 22.13+** and npm. Git and Bash are needed for their corresponding tools. Install once:
+For the macOS launch, use **Node 26.4+** and npm. Git is needed to clone the repository and use Git tools; Bash is needed for shell tools. Paste this once:
 
 ```sh
-git clone https://github.com/BerriAI/speedrail.git
-cd speedrail
-npm install
-npm run build
-npm run tui
+git clone https://github.com/BerriAI/speedrail.git &&
+cd speedrail &&
+npm ci &&
+npm run build &&
+npm link &&
+speedrail
 ```
 
-This opens the coding-agent TUI directly from this checkout. To make it available from any project, run this once from the checkout:
-
-```sh
-npm link
-```
+This installs the locked dependencies, builds Speedrail, makes the command available, and opens setup. Bun and the native terminal packages are installed automatically by npm. Enter your gateway URL and key, then choose your models.
 
 Then, from **any project directory**:
 

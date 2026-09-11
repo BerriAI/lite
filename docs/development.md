@@ -4,10 +4,10 @@ The React web app and OpenTUI terminal client share a Node backend. Source lives
 
 ## Run from source
 
-From your checkout:
+On macOS with Node 26.4+ and npm, from your checkout:
 
 ```sh
-npm install
+npm ci
 npm run dev
 ```
 
@@ -28,7 +28,7 @@ npm run build
 
 The unit/integration suite uses temporary workspaces and mock provider/MCP servers, including streaming, permissions, cancellation, filesystem boundaries, persistence, and spawned CLI processes. Browser tests run against an isolated fixture server using installed Google Chrome. The terminal suites use real PTYs with mock providers; the startup suite checks bare `speedrail` from a separate project directory, automatic backend startup, suspend/foreground, and clean exit. Real-provider smoke tests are opt-in and require your own configured gateway.
 
-The production entrypoint, CLI server lifecycle, persisted tool workflow, and native PTY have also been exercised on exact Node 22.13.0 (macOS arm64), not merely bundled. Re-run that opt-in compatibility test after building with `SPEEDRAIL_TEST_NODE=/absolute/path/to/node22.13 npm test -- tests/runtime.test.ts`. It copies the built installation into a temporary directory and does not inherit provider credentials. Other runtime/platform combinations need their own validation.
+Earlier tests exercised the built production entrypoint, CLI server lifecycle, persisted tool workflow, and native PTY on exact Node 22.13.0 (macOS arm64). That does not establish clean-install compatibility: the current OpenTUI dependency declares Node 26.4+, so use Node 26.4+ when installing. The legacy built-runtime test still explicitly targets Node 22.13.0 and remains available with `SPEEDRAIL_TEST_NODE=/absolute/path/to/node22.13 npm test -- tests/runtime.test.ts`; it copies the built installation into a temporary directory and does not inherit provider credentials. Fresh dependency installation and other runtime/platform combinations need separate validation.
 
 See [feature coverage](coverage.md) for current scope and [UI principles](ui-principles.md) for interface conventions.
 
