@@ -73,3 +73,49 @@ describe('terminal task controller', () => {
     accept(); await send;
   });
 });
+
+describe('terminal skill activation', () => {
+  const catalog = { revision: 'revision', skills: [{ id: 'verify', name: 'Verify', description: '' }], profiles: [], diagnostics: [] };
+  it('pins a skill with the current profile and revision, without changing mode or model', async () => {
+    const { controller, client, detail } = harness();
+    detail.session.workspace = '/workspace';
+    detail.session.profile = { profileId: 'review', skillIds: [], revision: 'revision', tools: ['read_file'] };
+    client.api.mockResolvedValueOnce(catalog).mockResolvedValueOnce({});
+    controller.setDraft({ text: '/verify', attachments: [{ name: 'keep', content: 'attachment' }] });
+    expect(await controller.activateSkill('verify')).toBe(true);
+    expect(client.api.mock.calls).toEqual([
+      ['/profiles?workspace=%2Fworkspace'],
+      ['/sessions/parent/profile', { expectedConfigRevision: 7, choice: { profileId: 'review', skillIds: ['verify'], catalogRevision: 'revision' } }],
+    ]);
+    expect(controller.getState().draft).toEqual({ text: '', attachments: [{ name: 'keep', content: 'attachment' }] });
+    expect(controller.getState().notice).toContain('paused');
+  });
+  it('refuses changed pinned sources and keeps the draft', async () => {
+    const { controller, client, detail } = harness();
+    detail.session.profile = { profileId: 'review', skillIds: [], revision: 'old', tools: ['read_file'] };
+    client.api.mockResolvedValue(catalog);
+    expect(await controller.activateSkill('verify')).toBe(false);
+    expect(client.api).toHaveBeenCalledTimes(1);
+    expect(controller.getState().notice).toContain('/skills');
+    expect(controller.getState().draft.text).toBe('my unsent work');
+  });
+  it('does not activate while running or resend already-active skills', async () => {
+    const { controller, client, detail } = harness('running');
+    await expect(controller.activateSkill('verify')).rejects.toThrow('Finish');
+    expect(client.api).not.toHaveBeenCalled();
+    detail.session.status = 'idle';
+    detail.session.profile = { profileId: null, skillIds: ['verify'], revision: 'old', tools: null };
+    expect(await controller.activateSkill('verify')).toBe(true);
+    expect(client.api).not.toHaveBeenCalled();
+  });
+  it('holds the configuration lock during lookup and preserves a newer draft', async () => {
+    const { controller, client } = harness();
+    let resolve!: (value: unknown) => void;
+    client.api.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const pending = controller.activateSkill('verify');
+    await expect(controller.open('other')).rejects.toThrow('Wait');
+    controller.setDraft({ text: 'new draft', attachments: [] });
+    resolve(catalog); await pending;
+    expect(controller.getState().draft.text).toBe('new draft');
+  });
+});

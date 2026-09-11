@@ -6,6 +6,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Message, Session } from '../shared/types.js';
 import { terminalText, parseSlash } from './protocol.js';
+import type { ProfileCatalog, ProjectSkill } from '../shared/profiles.js';
+import { skillCommand, skillCommands } from '../shared/skill-commands.js';
+import { Profiles } from './profiles.js';
 import { TerminalController, effectiveModel, isRunning } from './controller.js';
 import { ConfigContext, ThemeContext, useConfig, useTheme } from './context.js';
 import { getTheme, listThemes, toHex, type Theme } from './theme.js';
@@ -108,12 +111,14 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   useSelectionHandler(selection => { selectedText.current = selection.getSelectedText(); });
   useEffect(() => { const status = state.sync.detail?.session.status; if (config.attention.enabled && config.attention.sounds !== false && (!config.attention.focus_only || terminalFocused.current) && previousStatus.current === 'running' && (status === 'waiting' || status === 'idle' || status === 'error')) process.stdout.write('\x07'); previousStatus.current = status; }, [state.sync.detail?.session.status]);
   const detail = state.sync.detail, busy = isRunning(detail);
+  const [skills, setSkills] = useState<ProjectSkill[]>([]);
   const [projectCommands, setProjectCommands] = useState<ProjectCommand[]>([]);
   useEffect(() => {
-    setProjectCommands([]); let live = true;
+    setProjectCommands([]); setSkills([]); let live = true;
+    if (detail) void controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(detail.session.workspace)}`).then(value => { if (live) setSkills(value.skills); }).catch(() => {});
     if (detail) void controller.client.api<{ commands: ProjectCommand[] }>(`/commands?workspace=${encodeURIComponent(detail.session.workspace)}`).then(value => { if (live) setProjectCommands(value.commands); }).catch(() => {});
     return () => { live = false; };
-  }, [detail?.session.workspace]);
+  }, [detail?.session.workspace, detail?.session.configRevision]);
   const [promptOverlay, setPromptOverlay] = useState(false);
   const [panel, setPanel] = useState<ReactNode>(null), [escPressed, setEscPressed] = useState(false);
   const [settings, setSettings] = useState<TranscriptSettings>(DEFAULT_TRANSCRIPT_SETTINGS);
@@ -169,6 +174,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'attachments', label: 'Manage draft attachments', action: () => menu('Draft attachments', controller.getState().draft.attachments.map((item, index) => ({ id: String(index), label: item.name, description: 'Select to remove', action: () => { const draft = controller.getState().draft; controller.setDraft({ ...draft, attachments: draft.attachments.filter((_, offset) => offset !== index) }); close(); } }))) },
     { id: 'editor', label: 'Open draft in external editor', description: 'Uses VISUAL or EDITOR, then returns to Litespeed', action: () => { close(); run(() => controller.action('Editing draft', async () => { const text = await editDraft(renderer, controller.getState().draft.text, controller.detail!.session.workspace); controller.setDraft({ ...controller.getState().draft, text }); })); } },
     { id: 'shell', label: 'Open workspace shell', description: 'Type exit to return to Litespeed', action: () => { close(); run(() => openShell(renderer, controller.detail!.session.workspace)); } },
+    { id: 'skills', label: 'Browse and use project skills', disabled: busy, action: () => run(() => { controller.configurationReady(); if (controller.detail) setPanel(<Profiles skillsOnly controller={controller} initial={controller.detail.session} onCatalog={catalog => setSkills(catalog.skills)} onClose={close} />); }) },
     { id: 'commands', label: 'Project command templates', description: 'Workspace prompt templates with argument substitution', action: () => menu('Project commands', projectCommands.map(item => ({ id: item.name, label: `/${item.name}`, description: item.description, action: () => { controller.setDraft({ ...controller.getState().draft, text: `/${item.name} ` }); close(); } }))) },
     { id: 'drafts', label: 'Input history', description: 'Restore a previous message to the composer', action: () => menu('Input history', controller.inputHistory().reverse().map((text, index) => ({ id: String(index), label: terminalText(text).slice(0, 100), action: () => { controller.setDraft({ ...controller.getState().draft, text }); close(); } }))) },
     { id: 'export', label: 'Export session', description: 'Save this conversation as JSON', action: () => prompt('Export to file (new file)', `litespeed-session-${controller.sessionId}.json`, async filename => { const data = await controller.client.api(controller.path('/export')); const path = resolve(controller.detail!.session.workspace, filename); await writeFile(path, JSON.stringify(data, null, 2), { flag: 'wx', mode: 0o600 }); controller.notice(`Exported to ${path}`); }) },
@@ -205,6 +211,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'quit', label: 'Quit Litespeed TUI', description: 'The server and running tasks keep working', action: onQuit },
   ];
   commands.sort((a, b) => COMMAND_ORDER.indexOf(a.id) - COMMAND_ORDER.indexOf(b.id));
+  const reserved = [...commands.map(item => item.id), 'help', 'exit', 'skill', ...projectCommands.map(item => item.name)];
   const palette = () => menu('Commands', [...commands.map(item => ({ ...item, label: `${item.label}   /${item.id}` })), ...projectCommands.map(item => ({ id: `project:${item.name}`, label: `/${item.name}`, description: item.description, action: () => { controller.setDraft({ ...controller.getState().draft, text: `/${item.name} ` }); close(); } }))]);
   const submit = () => {
     if (state.pending) return;
@@ -212,9 +219,11 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     if (slash?.name === 'steer' && slash.args) { run(() => controller.send('steer', slash.args)); return; }
     if (slash?.name === 'queue' && slash.args) { run(() => controller.send('queue', slash.args)); return; }
     if (slash?.name === 'attach' && slash.args) { controller.setDraft({ ...controller.getState().draft, text: '' }); run(() => attach(slash.args)); return; }
+    const skill = skillCommand(controller.getState().draft.text, skills, reserved);
+    if (skill) { run(() => controller.activateSkill(skill)); return; }
     if (slash) {
       if (slash.name === 'help') { controller.setDraft({ ...controller.getState().draft, text: '' }); palette(); return; }
-      const command = commands.find(item => item.id === (slash.name === 'exit' ? 'quit' : slash.name));
+      const command = commands.find(item => item.id === (slash.name === 'exit' ? 'quit' : slash.name === 'skill' ? 'skills' : slash.name));
       if (command) {
         if (command.disabled) { controller.notice('That action is unavailable while the current task is running or history is incomplete.'); return; }
         controller.setDraft({ ...controller.getState().draft, text: '' }); command.action(); return;
@@ -267,7 +276,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       {detail.session.goal && ['active', 'blocked'].includes(detail.session.goal.status) && <box height={1} flexShrink={0}><Button onPress={() => setPanel(<GoalPanel controller={controller} onClose={close} />)}>{`Goal ${detail.session.goal.status} · ${detail.session.goal.turns}/${detail.session.goal.maxTurns} turns · ${terminalText(detail.session.goal.text).slice(0, Math.max(10, width - 36))}`}</Button></box>}
       {detail.queue?.items.length ? <box flexDirection="row" height={1}><Button onPress={queue}>{`${detail.queue.items.length} queued · ${detail.queue.paused ? 'paused' : 'will run next'}`}</Button></box> : null}
       {state.draft.attachments.length > 0 && <text fg={toHex(theme.textMuted)}>{state.draft.attachments.map(item => `⌕ ${item.name}`).join('  ')}</text>}
-      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description}))]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
+      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description})), ...skillCommands(skills, reserved)]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
     </> : state.sync.phase === 'error' ? <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column"><text fg={toHex(theme.error)}>{state.sync.error}</text><Button onPress={() => run(() => controller.open(controller.sessionId))}>Reconnect</Button><Button onPress={palette}>Commands</Button></box> : <LoadingScreen />}
     <UpdateNotice controller={controller} onRestart={() => { process.send?.({ type: 'litespeed-restart', sessionId: controller.sessionId }); onQuit(75); }} />
     {(state.notice || pendingLeader || state.sync.connection === 'reconnecting') && <text paddingLeft={1} fg={toHex(theme.warning)}>{terminalText(pendingLeader ? 'Leader…' : state.notice || 'Reconnecting… Showing the last known state.').slice(0, width - 2)}</text>}

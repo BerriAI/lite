@@ -270,3 +270,99 @@ describe('session profile integration', () => {
     expect(result.session).toMatchObject({ configRevision: 4, mode: 'plan', profile: current.profile }); expect(result.lastEventId).toBe(11);
   });
 });
+
+describe('skill slash commands', () => {
+  async function invoke(text: string) {
+    Element.prototype.scrollIntoView = vi.fn();
+    await fill(text);
+    await act(async () => el('#message-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+    await act(async () => el('#message-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
+  }
+  it('opens /skills and /skill and clears skills without clearing the named profile or applying defaults', async () => {
+    const active = profile(choice), api = server([detail('a', { profile: active.active! })]); api.profile = active;
+    await mount(); await invoke('/skill');
+    expect(document.querySelector('[aria-label="Profile"]')).toBeNull();
+    expect(document.body.textContent).toContain('/testing');
+    await click('[aria-label="Test carefully"]');
+    await press('Use skills');
+    const request = api.calls.find(call => call.path === '/sessions/a/profile' && call.method === 'POST');
+    expect(request?.body).toEqual({ expectedConfigRevision: 3, choice: { profileId: 'review', skillIds: [], catalogRevision: 'catalog-v1' } });
+    expect(api.details.get('a')!.session.mode).toBe('plan');
+    expect(api.details.get('a')!.session.model).toBe('model');
+  });
+  it('invokes a skill directly, pins it, pauses the queue, and sends no message', async () => {
+    const api = server(); await mount(); await invoke('/testing');
+    expect(api.calls.filter(call => call.path === '/sessions/a/profile' && call.method === 'POST').map(call => call.body)).toEqual([
+      { expectedConfigRevision: 3, choice: { profileId: null, skillIds: ['testing'], catalogRevision: 'catalog-v1' } },
+    ]);
+    expect(api.calls.some(call => call.path.endsWith('/messages'))).toBe(false);
+    expect(api.details.get('a')!.queue?.paused).toBe(true);
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('');
+  });
+  it('preserves a current named profile when adding a skill directly', async () => {
+    const active = profile(choice); active.active!.revision = catalog.revision;
+    const api = server([detail('a', { profile: active.active! })]); api.profile = active;
+    await mount(); await invoke('/docs');
+    const request = api.calls.find(call => call.path.endsWith('/profile') && call.method === 'POST');
+    expect(request?.body.choice).toEqual({ profileId: 'review', skillIds: ['testing', 'docs'], catalogRevision: catalog.revision });
+    expect(request?.body.selection).toBeUndefined();
+  });
+  it('does not reload stale pinned instructions through a direct command', async () => {
+    const active = profile(choice), api = server([detail('a', { profile: active.active! })]); api.profile = active;
+    await mount(); await invoke('/docs');
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+    expect(document.body.textContent).toContain('Open /skills');
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('/docs');
+  });
+  it('blocks skill activation during a running response', async () => {
+    const api = server([detail('a', { status: 'running' })]); await mount(); await invoke('/testing');
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+    expect(api.calls.some(call => call.path.endsWith('/messages') || call.path.endsWith('/queue'))).toBe(false);
+  });
+  it('gives builtins and project templates precedence over colliding skills', async () => {
+    const api = server();
+    api.catalog = { ...catalog, skills: [...catalog.skills, { id: 'models', name: 'Collision', description: '' }] };
+    api.intercept = path => path.startsWith('/commands?') ? { commands: [{ name: 'testing', description: 'Template', content: 'Template wins' }] } : undefined;
+    await mount(); await invoke('/testing');
+    expect(api.calls.find(call => call.path.endsWith('/messages'))?.body.content).toBe('Template wins');
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+    await invoke('/models');
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
+  });
+  it('selects a welcome-screen skill without creating a session or sending a turn', async () => {
+    window.history.replaceState(null, '', '/');
+    const api = server(); await mount(); await invoke('/testing');
+    expect(api.calls.some(call => call.method === 'POST')).toBe(false);
+    await invoke('/skills');
+    expect(el<HTMLInputElement>('[aria-label="Test carefully"]').checked).toBe(true);
+  });
+  it('discards a delayed lookup after switching sessions', async () => {
+    const api = server(); await mount();
+    const pending = deferred<ProfileCatalog>();
+    api.intercept = path => path.startsWith('/profiles?') ? pending.promise : undefined;
+    await invoke('/testing');
+    await act(async () => { window.location.hash = '#session/b'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
+    await act(async () => pending.resolve(catalog));
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+  });
+  it('does not submit a ninth skill', async () => {
+    const api = server([detail('a', { profile: { profileId: null, skillIds: Array.from({ length: 8 }, (_, i) => `s${i}`), revision: catalog.revision, tools: null } })]);
+    await mount(); await invoke('/testing');
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+    expect(document.body.textContent).toContain('Choose up to 8');
+  });
+  it('disables Use skills when catalog loading fails', async () => {
+    const api = server();
+    api.intercept = path => path.startsWith('/profiles?') ? Promise.reject(new Error('Catalog offline')) : undefined;
+    await picker({ skillsOnly: true });
+    expect(button('Use skills').disabled).toBe(true);
+    expect(document.body.textContent).toContain('Catalog offline');
+  });
+  it('handles an empty catalog without inventing skills', async () => {
+    const api = server(); api.catalog = { ...catalog, profiles: [], skills: [] };
+    await mount(); await invoke('/skills');
+    expect(document.body.textContent).toContain('No project skills found');
+    expect(document.body.textContent).toContain('.litespeed/skills/');
+  });
+});

@@ -1,4 +1,6 @@
 import type { Attachment, PermissionRequest, QuestionAnswer, QuestionRequest, Session, SessionDetail, Settings } from '../shared/types.js';
+import type { ProfileCatalog } from '../shared/profiles.js';
+import { addSkill, checkSkillSource } from '../shared/skill-commands.js';
 import { SessionSync, type SyncState } from './sync.js';
 import { LitespeedClient } from './client.js';
 
@@ -71,6 +73,21 @@ export class TerminalController {
       }
       return false;
     } finally { if (generation === this.generation) this.set({ pending: null }); }
+  }
+  async activateSkill(id: string) {
+    this.configurationReady();
+    const session = this.detail?.session, draft = this.state.draft;
+    if (!session) return false;
+    if (session.profile?.skillIds.includes(id)) { this.notice(`Skill ${id} is already active.`); this.setDraft({ ...draft, text: '' }); return true; }
+    const accepted = await this.action('Activating skill', async () => {
+      const catalog = await this.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(session.workspace)}`);
+      checkSkillSource(session.profile, catalog.revision);
+      const choice = addSkill(session.profile, id, catalog);
+      await this.client.api(`/sessions/${encodeURIComponent(session.id)}/profile`, { expectedConfigRevision: session.configRevision ?? 0, choice });
+      if (this.state.draft === draft) this.setDraft({ ...draft, text: '' });
+    });
+    if (accepted) this.notice(`Skill ${id} active for this session. Queued messages remain paused.`);
+    return accepted;
   }
   async send(kind: 'message' | 'steer' | 'queue' = 'message', content?: string) {
     const detail = this.detail, draft = this.state.draft;
