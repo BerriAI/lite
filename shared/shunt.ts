@@ -12,8 +12,30 @@ export const SHUNT_LIMITS = {
 export const SHUNT_BENEFIT = 'Up to ~90% less main-model context.';
 export const SHUNT_DESCRIPTION = 'A separate model handles large reads and routine code.';
 export const SHUNT_MODEL_HINT = 'Choose a fast, efficient model.';
+/** Whether a provider could power Shunt given its stored connection. Non-codex
+ * only (codex is subscription sign-in, not an API-key Shunt route). */
+export function shuntEligible(provider: Provider): boolean {
+  if (provider.kind === 'codex') return false;
+  // Public settings carry a `configured` flag (API key present, localhost, or
+  // codex sign-in); raw store settings fall back to baseUrl/anthropic presence.
+  if (provider.configured !== undefined) return provider.configured;
+  return Boolean(provider.baseUrl || provider.kind === 'anthropic');
+}
+/** Whether at least one provider could power Shunt. Toggling ON is allowed only
+ * when true; toggling OFF must always be allowed. */
+export function shuntCanEnable(providers: readonly Provider[]): boolean {
+  return providers.some(provider => shuntEligible(provider));
+}
 export function shuntConfigured(value: ShuntSelection | undefined | null, providers: readonly Provider[]): boolean {
-  return !value?.enabled || Boolean(value.model?.model.trim() && providers.some(provider => provider.id === value.model.providerId && provider.kind !== 'codex' && (provider.baseUrl || provider.kind==='anthropic')));
+  return !value?.enabled || Boolean(value.model?.model.trim() && providers.some(provider => provider.id === value.model.providerId && shuntEligible(provider)));
+}
+/** The pure toggle transition for On/Off. Turning off only clears `enabled` and
+ * keeps the chosen model for a later re-enable; turning on presumes the caller
+ * then supplies a model route (drafted empty here if none was kept). This
+ * function NEVER navigates or picks the model — that is the caller's job. */
+export function shuntToggle(current: ShuntSelection, turnOn: boolean): ShuntSelection {
+  if (!turnOn) return { ...current, enabled: false };
+  return { enabled: true, model: current.model ?? { providerId: '', model: '' }, minLines: current.minLines };
 }
 export interface ShuntSource { path: string; sha256: string; bytes: number; lines: number }
 export interface ShuntOperation {

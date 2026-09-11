@@ -1,14 +1,14 @@
 /** @jsxImportSource @opentui/react */
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Model, ModelReasoning, Session, Settings } from '../shared/types.js';
-import { SHUNT_DESCRIPTION, SHUNT_BENEFIT, SHUNT_MODEL_HINT, shuntConfigured, type ShuntSelection } from '../shared/shunt.js';
+import { SHUNT_DESCRIPTION, SHUNT_BENEFIT, SHUNT_MODEL_HINT, shuntCanEnable, shuntConfigured, shuntToggle, type ShuntSelection } from '../shared/shunt.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { ARCHITECTURES, architectureWorker, selectArchitecture, type ArchitectureKind, type ModelRoute } from '../shared/architectures.js';
 import { SETUP_ARCHITECTURES, modelGuidance } from '../shared/setup.js';
 import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, type MenuItem } from './ui.js';
 
-export function ModelChooser({ controller, settings, value, title, onChange, onClose, simple = false, feedback }: { simple?: boolean; feedback?: string; controller: TerminalController; settings: Settings; value: ModelRoute; title: string; onChange: (route: ModelRoute) => void; onClose: () => void }) {
+export function ModelChooser({ controller, settings, value, title, onChange, onClose, simple = false, feedback, guidance, onChangeGateway }: { simple?: boolean; feedback?: string; guidance?: string; onChangeGateway?: () => void; controller: TerminalController; settings: Settings; value: ModelRoute; title: string; onChange: (route: ModelRoute) => void; onClose: () => void }) {
   const [provider, setProvider] = useState(settings.providers.some(provider => provider.id === value.providerId) ? value.providerId : settings.providers[0]?.id || ''), [models, setModels] = useState<Model[]>([]);
   const [view, setView] = useState<'models' | 'providers' | 'custom'>('models'), [error, setError] = useState(''), [loading, setLoading] = useState(true);
   useEffect(() => {
@@ -20,11 +20,11 @@ export function ModelChooser({ controller, settings, value, title, onChange, onC
   if (view === 'custom') return <TextPrompt title="Model ID" placeholder="provider/model-name" onClose={() => setView('models')} onSave={model => { if (model.trim()) onChange({ providerId: provider, model: model.trim() }); }} />;
   const configured = settings.providers.find(item => item.id === provider);
   const all = [...models, ...(configured?.models ?? []).filter(id => !models.some(model => model.id === id)).map(id => ({ id, name: id, providerId: provider }))];
-  return <Menu key={provider} title={title} onClose={onClose} footer={simple ? feedback || error || (loading ? 'Loading your models…' : 'Type to search · Enter choose · Esc back') : feedback} items={[
+  return <Menu key={`${provider}:${title}`} title={title} onClose={onClose} header={guidance} footer={simple ? feedback || error || (loading ? 'Loading your models…' : 'Type to search · Enter choose · Esc back') : feedback} items={[
     ...(!simple ? [{ id: 'provider', label: `Provider: ${configured?.name ?? provider}`, description: 'Change provider', action: () => setView('providers') },
     { id: 'custom', label: 'Enter a model ID…', description: error || (loading ? 'Loading models…' : undefined), action: () => setView('custom') }] : []),
     ...all.map(model => ({ id: `model:${model.id}`, label: `${model.id === value.model && provider === value.providerId ? '✓ ' : ''}${model.name || model.id}`, description: model.name && model.name !== model.id ? model.id : undefined, action: () => onChange({ providerId: provider, model: model.id }) })),
-    ...(simple && !loading && !all.length ? [{id:'retry',label:'Change gateway',action:onClose}] : []),
+    ...(simple && !loading && !all.length ? [{id:'retry',label:'Change gateway',action:onChangeGateway ?? onClose}] : []),
   ]} />;
 }
 
@@ -95,12 +95,14 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
 export function ShuntSettings({controller,settings,value,onChange,onClose,reasoning,onReasoning}:{controller:TerminalController;settings:Settings;value:ShuntSelection;onChange:(value:ShuntSelection)=>void;onClose:()=>void;reasoning?:string;onReasoning?:()=>void}) {
   const [choosing,setChoosing]=useState(false);
   const providers=settings.providers.filter(provider=>provider.kind!=='codex');
-  if(choosing)return <ModelChooser controller={controller} settings={{...settings,providers}} title="Shunt model" feedback={SHUNT_MODEL_HINT} value={value.model??{providerId:providers[0]?.id??'',model:''}} onClose={()=>setChoosing(false)} onChange={model=>{onChange({...value,enabled:true,model});setChoosing(false);}}/>;
+  const canEnable=shuntCanEnable(providers);
+  const modelConfigured=shuntConfigured(value,providers);
+  if(choosing)return <ModelChooser controller={controller} settings={{...settings,providers}} title="Shunt model" guidance={SHUNT_MODEL_HINT} value={value.model??{providerId:providers[0]?.id??'',model:''}} onClose={()=>setChoosing(false)} onChange={model=>{onChange({...value,enabled:true,model});setChoosing(false);}}/>;
   return <Menu title="Advanced settings" search={false} onClose={onClose} footer={`${SHUNT_BENEFIT} Reported by Spotify; results vary.`} items={[
-    {id:'shunt',label:`Shunt: ${value.enabled?'On':'Off'}`,description:SHUNT_DESCRIPTION,disabled:!providers.length,action:()=>{if(value.enabled)onChange({...value,enabled:false});else if(value.model)onChange({...value,enabled:true,model:value.model});else setChoosing(true);}},
-    ...(value.enabled?[{id:'shunt-model',label:`Shunt model: ${value.model.model}`,description:SHUNT_MODEL_HINT,action:()=>setChoosing(true)}]:[]),
-    ...(value.enabled&&onReasoning?[{id:'reasoning',label:`Reasoning: ${reasoning??'Default'}`,action:onReasoning}]:[]),
-    ...(!providers.length?[{id:'connect',label:'Connect an API-key provider to use Shunt',disabled:true,action:()=>{}}]:[]),
+    {id:'shunt',label:`Shunt: ${value.enabled?'On':'Off'}`,description:SHUNT_DESCRIPTION,disabled:!value.enabled&&!canEnable,action:()=>onChange(shuntToggle(value,!value.enabled))},
+    ...(value.enabled?[{id:'shunt-model',label:`Shunt model: ${value.model?.model || 'Choose a model'}`,description:value.model?.model?SHUNT_MODEL_HINT:'Choose a fast, efficient model to enable Shunt.',action:()=>setChoosing(true)}]:[]),
+    ...(value.enabled&&modelConfigured&&onReasoning?[{id:'reasoning',label:`Reasoning: ${reasoning??'Default'}`,action:onReasoning}]:[]),
+    ...(!canEnable?[{id:'connect',label:'Connect an API-key provider to use Shunt',disabled:true,action:()=>{}}]:[]),
     {id:'back',label:'Back',action:onClose},
   ]}/>;
 }
