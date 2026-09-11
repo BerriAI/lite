@@ -123,7 +123,7 @@ export class CodexAuth {
     try {
       if (method === 'device') {
         const device = await this.json(`${ISSUER}/api/accounts/deviceauth/usercode`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'speedrail/0.1.0' },
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'litespeed/0.1.0' },
           body: JSON.stringify({ client_id: CLIENT_ID }), signal: login.controller.signal,
         });
         if (typeof device.device_auth_id !== 'string' || typeof (device.user_code ?? device.usercode) !== 'string') throw new Error('Authentication returned an invalid device code.');
@@ -165,7 +165,7 @@ export class CodexAuth {
       });
       const params = new URLSearchParams({ response_type: 'code', client_id: CLIENT_ID, redirect_uri: REDIRECT,
         scope: 'openid profile email offline_access', code_challenge: challenge, code_challenge_method: 'S256', state,
-        id_token_add_organizations: 'true', codex_cli_simplified_flow: 'true', originator: 'speedrail' });
+        id_token_add_organizations: 'true', codex_cli_simplified_flow: 'true', originator: 'litespeed' });
       return { loginId, method, url: `${ISSUER}/oauth/authorize?${params}`, expiresAt };
     } catch (error) {
       this.fail(login, error instanceof Error ? error.message : 'Unable to start login.');
@@ -176,7 +176,7 @@ export class CodexAuth {
     try {
       while (!login.controller.signal.aborted && Date.now() < login.expiresAt) {
         const response = await this.fetcher(`${ISSUER}/api/accounts/deviceauth/token`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'speedrail/0.1.0' },
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'User-Agent': 'litespeed/0.1.0' },
           body: JSON.stringify({ device_auth_id: deviceId, user_code: userCode }), redirect: 'error',
           signal: AbortSignal.any([login.controller.signal, AbortSignal.timeout(30_000)]),
         });

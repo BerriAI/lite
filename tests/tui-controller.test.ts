@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { SessionDetail, PermissionRequest } from '../shared/types.js';
 import { TerminalController } from '../tui/controller.js';
-import type { SpeedrailClient } from '../tui/client.js';
+import type { LitespeedClient } from '../tui/client.js';
 import type { SessionSync } from '../tui/sync.js';
 
 function harness(status: 'idle' | 'running' = 'idle') {
@@ -9,7 +9,7 @@ function harness(status: 'idle' | 'running' = 'idle') {
   const client = { base: 'http://localhost:1', api: vi.fn().mockResolvedValue({}) };
   const sync = { sessionId: 'parent', start: vi.fn(), stop: vi.fn(), subscribe: vi.fn(() => () => {}), getState: () => ({ phase: 'ready', detail, error: null }), refresh: vi.fn().mockResolvedValue(undefined) };
   const storage = { load: () => ({ text: '', attachments: [] }), save: vi.fn(), remember: vi.fn() };
-  const controller = new TerminalController(client as unknown as SpeedrailClient, sync as unknown as SessionSync, storage);
+  const controller = new TerminalController(client as unknown as LitespeedClient, sync as unknown as SessionSync, storage);
   controller.setDraft({ text: 'my unsent work', attachments: [] });
   return { controller, client, sync, storage, detail };
 }

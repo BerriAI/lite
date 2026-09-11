@@ -1,6 +1,6 @@
 /** Multi-model architectures (the registry).
  *
- * Speedrail's founding opinion is that a coding harness is intrinsically
+ * Litespeed's founding opinion is that a coding harness is intrinsically
  * multi-model: "which model?" is often the wrong question — the right one is
  * "which arrangement of models?". A session can therefore run either a single
  * model or a named ARCHITECTURE: a fixed arrangement of cooperating models

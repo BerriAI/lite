@@ -1,6 +1,6 @@
 # Multi-model architectures
 
-Speedrail treats the arrangement of models as a session setting. The web picker exposes Single model, Sidekick Fusion, Team Fusion, and Expert Fusion. Models are configurable routes to connected providers, not models bundled with Speedrail. File Pipeline is not implemented.
+Litespeed treats the arrangement of models as a session setting. The web picker exposes Single model, Sidekick Fusion, Team Fusion, and Expert Fusion. Models are configurable routes to connected providers, not models bundled with Litespeed. File Pipeline is not implemented.
 
 The aim is to reserve stronger models for the work that benefits from them while cheaper models handle suitable assignments. Persistent sidekick context is inspired by [Cognition’s Devin Fusion](https://cognition.com/blog/devin-fusion). Quality, cost, and latency need to be measured for each model combination and task.
 
@@ -51,7 +51,7 @@ All Fusion workers share a per-root-turn budget: eight invocations. Each invocat
 
 Team and Expert run all independent `delegate` calls requested together in parallel by default, within the turn budget. An optional concurrency limit of one to four caps simultaneous workers; remaining calls run in subsequent groups. Driver tool calls retain their original order. Each worker starts in a private copy of the current workspace, including dirty source files, with its own Git baseline and a 256 MiB copy limit. Existing installed `node_modules` may be linked for execution; generated/dependency directories are outside source history and this is not a hostile-code sandbox.
 
-New steering invalidates pending publication. After all workers stop, Speedrail compares each candidate patch with the captured baseline and current root files. Overlapping worker paths and external root edits are conflicts, so those assignments do not overwrite root files. Unsupported binary/large changes are retained for review. Successful text patches are applied through root history intents. A partial integration interrupted by cancellation or a crash uses ordinary file-history recovery. Only integrated changes and checks in the root workspace count as root verification evidence; tests inside a copy do not establish combined correctness. Failed/conflicting workspaces remain available at their reported local paths.
+New steering invalidates pending publication. After all workers stop, Litespeed compares each candidate patch with the captured baseline and current root files. Overlapping worker paths and external root edits are conflicts, so those assignments do not overwrite root files. Unsupported binary/large changes are retained for review. Successful text patches are applied through root history intents. A partial integration interrupted by cancellation or a crash uses ordinary file-history recovery. Only integrated changes and checks in the root workspace count as root verification evidence; tests inside a copy do not establish combined correctness. Failed/conflicting workspaces remain available at their reported local paths.
 
 ## Evidence and accounting
 

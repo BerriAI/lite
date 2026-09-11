@@ -2,7 +2,7 @@ import type { Attachment } from '../../shared/types';
 import { useEffect, useRef, useState } from 'react';
 
 export interface ComposerDraft { text: string; attachments: Attachment[] }
-const DRAFT_PREFIX = 'speedrail:draft:v1:';
+const DRAFT_PREFIX = 'litespeed:draft:v1:';
 const DRAFT_LIMIT = 1024 * 1024;
 const DRAFT_TOTAL_LIMIT = 2 * 1024 * 1024;
 const emptyDraft = (): ComposerDraft => ({ text: '', attachments: [] });
@@ -125,7 +125,7 @@ export function useSessionDraft(sessionId: string | null) {
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, {
     ...options,
-    headers: { 'X-Speedrail-Client': 'web', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
+    headers: { 'X-Litespeed-Client': 'web', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);

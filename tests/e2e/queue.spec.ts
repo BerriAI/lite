@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { QueueState, Session, SessionDetail } from '../../shared/types';
 
-const reply = 'Hello from Speedrail.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail' });
+const reply = 'Hello from Litespeed.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed' });
 const queuePanel = (page: Page) => page.getByRole('region', { name: 'Queued messages' });
 
 async function create(request: APIRequestContext, title: string): Promise<Session> {
@@ -99,7 +99,7 @@ test('queues by button and Enter behind a live stream, then drains FIFO exactly 
   const first = 'slow response before queued turns', second = 'FIFO second turn', third = 'FIFO third turn';
   await open(page, session);
   await send(page, session, first);
-  await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Speedrail.');
+  await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Litespeed.');
   expect((await detail(request, session.id)).session.status).toBe('running');
   const posts: string[] = [];
   page.on('request', r => { if (r.method() === 'POST' && /\/sessions\/[^/]+\/(?:messages|queue)$/.test(r.url())) posts.push(new URL(r.url()).pathname); });
@@ -167,7 +167,7 @@ test('provider failure pauses remaining work until a separate explicit resume', 
   expect((await detail(request, session.id)).messages.filter(m => m.role === 'user')).toHaveLength(2);
   await page.getByRole('button', { name: 'Resume queue', exact: true }).click();
   await idle(request, session, ['create fixture error queue preparation', 'provider failure queued turn', 'Recover after reviewing the error']);
-  await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('Hello from Speedrail.');
+  await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('Hello from Litespeed.');
 });
 
 test('keeps queues and drafts isolated between sessions and fits the mobile viewport', async ({ page, request }) => {

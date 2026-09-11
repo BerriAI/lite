@@ -1,6 +1,6 @@
 import type { DelegationDetail, DelegationSummary, RunEvent } from '../shared/types.js';
 import { applyEvent } from '../shared/events.js';
-import { SpeedrailClient } from './client.js';
+import { LitespeedClient } from './client.js';
 
 export function invocationPath(task: DelegationSummary) {
   return `/sessions/${encodeURIComponent(task.parentSessionId)}/delegations/${encodeURIComponent(task.id)}`;
@@ -14,7 +14,7 @@ export class InvocationSync {
   private sequence = 0;
   private started = false;
   private timer?: ReturnType<typeof setTimeout>;
-  constructor(private client: SpeedrailClient, readonly task: DelegationSummary) {}
+  constructor(private client: LitespeedClient, readonly task: DelegationSummary) {}
   getState = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private set(next: typeof this.state) {

@@ -1,55 +1,55 @@
-# Install and update Speedrail
+# Install and update Litespeed
 
 ## macOS package
 
-Speedrail releases include Node, Bun, the native terminal packages, and the built web app for Apple silicon and Intel Macs. You do not need to install Node or run npm. Git and project-specific tools remain separate.
+Litespeed releases include Node, Bun, the native terminal packages, and the built web app for Apple silicon and Intel Macs. You do not need to install Node or run npm. Git and project-specific tools remain separate.
 
 ```sh
-curl -fsSL https://github.com/BerriAI/speedrail/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/BerriAI/litespeed/releases/latest/download/install.sh | sh
 ```
 
-The installer chooses your Mac architecture, verifies the archive checksum, checks that the included runtime starts, and installs into `~/.local/share/speedrail`. It creates `~/.local/bin/speedrail`. Existing unrelated commands or nonempty installation directories are left alone. The installer prints the exact command to start Speedrail; if `~/.local/bin` is not on PATH, it also prints the line to add to your shell configuration.
+The installer chooses your Mac architecture, verifies the archive checksum, checks that the included runtime starts, and installs into `~/.local/share/litespeed`. It creates `~/.local/bin/litespeed`. Existing unrelated commands or nonempty installation directories are left alone. The installer prints the exact command to start Litespeed; if `~/.local/bin` is not on PATH, it also prints the line to add to your shell configuration.
 
 From the project you want to work on:
 
 ```sh
 cd /path/to/your/project
-~/.local/bin/speedrail
+~/.local/bin/litespeed
 ```
 
-Once `~/.local/bin` is on PATH, use `speedrail`. The first launch asks for your gateway base URL and API key. For the browser, open `http://localhost:3210`, or run `speedrail serve` for a web-only session.
+Once `~/.local/bin` is on PATH, use `litespeed`. The first launch asks for your gateway base URL and API key. For the browser, open `http://localhost:3210`, or run `litespeed serve` for a web-only session.
 
-You can also download the archive for your Mac from [Releases](https://github.com/BerriAI/speedrail/releases), alongside its `manifest.json`. Extract it and run `speedrail/runtime/node speedrail/bin/install.mjs /absolute/path/to/archive.tar.gz /absolute/path/to/manifest.json`. These are terminal/server packages, not a signed/notarized `.app` or `.pkg` installer.
+You can also download the archive for your Mac from [Releases](https://github.com/BerriAI/litespeed/releases), alongside its `manifest.json`. Extract it and run `litespeed/runtime/node litespeed/bin/install.mjs /absolute/path/to/archive.tar.gz /absolute/path/to/manifest.json`. These are terminal/server packages, not a signed/notarized `.app` or `.pkg` installer.
 
 ## Updates
 
-Speedrail checks release metadata in the background, at most once a day after a successful check. Failed checks retry later and never block chat. Both UIs show a small notice when an update is available. Use **Install update**, then **Restart** when your tasks and workspace terminals are finished. The web page reloads after the new backend responds; the terminal reloads its client and returns to the same session. Other already-open terminal clients should be reopened to load their new UI.
+Litespeed checks release metadata in the background, at most once a day after a successful check. Failed checks retry later and never block chat. Both UIs show a small notice when an update is available. Use **Install update**, then **Restart** when your tasks and workspace terminals are finished. The web page reloads after the new backend responds; the terminal reloads its client and returns to the same session. Other already-open terminal clients should be reopened to load their new UI.
 
 Or run:
 
 ```sh
-speedrail update
+litespeed update
 ```
 
-This downloads and verifies the latest stable release, switches the installed version atomically, and restarts the matching local server if idle. If work is active, installation completes and the server keeps running. Run the command again after work finishes. An explicit `--url` selects your local server if you use a nondefault port. `speedrail --version` prints the installed CLI version.
+This downloads and verifies the latest stable release, switches the installed version atomically, and restarts the matching local server if idle. If work is active, installation completes and the server keeps running. Run the command again after work finishes. An explicit `--url` selects your local server if you use a nondefault port. `litespeed --version` prints the installed CLI version.
 
-No update is installed merely because a check found one. Update requests go only to the public Speedrail GitHub releases; no prompts, keys, or session data are sent. `SPEEDRAIL_NO_UPDATE_CHECK=1` disables background checks. Checksums protect against incomplete/corrupt downloads; they are published through the same GitHub release trust boundary, not a separate signing service.
+No update is installed merely because a check found one. Update requests go only to the public Litespeed GitHub releases; no prompts, keys, or session data are sent. `LITESPEED_NO_UPDATE_CHECK=1` disables background checks. Checksums protect against incomplete/corrupt downloads; they are published through the same GitHub release trust boundary, not a separate signing service.
 
 ## Data and existing source installations
 
-Packaged installs store sessions, settings, and provider keys in `~/.local/share/speedrail-data`, outside version directories. `SPEEDRAIL_DATA_DIR` can select an existing absolute data directory. Terminal preferences retain their existing `~/.config/speedrail` and `~/.local/state/speedrail` locations. Old application versions remain available on disk; downgrades and database rollback are not automatic.
+Packaged installs store sessions, settings, and provider keys in `~/.local/share/litespeed-data`, outside version directories. `LITESPEED_DATA_DIR` can select an existing absolute data directory. Terminal preferences retain their existing `~/.config/litespeed` and `~/.local/state/litespeed` locations. Old application versions remain available on disk; downgrades and database rollback are not automatic.
 
-To carry a source installation's data forward, stop its server and set `SPEEDRAIL_DATA_DIR` to the absolute path of its `.speedrail` directory before starting the package. Back up that directory first. Keep the same address/port to retain browser drafts. Do not merge databases or run two servers against one data directory. If your data is still under `.lite`, first use the [rename migration](upgrading.md).
+To carry a source installation's data forward, stop its server and set `LITESPEED_DATA_DIR` to the absolute path of its `.litespeed` directory before starting the package. Back up that directory first. Keep the same address/port to retain browser drafts. Do not merge databases or run two servers against one data directory. If your data is still under `.speedrail` or `.lite`, first use the [rename migration](upgrading.md).
 
-The installer supports `SPEEDRAIL_INSTALL_DIR` and `SPEEDRAIL_BIN_DIR` for custom installation paths. It does not automatically replace an npm-linked command elsewhere on PATH. Check `command -v speedrail` and use the printed packaged launcher path until PATH selects it.
+The installer supports `LITESPEED_INSTALL_DIR` and `LITESPEED_BIN_DIR` for custom installation paths. It does not automatically replace an npm-linked command elsewhere on PATH. Check `command -v litespeed` and use the printed packaged launcher path until PATH selects it.
 
 ## Build from source
 
 The source workflow remains available with Node 26.4+ and npm:
 
 ```sh
-git clone https://github.com/BerriAI/speedrail.git &&
-cd speedrail &&
+git clone https://github.com/BerriAI/litespeed.git &&
+cd litespeed &&
 npm ci &&
 npm run build &&
 npm link

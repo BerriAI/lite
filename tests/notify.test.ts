@@ -17,38 +17,38 @@ describe('notify unit (injected spawner, no real OS surface)', () => {
   it('macOS: builds one osascript -e argument with AppleScript-escaped strings and a 2s timeout', () => {
     setPlatform('darwin');
     const spawn = spawner();
-    notify('Speedrail', 'He said "hi" \\ done', spawn);
+    notify('Litespeed', 'He said "hi" \\ done', spawn);
     expect(spawn).toHaveBeenCalledTimes(1);
     const [command, args, options] = spawn.mock.calls[0];
     expect(command).toBe('osascript');
     expect(args[0]).toBe('-e');
     // \\ then " escaped — the only escapes AppleScript honors in string literals.
-    expect(args[1]).toBe('display notification "He said \\"hi\\" \\\\ done" with title "Speedrail"');
+    expect(args[1]).toBe('display notification "He said \\"hi\\" \\\\ done" with title "Litespeed"');
     expect(options).toEqual({ timeout: 2000 });
   });
   it('macOS: strips control and format characters so user text cannot smuggle terminal or script structure', () => {
     setPlatform('darwin');
     const spawn = spawner();
-    notify('Speedrail', 'line1\nline2[2Jend‮', spawn);
-    expect(spawn.mock.calls[0][1][1]).toBe('display notification "line1 line2 [2Jend " with title "Speedrail"');
+    notify('Litespeed', 'line1\nline2[2Jend‮', spawn);
+    expect(spawn.mock.calls[0][1][1]).toBe('display notification "line1 line2 [2Jend " with title "Litespeed"');
   });
   it('linux: notify-send with plain title/body argv (no shell)', () => {
     setPlatform('linux');
     const spawn = spawner();
-    notify('Speedrail', 'response finished', spawn);
-    expect(spawn).toHaveBeenCalledWith('notify-send', ['Speedrail', 'response finished'], { timeout: 2000 }, expect.any(Function));
+    notify('Litespeed', 'response finished', spawn);
+    expect(spawn).toHaveBeenCalledWith('notify-send', ['Litespeed', 'response finished'], { timeout: 2000 }, expect.any(Function));
   });
   it('windows and unknown platforms: complete no-op', () => {
     for (const platform of ['win32', 'freebsd']) {
       setPlatform(platform);
       const spawn = spawner();
-      notify('Speedrail', 'body', spawn);
+      notify('Litespeed', 'body', spawn);
       expect(spawn).not.toHaveBeenCalled();
     }
   });
   it('never throws, even when the spawner itself throws synchronously', () => {
     setPlatform('darwin');
-    expect(() => notify('Speedrail', 'body', (() => { throw new Error('spawn failed'); }) as unknown as Spawner)).not.toThrow();
+    expect(() => notify('Litespeed', 'body', (() => { throw new Error('spawn failed'); }) as unknown as Spawner)).not.toThrow();
   });
   it('bounds runaway text so argv stays small', () => {
     setPlatform('linux');
@@ -72,7 +72,7 @@ describe('runner notification semantics (injected spawner)', () => {
   const bodies = () => spawn.mock.calls.map(call => JSON.stringify(call[1]));
   beforeEach(async () => {
     setPlatform('darwin'); // Deterministic channel: assertions read the osascript args.
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-notify-runner-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-notify-runner-')));
     store = new Store(join(directory, 'state'));
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); respond(JSON.parse(Buffer.concat(chunks).toString()), res); });

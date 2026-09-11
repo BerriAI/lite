@@ -10,10 +10,10 @@ Standing project instructions (AGENTS.md, profiles, instruction skills) remain t
 
 ## How it works
 
-- Facts are scoped to a workspace and stored locally in Speedrail's database. Nothing leaves your machine except as part of ordinary model requests when a recall is included.
+- Facts are scoped to a workspace and stored locally in Litespeed's database. Nothing leaves your machine except as part of ordinary model requests when a recall is included.
 - Each fact has a slug name, a one-line description, and a body up to 6,000 bytes. A workspace holds at most 500 facts.
 - The `memory_remember` and `memory_forget` tools run automatically when memory is enabled in Build mode. Explicit Ask/Deny rules override that default; Plan mode cannot write facts. `memory_recall` is read-only.
-- Before a turn, Speedrail may automatically recall up to 4 facts (at most 2,400 bytes) matched against your request, clearly labeled as background memory. Automatic recall is bounded and advisory; the agent can always `recall` explicitly for more.
+- Before a turn, Litespeed may automatically recall up to 4 facts (at most 2,400 bytes) matched against your request, clearly labeled as background memory. Automatic recall is bounded and advisory; the agent can always `recall` explicitly for more.
 - Researcher (task) children do not receive memory tools.
 
 ## Managing facts

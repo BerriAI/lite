@@ -34,7 +34,7 @@ describe('independent researcher delegation seam audit', () => {
   const sockets: WebSocket[] = [];
   let terminalTransport: ReturnType<typeof attachTerminals> | undefined;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-delegation-audit-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-delegation-audit-')));
     store = new Store(join(directory, 'state')); requests = [];
     respond = (_request, res) => stream(res, 'Unconfigured audit provider.');
     provider = createServer(async (req, res) => {
@@ -86,9 +86,9 @@ describe('independent researcher delegation seam audit', () => {
   });
 
   it.each(['child', 'pin', 'link', 'parent', 'checkpoint', 'prompt'])('atomically rolls back rejected child acceptance at the %s boundary', async boundary => {
-    await mkdir(join(directory, '.speedrail/skills/audit'), { recursive: true });
-    await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [], skills: [{ id: 'audit', name: 'Audit', description: 'Pinned audit instructions' }] }));
-    await writeFile(join(directory, '.speedrail/skills/audit/SKILL.md'), 'PRIVATE_AUDIT_SKILL — exact UTF-8\r\nno final newline');
+    await mkdir(join(directory, '.litespeed/skills/audit'), { recursive: true });
+    await writeFile(join(directory, '.litespeed/profiles.json'), JSON.stringify({ version: 1, profiles: [], skills: [{ id: 'audit', name: 'Audit', description: 'Pinned audit instructions' }] }));
+    await writeFile(join(directory, '.litespeed/skills/audit/SKILL.md'), 'PRIVATE_AUDIT_SKILL — exact UTF-8\r\nno final newline');
     const resolved = await resolveProfileChoice(directory, { profileId: null, skillIds: ['audit'] });
     const f = begin(), before = rawState();
     const rule = {
@@ -199,9 +199,9 @@ describe('independent researcher delegation seam audit', () => {
 
   it('inherits accepted provider, project guidance and private skill bytes despite drift before launch', async () => {
     await writeFile(join(directory, 'AGENTS.md'), 'ORIGINAL_ACCEPTED_GUIDANCE');
-    await mkdir(join(directory, '.speedrail/skills/audit'), { recursive: true });
-    await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [], skills: [{ id: 'audit', name: 'Audit', description: 'Pinned skill' }] }));
-    await writeFile(join(directory, '.speedrail/skills/audit/SKILL.md'), 'ORIGINAL_PINNED_SKILL\r\nexact ending');
+    await mkdir(join(directory, '.litespeed/skills/audit'), { recursive: true });
+    await writeFile(join(directory, '.litespeed/profiles.json'), JSON.stringify({ version: 1, profiles: [], skills: [{ id: 'audit', name: 'Audit', description: 'Pinned skill' }] }));
+    await writeFile(join(directory, '.litespeed/skills/audit/SKILL.md'), 'ORIGINAL_PINNED_SKILL\r\nexact ending');
     const resolved = await resolveProfileChoice(directory, { profileId: null, skillIds: ['audit'] });
     const parent = store.createSession({ permissionMode: 'auto' }, resolved);
     let held: ServerResponse | undefined;
@@ -218,7 +218,7 @@ describe('independent researcher delegation seam audit', () => {
     const patch = await api('/settings', { providers: [{ id: 'audit', name: 'Changed endpoint', kind: 'openai', baseUrl: replacementUrl, apiKey: 'synthetic-replacement-key' }], maxSteps: 1 }, 'PATCH');
     expect(patch.status).toBe(200);
     await writeFile(join(directory, 'AGENTS.md'), 'CHANGED_UNACCEPTED_GUIDANCE');
-    await rm(join(directory, '.speedrail'), { recursive: true });
+    await rm(join(directory, '.litespeed'), { recursive: true });
     expect((await api(`/sessions/${parent.id}`, { model: 'unaccepted-model', permissionMode: 'ask' }, 'PATCH')).status).toBe(409);
     stream(held!, [task('capture-policy', 'Independent researcher prompt only.')]);
     await app.runner.whenIdle();

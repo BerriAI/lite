@@ -15,7 +15,7 @@ const profileSchema = z.object({ id: slug, name: label, description: description
 const skillSchema = z.object({ id: slug, name: label, description: description.optional().default('') }).strict();
 const manifestSchema = z.object({ version: z.literal(1), profiles: z.array(profileSchema).max(PROFILE_LIMITS.profiles), skills: z.array(skillSchema).max(PROFILE_LIMITS.skills) }).strict().refine(value => unique(value.profiles.map(profile => profile.id)) && unique(value.skills.map(skill => skill.id))).refine(value => value.profiles.every(profile => profile.skills?.every(id => value.skills.some(skill => skill.id === id)) ?? true));
 export const profileChoiceSchema = z.object({ profileId: slug.nullable(), skillIds: z.array(slug).max(PROFILE_LIMITS.activeSkills).refine(unique), catalogRevision: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict();
-const manifestPath = '.speedrail/profiles.json';
+const manifestPath = '.litespeed/profiles.json';
 export const saveProjectProfileSchema = z.object({ workspace: z.string().max(4096).optional(), catalogRevision: z.string().regex(/^[a-f0-9]{64}$/), create: z.boolean(), profile: profileSchema }).strict();
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
@@ -34,13 +34,13 @@ const diagnostic = (path: string, error: unknown): ProfileDiagnostic => {
 /** Private durable data, never part of ordinary Session or message responses. */
 export interface ProfileSnapshot { choice: ProfileChoice; active: ActiveProfile; instructions: string; skills: PinnedSkill[]; sources: ProfileSource[] }
 export interface ResolvedProfile { workspace: string; catalogRevision: string; snapshot: ProfileSnapshot | null; defaults?: { model?: { providerId: string; model: string }; mode?: 'plan' | 'build' } }
-const sourceSchema = z.object({ path: z.string().refine(value => value === manifestPath || /^\.speedrail\/skills\/[a-z0-9][a-z0-9-]{0,63}\/SKILL\.md$/.test(value)), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const sourceSchema = z.object({ path: z.string().refine(value => value === manifestPath || /^\.litespeed\/skills\/[a-z0-9][a-z0-9-]{0,63}\/SKILL\.md$/.test(value)), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const snapshotSchema = z.object({ choice: profileChoiceSchema, active: z.object({ profileId: slug.nullable(), name: label.optional(), skillIds: z.array(slug).max(PROFILE_LIMITS.activeSkills).refine(unique), revision: z.string().regex(/^[a-f0-9]{64}$/), tools: z.array(z.enum(PROFILE_TOOLS)).max(PROFILE_TOOLS.length).refine(unique).nullable() }).strict(), instructions: z.string().refine(value => Buffer.byteLength(value) <= PROFILE_LIMITS.profileBytes), skills: z.array(skillSchema.extend({ body: z.string().refine(value => Buffer.byteLength(value) <= PROFILE_LIMITS.skillBytes), path: z.string(), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict()).max(PROFILE_LIMITS.activeSkills), sources: z.array(sourceSchema).min(1).max(PROFILE_LIMITS.activeSkills + 1) }).strict();
 export function validateProfileSnapshot(value: unknown): ProfileSnapshot {
   const parsed = snapshotSchema.safeParse(value);
   if (!parsed.success) throw conflict('The pinned profile snapshot is invalid. Review and explicitly replace or clear the profile.');
   const snapshot = parsed.data;
-  if (snapshot.choice.profileId !== snapshot.active.profileId || snapshot.choice.catalogRevision !== snapshot.active.revision || JSON.stringify(snapshot.choice.skillIds) !== JSON.stringify(snapshot.active.skillIds) || JSON.stringify(snapshot.active.skillIds) !== JSON.stringify(snapshot.skills.map(skill => skill.id)) || snapshot.active.profileId === null && (snapshot.active.tools !== null || snapshot.instructions !== '') || snapshot.active.profileId !== null && snapshot.active.tools === null || snapshot.sources[0]?.path !== manifestPath || !unique(snapshot.sources.map(source => source.path)) || snapshot.sources.length !== snapshot.skills.length + 1 || snapshot.skills.some(skill => skill.path !== `.speedrail/skills/${skill.id}/SKILL.md` || hash(skill.body) !== skill.hash || !snapshot.sources.some(source => source.path === skill.path && source.hash === skill.hash)) || Buffer.byteLength(snapshot.instructions) + snapshot.skills.reduce((sum, skill) => sum + Buffer.byteLength(skill.body), 0) > PROFILE_LIMITS.activeBytes) throw conflict('The pinned profile snapshot is inconsistent. Review and explicitly replace or clear the profile.');
+  if (snapshot.choice.profileId !== snapshot.active.profileId || snapshot.choice.catalogRevision !== snapshot.active.revision || JSON.stringify(snapshot.choice.skillIds) !== JSON.stringify(snapshot.active.skillIds) || JSON.stringify(snapshot.active.skillIds) !== JSON.stringify(snapshot.skills.map(skill => skill.id)) || snapshot.active.profileId === null && (snapshot.active.tools !== null || snapshot.instructions !== '') || snapshot.active.profileId !== null && snapshot.active.tools === null || snapshot.sources[0]?.path !== manifestPath || !unique(snapshot.sources.map(source => source.path)) || snapshot.sources.length !== snapshot.skills.length + 1 || snapshot.skills.some(skill => skill.path !== `.litespeed/skills/${skill.id}/SKILL.md` || hash(skill.body) !== skill.hash || !snapshot.sources.some(source => source.path === skill.path && source.hash === skill.hash)) || Buffer.byteLength(snapshot.instructions) + snapshot.skills.reduce((sum, skill) => sum + Buffer.byteLength(skill.body), 0) > PROFILE_LIMITS.activeBytes) throw conflict('The pinned profile snapshot is inconsistent. Review and explicitly replace or clear the profile.');
   return snapshot;
 }
 type Loaded = { catalog: ProfileCatalog; profiles: Map<string, z.infer<typeof profileSchema>>; skills: Map<string, PinnedSkill>; sources: ProfileSource[] };
@@ -61,7 +61,7 @@ async function load(workspace: string, signal?: AbortSignal): Promise<Loaded> {
   for (const profile of result.data.profiles) profiles.set(profile.id, profile);
   for (const skill of result.data.skills) {
     signal?.throwIfAborted();
-    const path = `.speedrail/skills/${skill.id}/SKILL.md`;
+    const path = `.litespeed/skills/${skill.id}/SKILL.md`;
     try {
       const body = await readProfileSource(workspace, path, PROFILE_LIMITS.skillBytes, signal), source = { path, hash: hash(body) };
       skills.set(skill.id, { ...skill, body, ...source }); sources.push(source); observations.push(source);
@@ -94,14 +94,14 @@ export async function saveProjectProfile(workspace: string, input: z.infer<typeo
     catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
     let manifest: z.infer<typeof manifestSchema>;
     try { manifest = before === null ? { version: 1, profiles: [], skills: [] } : manifestSchema.parse(JSON.parse(before.replace(/^﻿/, ''))); }
-    catch { throw invalid('Fix the invalid .speedrail/profiles.json file before editing profiles here.'); }
+    catch { throw invalid('Fix the invalid .litespeed/profiles.json file before editing profiles here.'); }
     const index = manifest.profiles.findIndex(profile => profile.id === input.profile.id);
     if (input.create ? index !== -1 : index === -1) throw conflict(input.create ? 'That profile ID already exists. Choose another ID.' : 'This profile no longer exists. Refresh the catalog.');
     if (input.create) manifest.profiles.push(input.profile); else manifest.profiles[index] = input.profile;
     manifest = manifestSchema.parse(manifest);
     const content = JSON.stringify(manifest, null, 2) + '\n';
     if (Buffer.byteLength(content) > PROFILE_LIMITS.manifestBytes) throw invalid('The project profile catalog exceeds its size limit.');
-    const directory = join(root, '.speedrail');
+    const directory = join(root, '.litespeed');
     await mkdir(directory, { recursive: true });
     const identity = await lstat(directory);
     const verifyDirectory = async () => {

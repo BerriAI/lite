@@ -61,7 +61,7 @@ export function createApp(options:AppOptions = {}) {
   app.disable('x-powered-by');
   app.use((req,res,next)=>{
     const hostname=req.hostname.replace(/^\[|\]$/g,'');
-    if(!['localhost','127.0.0.1','::1'].includes(hostname)) return res.status(403).json({error:'Speedrail only accepts local connections.'});
+    if(!['localhost','127.0.0.1','::1'].includes(hostname)) return res.status(403).json({error:'Litespeed only accepts local connections.'});
     const origin=req.get('origin');
     if(origin){try{if(new URL(origin).host!==req.get('host'))return res.status(403).json({error:'Cross-origin requests are not allowed.'});}catch{return res.status(403).json({error:'Invalid request origin.'});}}
     if(req.get('sec-fetch-site')==='cross-site')return res.status(403).json({error:'Cross-site requests are not allowed.'});
@@ -71,7 +71,7 @@ export function createApp(options:AppOptions = {}) {
   });
   app.use('/api/sessions/:id',(req,res,next)=>{if(runner.delegations.isChild(req.params.id))return res.status(req.method==='GET'||req.method==='HEAD'?404:409).json({error:'Research transcripts are read-only and available through their parent task.'});next();});
   app.use('/api',express.json({limit:'12mb'}));
-  app.use('/api',(req,res,next)=>{if(options.updates?.draining() && !['GET','HEAD'].includes(req.method))return res.status(503).json({error:'Speedrail is restarting. Your draft is preserved; try again when it reconnects.'});next();});
+  app.use('/api',(req,res,next)=>{if(options.updates?.draining() && !['GET','HEAD'].includes(req.method))return res.status(503).json({error:'Litespeed is restarting. Your draft is preserved; try again when it reconnects.'});next();});
   const mcpConfigRevision=()=>options.external?.configRevision?.()??createHash('sha256').update(JSON.stringify(store.settings().mcpServers,(_key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value)).digest('hex');
   const mcpStatus=()=>({servers:options.external?.status?.()??[],configRevision:mcpConfigRevision()});
   const publicSettings=()=>{const s=store.publicSettings();return{...s,mcpConfigRevision:mcpConfigRevision(),providers:s.providers.map(p=>p.kind==='codex'?{...p,configured:options.auth?.connected(p.id)||false}:p)}};
@@ -84,8 +84,8 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/profiles/edit',async(req,res)=>{const root=await workspace(req.query.workspace),id=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).parse(req.query.id);res.json(await readEditableProfile(root,id));});
   app.post('/api/profiles/save',async(req,res)=>{const input=saveProjectProfileSchema.parse(req.body),root=await workspace(input.workspace);res.json(await saveProjectProfile(root,input));});
   app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
-  app.get('/api/health',(_req,res)=>res.json({ok:true,name:'speedrail',version:VERSION,...(options.updates?.installation?{installation:options.updates.installation,pid:process.pid}:{})}));
-  app.get('/api/updates',async(req,res)=>res.json(options.updates?await options.updates.status(req.query.check==='true'):{currentVersion:VERSION,available:false,packaged:false,restartRequired:false,releaseUrl:'https://github.com/BerriAI/speedrail/releases',command:'Update your source checkout and rebuild.'}));
+  app.get('/api/health',(_req,res)=>res.json({ok:true,name:'litespeed',version:VERSION,...(options.updates?.installation?{installation:options.updates.installation,pid:process.pid}:{})}));
+  app.get('/api/updates',async(req,res)=>res.json(options.updates?await options.updates.status(req.query.check==='true'):{currentVersion:VERSION,available:false,packaged:false,restartRequired:false,releaseUrl:'https://github.com/BerriAI/litespeed/releases',command:'Update your source checkout and rebuild.'}));
   app.post('/api/updates/install',async(_req,res)=>{if(!options.updates)throw httpError(409,'Packaged updates are unavailable on this server.');res.json(await options.updates.install());});
   app.post('/api/updates/restart',async(_req,res)=>{if(!options.updates)throw httpError(409,'Packaged updates are unavailable on this server.');res.json(await options.updates.restart());});
   // 5.1 usage report. days is zod-clamped 1..90 (coerced from the query
@@ -284,7 +284,7 @@ export function createApp(options:AppOptions = {}) {
     const {pinned}=z.object({pinned:z.boolean()}).strict().parse(req.body);
     res.json({fact:memory.setPinned(memoryWorkspace(req.query.workspace),req.params.name,pinned)});
   });
-  // 5.7 output styles: enumerate workspace .speedrail/styles/*.md names for the
+  // 5.7 output styles: enumerate workspace .litespeed/styles/*.md names for the
   // picker. Advisory read-only listing; builtins are a client-side constant.
   app.get('/api/styles',async(req,res)=>res.json({styles:await listWorkspaceStyles(await workspace(req.query.workspace))}));
   app.get('/api/sessions/:id/events',(req,res)=>{
@@ -304,22 +304,22 @@ export function createApp(options:AppOptions = {}) {
     return {...input,clientSurface:clientSurface(surface)};
   };
   app.post('/api/sessions/:id/messages',async(req,res)=>{
-    const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Speedrail-Client')));
+    const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Litespeed-Client')));
     res.status(202).json({ok:true,messageId});
   });
   app.get('/api/sessions/:id/queue',(req,res)=>res.json(store.queue(req.params.id)));
   app.post('/api/sessions/:id/queue',async(req,res)=>{
-    const queue=await runner.submitQueued(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Speedrail-Client')));
+    const queue=await runner.submitQueued(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Litespeed-Client')));
     res.status(202).json(queue);
   });
   app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
-  app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId,clientSurface(req.get('X-Speedrail-Client')))));
+  app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId,clientSurface(req.get('X-Litespeed-Client')))));
   // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
   // is delivered between steps of the ACTIVE response. Child ids are already
   // rejected by the app-level child guard above; the runner 409s when idle.
   app.post('/api/sessions/:id/steer',(req,res)=>{
     const {content}=z.object({content:z.string().trim().min(1).max(4000)}).parse(req.body);
-    runner.steer(req.params.id,content,undefined,clientSurface(req.get('X-Speedrail-Client')));
+    runner.steer(req.params.id,content,undefined,clientSurface(req.get('X-Litespeed-Client')));
     res.status(202).json({ok:true});
   });
   // GOAL MODE: set one session objective pursued across host-continued turns.
@@ -344,7 +344,7 @@ export function createApp(options:AppOptions = {}) {
   app.delete('/api/sessions/:id/tool-grants',(req,res)=>{store.clearToolGrants(req.params.id);res.json({ok:true});});
   app.post('/api/sessions/:id/fork',(req,res)=>{runner.assertIdle(req.params.id);const input=z.object({messageId:z.string().optional()}).parse(req.body||{});res.status(201).json(store.fork(req.params.id,input.messageId));});
   app.post('/api/sessions/:id/compact',async(req,res)=>{await runner.compact(req.params.id);res.json({ok:true});});
-  app.get('/api/sessions/:id/export',(req,res)=>{const id=req.params.id;res.setHeader('Content-Disposition',`attachment; filename="speedrail-session-${id}.json"`);res.json({session:store.session(id),messages:store.messages(id),todos:store.todos(id)});});
+  app.get('/api/sessions/:id/export',(req,res)=>{const id=req.params.id;res.setHeader('Content-Disposition',`attachment; filename="litespeed-session-${id}.json"`);res.json({session:store.session(id),messages:store.messages(id),todos:store.todos(id)});});
   app.get('/api/files',async(req,res)=>res.json({entries:await listFiles(await workspace(req.query.workspace),queryString(req.query.path))}));
   app.get('/api/file',async(req,res)=>res.json(await readFile(await workspace(req.query.workspace),queryString(req.query.path))));
   app.get('/api/search',async(req,res)=>res.json({files:await searchFiles(await workspace(req.query.workspace),queryString(req.query.q))}));
@@ -380,7 +380,7 @@ export function createApp(options:AppOptions = {}) {
   });
   app.get('/api/commands',async(req,res)=>{
     const root=await workspace(req.query.workspace),commands:{name:string,description:string,content:string}[]=[];
-    for(const dir of ['.speedrail/commands','.claude/commands']){
+    for(const dir of ['.litespeed/commands','.claude/commands']){
       let names:string[]=[];try{names=await readdir(await resolveWorkspacePath(root,dir));}catch{continue;}
       for(const name of names.filter(n=>n.endsWith('.md')).slice(0,100)){
         try{const content=await readCommand(root,join(dir,name));commands.push({name:name.slice(0,-3),description:content.split('\n').find(l=>l.trim()&&!l.startsWith('---'))?.replace(/^#+\s*/,'').slice(0,120)||name,content});}catch{/* Skip unreadable commands. */}

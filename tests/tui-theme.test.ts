@@ -126,7 +126,7 @@ describe('selectedForeground', () => {
 
 describe('built-in themes', () => {
   it('ships the default theme plus a full catalog that all resolve', () => {
-    expect(DEFAULT_THEME_NAME).toBe('speedrail');
+    expect(DEFAULT_THEME_NAME).toBe('litespeed');
     expect(Object.keys(BUILTIN_THEMES).length).toBe(33);
     for (const [name, json] of Object.entries(BUILTIN_THEMES)) {
       for (const mode of ['dark', 'light'] as const) {
@@ -192,17 +192,17 @@ describe('system theme', () => {
 
 describe('theme registry', () => {
   it('resolves custom over plugin over built-in, system unshadowable', () => {
-    const builtins: Record<string, ThemeJson> = { speedrail: minimalTheme({ primary: '#111111' }) };
-    expect(toHex(getTheme('speedrail', 'dark', builtins)!.primary)).toBe('#111111');
+    const builtins: Record<string, ThemeJson> = { litespeed: minimalTheme({ primary: '#111111' }) };
+    expect(toHex(getTheme('litespeed', 'dark', builtins)!.primary)).toBe('#111111');
 
-    expect(addTheme('speedrail', minimalTheme({ primary: '#222222' }))).toBe(true);
-    expect(toHex(getTheme('speedrail', 'dark', builtins)!.primary)).toBe('#222222');
+    expect(addTheme('litespeed', minimalTheme({ primary: '#222222' }))).toBe(true);
+    expect(toHex(getTheme('litespeed', 'dark', builtins)!.primary)).toBe('#222222');
     // First writer wins: a second plugin registration of the same name is refused.
-    expect(addTheme('speedrail', minimalTheme({ primary: '#999999' }))).toBe(false);
-    expect(toHex(getTheme('speedrail', 'dark', builtins)!.primary)).toBe('#222222');
+    expect(addTheme('litespeed', minimalTheme({ primary: '#999999' }))).toBe(false);
+    expect(toHex(getTheme('litespeed', 'dark', builtins)!.primary)).toBe('#222222');
 
-    setCustomThemes({ speedrail: minimalTheme({ primary: '#333333' }) });
-    expect(toHex(getTheme('speedrail', 'dark', builtins)!.primary)).toBe('#333333');
+    setCustomThemes({ litespeed: minimalTheme({ primary: '#333333' }) });
+    expect(toHex(getTheme('litespeed', 'dark', builtins)!.primary)).toBe('#333333');
 
     expect(getTheme('system', 'dark', builtins)).toBeUndefined();
     const system = generateSystem({ defaultBackground: rgba(0, 0, 0), palette: [] }, 'dark');
@@ -214,8 +214,8 @@ describe('theme registry', () => {
   });
 
   it('lists and reports themes including system when generated', () => {
-    const builtins: Record<string, ThemeJson> = { speedrail: minimalTheme() };
-    expect(listThemes(builtins)).toEqual(['speedrail']);
+    const builtins: Record<string, ThemeJson> = { litespeed: minimalTheme() };
+    expect(listThemes(builtins)).toEqual(['litespeed']);
     expect(hasTheme('system')).toBe(false);
     const system = generateSystem({ defaultBackground: rgba(0, 0, 0), palette: [] }, 'dark');
     setSystemTheme({ dark: system, light: system });

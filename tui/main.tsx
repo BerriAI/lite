@@ -1,13 +1,13 @@
 /** @jsxImportSource @opentui/react */
 /** Terminal client entry. Runs under Bun (the renderer's native layer does not
- * load under plain Node); `bin/speedrail.mjs tui` re-execs this file with the local
+ * load under plain Node); `bin/litespeed.mjs tui` re-execs this file with the local
  * Bun binary. Renderer options match the verified working set — changing them
  * (notably useKittyKeyboard or exitOnCtrlC) breaks keyboard delivery in some
  * terminals, so treat this block as load-bearing. */
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import type { Session } from '../shared/types.js';
-import { SpeedrailClient } from './client.js';
+import { LitespeedClient } from './client.js';
 import { parseOptions } from './options.js';
 import { SessionSync } from './sync.js';
 import { App } from './app.tsx';
@@ -21,12 +21,12 @@ import { discoverCustomThemes, loadTuiConfig } from './tuiConfig.js';
 
 async function main() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
-    process.stderr.write('speedrail tui needs an interactive terminal. Use speedrail run "prompt" for scripted use.\n');
+    process.stderr.write('litespeed tui needs an interactive terminal. Use litespeed run "prompt" for scripted use.\n');
     process.exitCode = 1;
     return;
   }
   const options = parseOptions(process.argv.slice(2));
-  const client = new SpeedrailClient(options.url);
+  const client = new LitespeedClient(options.url);
 
   let sessionId = options.sessionId;
   if (!sessionId) {
@@ -42,7 +42,7 @@ async function main() {
     } catch (error) {
       const cause = (error as { cause?: { code?: string } }).cause?.code ?? (error instanceof Error ? error.message : '');
       process.stderr.write(/fetch failed|ECONNREFUSED|ConnectionRefused/i.test(String(cause))
-        ? 'Could not reach the Speedrail server. Start it with speedrail serve first.\n'
+        ? 'Could not reach the Litespeed server. Start it with litespeed serve first.\n'
         : `${error instanceof Error ? error.message : 'Could not create a session.'}\n`);
       process.exitCode = 1;
       return;

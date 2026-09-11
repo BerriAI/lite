@@ -1,3 +1,5 @@
+import { LEGACY_NAMES } from '../bin/legacy.mjs';
+import { shellInspection } from './shell-inspection.js';
 import { constants, openSync, closeSync, fstatSync, readSync, realpathSync, lstatSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
@@ -162,7 +164,7 @@ export function isReadOnlyTool(name: string): boolean { return READ_ONLY.has(nam
 export function captureProjectGuidance(workspace: string): string {
   const root = realpathSync(workspace);
   let result = '';
-  for (const file of ['AGENTS.md', 'SPEEDRAIL.md', '.speedrail/instructions.md']) {
+  for (const file of ['AGENTS.md', 'LITESPEED.md', '.litespeed/instructions.md']) {
     let descriptor: number | undefined;
     try {
       const target = path.join(root, file), parent = path.dirname(target);
@@ -186,7 +188,7 @@ export function captureProjectGuidance(workspace: string): string {
   return result;
 }
 
-/** Acceptance-time snapshot of one optional .speedrail/<file> configuration file.
+/** Acceptance-time snapshot of one optional .litespeed/<file> configuration file.
  * Same guarded synchronous posture as captureProjectGuidance — turn acceptance
  * is synchronous, so the async profile reader cannot be used here. A missing
  * file is silent; any unsafe or unreadable state returns an advisory so the
@@ -196,7 +198,7 @@ function captureProjectFile(workspace: string, file: string, advisory: string): 
   let descriptor: number | undefined;
   try {
     const root = realpathSync(workspace);
-    const target = path.join(root, '.speedrail', file), parent = path.dirname(target);
+    const target = path.join(root, '.litespeed', file), parent = path.dirname(target);
     try { lstatSync(target); } catch (error) { return hasCode(error, 'ENOENT') ? { text: null } : ignored; }
     if (lstatSync(parent).isSymbolicLink() || realpathSync(parent) !== parent || realpathSync(target) !== target) return ignored;
     descriptor = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -211,38 +213,38 @@ function captureProjectFile(workspace: string, file: string, advisory: string): 
   finally { if (descriptor !== undefined) closeSync(descriptor); }
 }
 export function captureProjectPermissions(workspace: string): { text: string | null; advisory?: string } {
-  return captureProjectFile(workspace, 'permissions.json', 'Project permission rules in .speedrail/permissions.json could not be read safely and were ignored for this turn.');
+  return captureProjectFile(workspace, 'permissions.json', 'Project permission rules in .litespeed/permissions.json could not be read safely and were ignored for this turn.');
 }
-/** Guarded bounded read of the optional .speedrail/hooks.json project hooks file.
+/** Guarded bounded read of the optional .litespeed/hooks.json project hooks file.
  * The workspace-trust decision lives in the caller (server/hooks.ts) — this
  * only answers "what does the file safely contain right now". */
 export function captureProjectHooksFile(workspace: string): { text: string | null; advisory?: string } {
-  return captureProjectFile(workspace, 'hooks.json', 'Project hooks in .speedrail/hooks.json could not be read safely and were ignored for this turn.');
+  return captureProjectFile(workspace, 'hooks.json', 'Project hooks in .litespeed/hooks.json could not be read safely and were ignored for this turn.');
 }
 /** Existence probe only (lstat, no follow): powers the honest "hooks are
  * present but this workspace is not trusted" advisory without reading. */
 export function projectHooksFileExists(workspace: string): boolean {
-  try { lstatSync(path.join(realpathSync(workspace), '.speedrail', 'hooks.json')); return true; } catch { return false; }
+  try { lstatSync(path.join(realpathSync(workspace), '.litespeed', 'hooks.json')); return true; } catch { return false; }
 }
-/** Guarded bounded read of one optional .speedrail/styles/<name>.md custom output
+/** Guarded bounded read of one optional .litespeed/styles/<name>.md custom output
  * style (5.7). Reuses the captureProjectFile safety posture (no symlinks, no
- * special files, TOCTOU-checked) via the '.speedrail'-relative path join; the name
+ * special files, TOCTOU-checked) via the '.litespeed'-relative path join; the name
  * is validated to a slug FIRST so it can never traverse. Content is capped at
  * 4 KiB — a style is a short standing preference, not an instructions file. */
 export function captureWorkspaceStyle(workspace: string, name: string): { text: string | null; advisory?: string } {
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(name)) return { text: null, advisory: `Output style ${JSON.stringify(name)} is not a valid style name and was ignored for this turn.` };
-  const result = captureProjectFile(workspace, path.join('styles', `${name}.md`), `Output style .speedrail/styles/${name}.md could not be read safely and was ignored for this turn.`);
+  const result = captureProjectFile(workspace, path.join('styles', `${name}.md`), `Output style .litespeed/styles/${name}.md could not be read safely and was ignored for this turn.`);
   if (result.text === null) return result;
   const capped = Buffer.byteLength(result.text) > 4096;
   let text = result.text;
   if (capped) { const bytes = Buffer.from(text); let end = 4096; while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--; text = bytes.subarray(0, end).toString('utf8'); }
   return { text };
 }
-/** Bounded, non-recursive listing of .speedrail/styles/*.md names for the style
+/** Bounded, non-recursive listing of .litespeed/styles/*.md names for the style
  * picker. Read-only and advisory: failures return an empty list, never throw. */
 export async function listWorkspaceStyles(workspace: string): Promise<string[]> {
   try {
-    const root = realpathSync(workspace), directory = path.join(root, '.speedrail', 'styles');
+    const root = realpathSync(workspace), directory = path.join(root, '.litespeed', 'styles');
     if (lstatSync(directory).isSymbolicLink() || realpathSync(directory) !== directory) return [];
     const names = await fs.readdir(directory);
     return names.filter(name => name.endsWith('.md') && /^[a-zA-Z0-9_-]{1,64}\.md$/.test(name)).map(name => name.slice(0, -3)).sort().slice(0, 100);
@@ -343,9 +345,9 @@ function ignored(relative: string): boolean { return portable(relative).split('/
 function gitPath(relative: string): boolean { return portable(relative).split('/').some(part => part.toLowerCase() === '.git'); }
 function protectedPath(relative: string): boolean {
   const normalized = portable(relative).toLowerCase().replace(/^\.\//, '');
-  if (normalized === '.speedrail/instructions.md') return false;
+  if (normalized === '.litespeed/instructions.md') return false;
   return normalized.split('/').some(part =>
-    part === '.speedrail' || part === '.lite' || part === '.ssh' || part === '.env' || (part.startsWith('.env.') && part !== '.env.example') ||
+    part === '.litespeed' || LEGACY_NAMES.some(name => part === `.${name}`) || part === '.ssh' || part === '.env' || (part.startsWith('.env.') && part !== '.env.example') ||
     ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'id_ecdsa_sk', 'id_ed25519_sk', '.netrc', '.git-credentials'].includes(part) ||
     /(?:^|[._-])private[._-]?key(?:\.(?:pem|key))?$/.test(part) || /\.(?:pem|p12|pfx)$/.test(part));
 }
@@ -353,7 +355,7 @@ export function shellEnvironment(): NodeJS.ProcessEnv {
   // These credentials belong to the harness, not the authorized subprocess.
   // This is defense in depth, not a shell sandbox or an alternative to approval.
   return Object.fromEntries(Object.entries(process.env).filter(([key]) =>
-    !/^(?:SPEEDRAIL_|LITE_|LITELLM_)/i.test(key) &&
+    !/^(?:LITESPEED_|LITELLM_)/i.test(key) && !LEGACY_NAMES.some(name => key.toUpperCase().startsWith(`${name.toUpperCase()}_`)) &&
     !/^(?:(?:OPENAI|ANTHROPIC|AZURE_OPENAI|GEMINI|GOOGLE|COHERE|MISTRAL)_API_KEY|OPENAI_ACCESS_TOKEN|ANTHROPIC_AUTH_TOKEN|BASH_ENV|ENV)$/i.test(key)));
 }
 
@@ -536,8 +538,8 @@ async function readFileRange(workspace: string, filePath: string, offset: number
 export async function readProfileSource(workspace: string, relative: string, maxBytes: number, signal?: AbortSignal): Promise<string> {
   const fail = (code: string, message: string): never => { throw Object.assign(new Error(message), { code }); };
   signal?.throwIfAborted();
-  const skill = /^\.speedrail\/skills\/([a-z0-9][a-z0-9-]{0,63})\/SKILL\.md$/.exec(relative);
-  if (relative !== '.speedrail/profiles.json' && (!skill || protectedPath(skill[1]))) fail('PROFILE_PATH', 'Invalid profile source path.');
+  const skill = /^\.litespeed\/skills\/([a-z0-9][a-z0-9-]{0,63})\/SKILL\.md$/.exec(relative);
+  if (relative !== '.litespeed/profiles.json' && (!skill || protectedPath(skill[1]))) fail('PROFILE_PATH', 'Invalid profile source path.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > 128 * 1024) fail('PROFILE_LIMIT', 'Invalid profile source bound.');
   const root = await fs.realpath(workspace);
   const parts = relative.split('/');
@@ -585,14 +587,14 @@ export async function readProfileSource(workspace: string, relative: string, max
   } finally { await handle.close(); }
 }
 
-/** Command loading has one narrow exception to the private .speedrail state policy. */
+/** Command loading has one narrow exception to the private .litespeed state policy. */
 export async function readCommand(workspace: string, filePath: string): Promise<string> {
   const root = await fs.realpath(workspace);
   const absolute = await resolveWorkspacePath(workspace, filePath);
   const candidate = path.resolve(workspace, filePath);
   const lexical = portable(path.relative(within(path.resolve(workspace), candidate) ? path.resolve(workspace) : root, candidate));
   const canonical = portable(path.relative(root, absolute));
-  const commandPath = (relative: string) => /^\.speedrail\/commands\/[^/]+\.md$/.test(relative) && !protectedPath(path.posix.basename(relative));
+  const commandPath = (relative: string) => /^\.litespeed\/commands\/[^/]+\.md$/.test(relative) && !protectedPath(path.posix.basename(relative));
   const allowedDirectory = (relative: string) => relative.split('/').length === 3 && relative.split('/')[1] === 'commands' && relative.endsWith('.md');
   if (!allowedDirectory(lexical) || (!commandPath(lexical) && protectedPath(lexical)) || (!commandPath(canonical) && protectedPath(canonical))) throw new Error('Invalid or protected command file.');
   // Reject redirection entirely; a command cannot use even an in-workspace
@@ -916,6 +918,38 @@ async function runProcess(command: string, args: string[], cwd: string, signal: 
 // This exception is private to Git status. Other tools still cannot resolve or
 // read external worktree metadata. Git's reciprocal registration is evidence of
 // a local worktree, not authentication against another process with the same UID.
+async function runInspection(commands: NonNullable<ReturnType<typeof shellInspection>>, cwd: string, workspace: string, signal: AbortSignal, timeout: number): Promise<ProcessResult> {
+  const env = Object.fromEntries(Object.entries(shellEnvironment()).filter(([key]) => !key.startsWith('GIT_') && !key.startsWith('BASH_FUNC_')));
+  Object.assign(env, { GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: process.platform === 'win32' ? 'NUL' : '/dev/null', GIT_OPTIONAL_LOCKS: '0', GIT_NO_LAZY_FETCH: '1', GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat' });
+  let result: ProcessResult = { output: '', code: 0, signal: null, cancelled: false, timedOut: false, truncated: false };
+  const deadline = Date.now() + timeout;
+  for (const item of commands) {
+    if ((item.after === '&&' && result.code !== 0) || (item.after === '||' && result.code === 0)) continue;
+    signal.throwIfAborted();
+    let args = item.args;
+    if (item.command === 'git' && args[0] !== '--version') {
+      let root = cwd, metadata = await statusMetadata(root);
+      while (!metadata && root !== workspace && within(workspace, root)) { root = path.dirname(root); metadata = await statusMetadata(root); }
+      if (!metadata) {
+        result = { ...result, code: 128, output: result.output + 'fatal: not a Git repository in this workspace\n' };
+        continue;
+      }
+      const config = await safeStatusConfig(metadata.gitDir, metadata.commonDir, root, env);
+      const [sub, ...flags] = args;
+      args = ['--no-pager', '--no-optional-locks', `--git-dir=${metadata.gitDir}`, `--work-tree=${root}`, ...config, sub,
+        ...(sub === 'diff' || sub === 'log' ? ['--no-ext-diff', '--no-textconv', '--ignore-submodules=all'] : []),
+        ...flags, ...(sub === 'status' ? ['--ignore-submodules=all'] : [])];
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return { ...result, timedOut: true };
+    const next = await runProcess(item.command, args, cwd, signal, remaining, env);
+    const bytes = Buffer.from(result.output + next.output);
+    result = { ...next, output: bytes.subarray(0, 64 * 1024).toString('utf8'), truncated: result.truncated || next.truncated || bytes.length > 64 * 1024 };
+    if (result.timedOut || result.cancelled) break;
+  }
+  return result;
+}
+
 async function gitMetadataPath(value: string, optional = false): Promise<Awaited<ReturnType<typeof fs.lstat>> | null> {
   let stat;
   try { stat = await fs.lstat(value); }
@@ -1127,7 +1161,7 @@ async function fetchResponse(target: Awaited<ReturnType<typeof publicUrl>>, sign
   return new Promise((resolve, reject) => {
     const request = (target.url.protocol === 'https:' ? https : http).request(target.url, {
       method: 'GET', agent: false, signal,
-      headers: { accept: 'text/*, application/json, application/xml;q=0.9', 'accept-encoding': 'identity', 'user-agent': 'Speedrail/0.1' },
+      headers: { accept: 'text/*, application/json, application/xml;q=0.9', 'accept-encoding': 'identity', 'user-agent': 'Litespeed/0.1' },
       // Pin the validated address, preserving the original hostname for TLS SNI
       // and Host. A second DNS answer cannot rebind the request to a private IP.
       lookup: (_hostname, options, callback) => {
@@ -1370,7 +1404,11 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       if (command.length > 128 * 1024 || command.includes('\0')) throw new Error('Command is too large or contains a null byte.');
       const cwd = await resolveWorkspacePath(context.workspace, optionalPath(args, 'cwd'));
       if (!(await fs.stat(cwd)).isDirectory()) throw new Error('Command cwd must be a directory.');
-      const result = await runProcess(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', ['-c', command], cwd, context.signal, numberArg(args, 'timeout_ms', 30_000, 120_000), shellEnvironment());
+      const inspection = args.run_in_background === true ? null : shellInspection(command);
+      const timeout = numberArg(args, 'timeout_ms', 30_000, 120_000);
+      const result = inspection
+        ? await runInspection(inspection, cwd, context.workspace, context.signal, timeout)
+        : await runProcess(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', ['-c', command], cwd, context.signal, timeout, shellEnvironment());
       const status = result.cancelled ? 'Command cancelled.' : result.timedOut ? 'Command timed out.' : `Exit code: ${result.code ?? result.signal ?? 'unknown'}`;
       return `${boundedWithReceipt(context, result.output, 30_000)}${result.truncated ? '\n[Process output truncated]' : ''}\n${status}`;
     }

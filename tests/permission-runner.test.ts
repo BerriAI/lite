@@ -27,7 +27,7 @@ describe('fine-grained permission rules Runner/API integration',()=>{
   const toolCalls=(id:string):ToolCall[]=>store.messages(id).flatMap(m=>m.toolCalls??[]);
   const prompts=(id:string)=>store.events(id,0).filter(e=>e.type==='permission');
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-permission-runner-')));store=new Store(join(directory,'state'));calls=[];
+    directory=await realpath(await mkdtemp(join(tmpdir(),'litespeed-permission-runner-')));store=new Store(join(directory,'state'));calls=[];
     await writeFile(join(directory,'research.txt'),'Workspace evidence');
     respond=(body,res)=>text(res);
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
@@ -47,8 +47,8 @@ describe('fine-grained permission rules Runner/API integration',()=>{
   });
 
   it('a project deny rule blocks in auto mode without prompting and reports the rule honestly',async()=>{
-    await mkdir(join(directory,'.speedrail'),{recursive:true});
-    await writeFile(join(directory,'.speedrail','permissions.json'),JSON.stringify(rules([{tool:'write_file',decision:'deny',patterns:['hello.txt']}])));
+    await mkdir(join(directory,'.litespeed'),{recursive:true});
+    await writeFile(join(directory,'.litespeed','permissions.json'),JSON.stringify(rules([{tool:'write_file',decision:'deny',patterns:['hello.txt']}])));
     respond=oneCallThenText('write_file',{path:'hello.txt',content:'hi'});
     const s=await create({permissionMode:'auto'});await run(s.id);
     expect(prompts(s.id)).toEqual([]);
@@ -121,8 +121,8 @@ describe('fine-grained permission rules Runner/API integration',()=>{
   });
 
   it('an invalid project permissions.json is ignored with a visible notice and the turn completes',async()=>{
-    await mkdir(join(directory,'.speedrail'),{recursive:true});
-    await writeFile(join(directory,'.speedrail','permissions.json'),'{not valid json');
+    await mkdir(join(directory,'.litespeed'),{recursive:true});
+    await writeFile(join(directory,'.litespeed','permissions.json'),'{not valid json');
     respond=oneCallThenText('write_file',{path:'hello.txt',content:'hi'});
     const s=await create();runner.start(s.id,'Write');
     await until(()=>runner.permissions(s.id).length===1);
@@ -141,8 +141,8 @@ describe('fine-grained permission rules Runner/API integration',()=>{
     const patched=await api('/settings',{permissionRules:rules([{tool:'write_file',decision:'deny'}])},'PATCH');
     expect(patched.status).toBe(200);
     expect(patched.body.permissionRules).toEqual(rules([{tool:'write_file',decision:'deny'}]));
-    await mkdir(join(directory,'.speedrail'),{recursive:true});
-    await writeFile(join(directory,'.speedrail','permissions.json'),JSON.stringify(rules([{tool:'write_file',decision:'deny'}])));
+    await mkdir(join(directory,'.litespeed'),{recursive:true});
+    await writeFile(join(directory,'.litespeed','permissions.json'),JSON.stringify(rules([{tool:'write_file',decision:'deny'}])));
     runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');await runner.whenIdle();
     expect(await readFile(join(directory,'hello.txt'),'utf8')).toBe('hi');
     expect(toolCalls(s.id)[0].status).toBe('completed');

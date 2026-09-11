@@ -8,16 +8,16 @@ import { installed, installPackage, manifest, newer, updateService } from '../bi
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 async function fixture(version = '1.0.0', kind = 'valid') {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-update-test-'))); roots.push(root);
-  const packageRoot = join(root, 'speedrail'), platform = `${process.platform}-${process.arch}`;
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-update-test-'))); roots.push(root);
+  const packageRoot = join(root, 'litespeed'), platform = `${process.platform}-${process.arch}`;
   await mkdir(join(packageRoot, 'runtime'), { recursive: true }); await mkdir(join(packageRoot, 'bin'));
   await writeFile(join(packageRoot, 'runtime/node'), `#!/bin/sh\nprintf '%s\\n' '${kind === 'broken' ? 'broken' : version}'\n`, { mode: 0o755 });
-  await writeFile(join(packageRoot, 'bin/speedrail.mjs'), '');
+  await writeFile(join(packageRoot, 'bin/litespeed.mjs'), '');
   await writeFile(join(packageRoot, 'release.json'), JSON.stringify({ schema: 1, version, platform }));
   if (kind === 'hardlink') await link(join(packageRoot, 'runtime/node'), join(packageRoot, 'runtime/node-copy'));
   if (kind === 'symlink') await symlink('/etc/passwd', join(packageRoot, 'external'));
-  const file = `speedrail-${version}-${platform}.tar.gz`, archive = join(root, file);
-  execFileSync('/usr/bin/tar', ['-czf', archive, '-C', root, 'speedrail']);
+  const file = `litespeed-${version}-${platform}.tar.gz`, archive = join(root, file);
+  execFileSync('/usr/bin/tar', ['-czf', archive, '-C', root, 'litespeed']);
   const data = await readFile(archive);
   return { root, archive, release: { schema: 1, version, assets: { [platform]: { file, size: data.length, sha256: createHash('sha256').update(data).digest('hex') } } } };
 }

@@ -46,7 +46,7 @@ const tools = (res: ServerResponse, calls: { name: string; args: unknown; id?: s
 describe('runner and turn history integration', () => {
   let directory: string, store: Store, bus: EventBus, runner: Runner, provider: Server, reply: Reply, calls: RequestBody[];
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-history-runner-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-history-runner-')));
     store = new Store(join(directory, 'state')); calls = []; reply = (_body, response) => text(response);
     provider = createServer(async (req, res) => {
       const buffers: Buffer[] = []; for await (const chunk of req) buffers.push(chunk);
@@ -68,6 +68,50 @@ describe('runner and turn history integration', () => {
   const recover = (id: string) => runner.exclusive(id, () => runner.history.recover(id));
   const undo = (id: string) => runner.exclusive(id, () => runner.history.undo(id, runner.history.state(id).undoId!));
   const redo = (id: string) => runner.exclusive(id, () => runner.history.redo(id, runner.history.state(id).redoId!));
+
+  it('runs compound inspection during another writer without taking snapshots, then waits and resumes a write', async () => {
+    const writer = store.createSession({ permissionMode: 'auto', title: 'First writer' });
+    const reader = store.createSession({ permissionMode: 'auto' });
+    const queued = store.createSession({ permissionMode: 'auto' });
+    const gate = deferred();
+    const owned = runner.exclusive(writer.id, () => gate.promise);
+    const snapshot = vi.spyOn(runner.history, 'beginCommand');
+    reply = (body, res) => {
+      const request = body.messages.findLast(message => message.role === 'user')?.content;
+      if (body.messages.some(message => message.role === 'tool')) return text(res);
+      tools(res, request === 'Inspect' ? [{ name: 'bash', args: { command: 'pwd; cat "result.txt" && tail -1 result.txt' } }]
+        : [{ name: 'write_file', args: { path: 'result.txt', content: 'second writer' } }]);
+    };
+    await writeFile(join(directory, 'result.txt'), 'first writer');
+    try {
+      await turn(reader.id, 'Inspect');
+      expect(store.messages(reader.id).find(message => message.role === 'tool')?.content).toContain('first writer');
+      expect(snapshot).not.toHaveBeenCalled(); expect(store.changes(reader.id)).toEqual([]);
+      runner.start(queued.id, 'Write');
+      await until(() => store.messages(queued.id).some(message => message.toolCalls?.some(call => call.waitingForWorkspace?.includes('First writer'))));
+      expect(await readFile(join(directory, 'result.txt'), 'utf8')).toBe('first writer');
+      gate.release(); await owned; await idle(queued.id);
+      expect(await readFile(join(directory, 'result.txt'), 'utf8')).toBe('second writer');
+      expect(store.changes(queued.id)).toEqual([{ path: 'result.txt', before: 'first writer', after: 'second writer' }]);
+      expect(store.messages(queued.id).flatMap(message => message.toolCalls ?? [])).toMatchObject([{ status: 'completed' }]);
+      expect(store.messages(queued.id).flatMap(message => message.toolCalls ?? []).every(call => !call.waitingForWorkspace)).toBe(true);
+    } finally { gate.release(); await owned; }
+  });
+
+  it('cancels a waiting shell write without executing it or retaining ownership', async () => {
+    const owner = store.createSession(), waiting = store.createSession({ permissionMode: 'auto' });
+    const gate = deferred(), held = runner.exclusive(owner.id, () => gate.promise);
+    reply = (_body, res) => tools(res, [{ name: 'bash', args: { command: 'echo changed > blocked.txt' } }]);
+    try {
+      runner.start(waiting.id, 'Write');
+      await until(() => store.messages(waiting.id).some(message => message.toolCalls?.some(call => call.waitingForWorkspace)));
+      runner.cancel(waiting.id); await idle(waiting.id);
+      await expect(readFile(join(directory, 'blocked.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(store.changes(waiting.id)).toEqual([]);
+      gate.release(); await held;
+      await expect(runner.exclusive(waiting.id, async () => 'released')).resolves.toBe('released');
+    } finally { gate.release(); await held; }
+  });
 
   it('seals cancellation while awaiting a parallel tool group without inventing edits or replaying work', async () => {
     const s = store.createSession();
@@ -332,7 +376,7 @@ describe('runner and turn history integration', () => {
         } return handle;}; syncBuiltinESMExports(); await import(${JSON.stringify(index)});`;
     const child = spawn(process.execPath, ['--import', loader, '--input-type=module', '-e', source], {
       cwd: directory,
-      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(directory, 'home'), TMPDIR: directory, SPEEDRAIL_DATA_DIR: store.directory, SPEEDRAIL_PORT: String(port), NODE_NO_WARNINGS: '1' },
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(directory, 'home'), TMPDIR: directory, LITESPEED_DATA_DIR: store.directory, LITESPEED_PORT: String(port), NODE_NO_WARNINGS: '1' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = ''; child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });

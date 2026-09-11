@@ -13,7 +13,7 @@ const signal = () => new AbortController().signal;
 const until = async (check: () => boolean | Promise<boolean>) => { await expect.poll(check, { timeout: 5000, interval: 10 }).toBe(true); };
 function managerFor(config: Settings['mcpServers']) { const manager = new McpManager(() => config); managers.push(manager); return manager; }
 async function fixture() {
-  directory = await mkdtemp(join(tmpdir(), 'speedrail-mcp-'));
+  directory = await mkdtemp(join(tmpdir(), 'litespeed-mcp-'));
   const script = join(directory, 'fixture.mjs'), log = join(directory, 'requests.jsonl'), state = join(directory, 'state.json');
   await writeFile(state, '{}');
   await writeFile(script, `import {createInterface} from 'node:readline';

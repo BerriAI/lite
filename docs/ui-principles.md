@@ -1,6 +1,6 @@
 # UI principles
 
-Speedrail should give most of its space and attention to the conversation and the next action.
+Litespeed should give most of its space and attention to the conversation and the next action.
 
 - Show a state once, where it matters. A running task, approval, or question replaces the generic working indicator. Do not repeat it in the byline, header, and footer.
 - Show token totals only after a turn completes. Keep request context estimates out of ordinary messages; expose the latest snapshot in Session actions after completion.

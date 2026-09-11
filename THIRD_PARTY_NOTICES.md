@@ -1,6 +1,6 @@
 # Third-party notices
 
-Speedrail is licensed under Apache-2.0. The following bundled materials retain their original licenses.
+Litespeed is licensed under Apache-2.0. The following bundled materials retain their original licenses.
 
 ## OpenCode theme definitions
 

@@ -14,7 +14,7 @@ function launch(entry: string, version: string) {
 }
 
 it.each(['20.20.2', '22.13.0', '26.3.0'])('stops unsupported Node %s with upgrade instructions', version => {
-  const result = launch('bin/speedrail.mjs', version);
+  const result = launch('bin/litespeed.mjs', version);
   expect(result.status).toBe(1);
   expect(result.stderr).toContain('requires Node.js 26.4 or later');
   expect(result.stderr).toContain(`running v${version}`);
@@ -23,9 +23,9 @@ it.each(['20.20.2', '22.13.0', '26.3.0'])('stops unsupported Node %s with upgrad
 });
 
 it('allows the declared minimum to reach CLI help', () => {
-  const result = launch('bin/speedrail.mjs', '26.4.0');
+  const result = launch('bin/litespeed.mjs', '26.4.0');
   expect(result.status, result.stderr).toBe(0);
-  expect(result.stdout).toContain('speedrail serve');
+  expect(result.stdout).toContain('litespeed serve');
 });
 
 it('checks the runtime even when npm engine enforcement is overridden', () => {

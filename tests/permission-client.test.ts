@@ -49,7 +49,7 @@ describe('permission rules settings editor', () => {
     expect(el<HTMLSelectElement>('[aria-label="Rule 2 tool"]').value).toBe('read_file');
     expect(el<HTMLTextAreaElement>('[aria-label="Rule 2 patterns"]').value).toBe('');
     const text = document.body.textContent!;
-    expect(text).toContain('Deny always wins'); expect(text).toContain('.speedrail/permissions.json'); expect(text).toContain('word boundary');
+    expect(text).toContain('Deny always wins'); expect(text).toContain('.litespeed/permissions.json'); expect(text).toContain('word boundary');
     expect(text).toContain('captured when the message is accepted'); expect(text).toContain('one path segment'); expect(text).toContain('not a sandbox');
   });
   it('adds a rule from the empty state and saves the exact rule set shape', async () => {

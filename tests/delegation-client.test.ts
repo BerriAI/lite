@@ -77,7 +77,7 @@ describe('bound research task cards', () => {
     await mountApp(); expect(document.querySelector('[aria-label="Research task"]')).toBeNull(); expect(document.body.textContent).not.toContain('Open transcript'); expect(api.calls.some(call => call.path === bound)).toBe(false);
   });
   it('preserves parent composer draft and attachment while child updates and collapses', async () => {
-    const api = server(); localStorage.setItem('speedrail:draft:v1:a', JSON.stringify({ text: 'Next parent thought', attachments: [{ name: 'notes.txt', content: 'keep' }] }));
+    const api = server(); localStorage.setItem('litespeed:draft:v1:a', JSON.stringify({ text: 'Next parent thought', attachments: [{ name: 'notes.txt', content: 'keep' }] }));
     await mountApp(); await expandSteps();
     await act(async () => transcriptSource().emit({ id: 21, sessionId: 'child-a', type: 'delta', data: { messageId: 'child-message', delta: ' Child progress.' } }));
     expect(el('[aria-label="Research transcript"]').textContent).toContain('Child progress.'); expect(el<HTMLTextAreaElement>('#message-input').value).toBe('Next parent thought');

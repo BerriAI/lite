@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { EditableProfile, ProfileCatalog, ProfileTool } from '../../shared/profiles';
 import { api, errorMessage, post, query } from './api';
-import { SpeedRail } from './ui';
+import { LiteSpeed } from './ui';
 
 const toolNames: [ProfileTool, string][] = [['read_file', 'Read files'], ['glob', 'Find files'], ['grep', 'Search contents'], ['web_fetch', 'Read web pages'], ['write_file', 'Write files'], ['edit_file', 'Edit files'], ['bash', 'Run commands'], ['todo_read', 'Read task list'], ['todo_write', 'Update task list']];
 
@@ -25,7 +25,7 @@ export function ProfileEditor({ workspace, id, catalog, onCancel, onSaved }: { w
   }
   return <section className="profile-editor" aria-label={id ? 'Edit project profile' : 'New project profile'}>
     <div className="section-heading"><div><h3>{id ? 'Edit profile' : 'New profile'}</h3><p>Save reusable instructions for this project, then choose when to apply them.</p></div></div>
-    {loading && <SpeedRail compact active />}
+    {loading && <LiteSpeed compact active />}
     {error && <div className="inline-alert" role="alert">{error}</div>}
     <fieldset className="form-stack" disabled={loading || saving}>
       <label>Name<input aria-label="Profile name" value={draft.name} maxLength={200} onChange={event => setDraft({ ...draft, name: event.target.value, ...(!id && (!draft.id || draft.id === draft.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64)) ? { id: event.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64) } : {}) })} placeholder="e.g. Code reviewer" /></label>

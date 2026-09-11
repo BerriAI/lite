@@ -1,6 +1,6 @@
 # Terminal interface
 
-Run `speedrail` in any project directory to open a full-screen client for the same local sessions, providers, Fusion runner, approvals, and history as the web app. There is one terminal implementation, in `tui/`, using OpenTUI and React with the bundled Bun runtime. The server runs on Node.
+Run `litespeed` in any project directory to open a full-screen client for the same local sessions, providers, Fusion runner, approvals, and history as the web app. There is one terminal implementation, in `tui/`, using OpenTUI and React with the bundled Bun runtime. The server runs on Node.
 
 ## Start here
 
@@ -12,28 +12,28 @@ npm run build &&
 npm link
 ```
 
-Then open Speedrail from the project you want to work on:
+Then open Litespeed from the project you want to work on:
 
 ```sh
 cd /path/to/project
-speedrail
+litespeed
 ```
 
-The current directory becomes the workspace. `speedrail tui` remains an alias. `speedrail serve` runs the web server separately; you do not need it to use the terminal. Without linking, use `node /path/to/speedrail/bin/speedrail.mjs` from your project instead.
+The current directory becomes the workspace. `litespeed tui` remains an alias. `litespeed serve` runs the web server separately; you do not need it to use the terminal. Without linking, use `node /path/to/litespeed/bin/litespeed.mjs` from your project instead.
 
 There is no separate login command for this coding agent; first-run setup asks for your gateway URL and API key inside the TUI. The [upgrade guide](upgrading.md) covers moving saved state from earlier versions.
 
 Use Node 26.4 or later for the current dependency set; npm installs Bun and the native terminal dependencies. Use a UTF-8 terminal, preferably at least 80 columns by 24 rows. To launch directly from the checkout without linking the command, use `npm run tui` after building.
 
-The launcher attaches to the default local server if it is already running. Otherwise it starts one and prints its PID and stop command. **Exiting the TUI leaves that server and its tasks running.** Stop a response before quitting if you want it cancelled. Server output goes to `.speedrail/tui-server.log` under the installation, or your `SPEEDRAIL_DATA_DIR`.
+The launcher attaches to the default local server if it is already running. Otherwise it starts one and prints its PID and stop command. **Exiting the TUI leaves that server and its tasks running.** Stop a response before quitting if you want it cancelled. Server output goes to `.litespeed/tui-server.log` under the installation, or your `LITESPEED_DATA_DIR`.
 
 Explicit connections attach only and never start a replacement server:
 
 ```sh
-speedrail --url http://localhost:3210
+litespeed --url http://localhost:3210
 ```
 
-`SPEEDRAIL_URL` and `SPEEDRAIL_PORT` are also supported. Each normal launch creates a new session. Use **Sessions** or `speedrail --session SESSION_ID` to return to an existing conversation and restore its draft. Existing sessions keep their saved configuration; change it in Models or Settings. `--model`, `--provider`, `--plan`, `--build`, and `--auto` apply to new sessions.
+`LITESPEED_URL` and `LITESPEED_PORT` are also supported. Each normal launch creates a new session. Use **Sessions** or `litespeed --session SESSION_ID` to return to an existing conversation and restore its draft. Existing sessions keep their saved configuration; change it in Models or Settings. `--model`, `--provider`, `--plan`, `--build`, and `--auto` apply to new sessions.
 
 ## Your first task
 
@@ -88,23 +88,23 @@ Enter during a response queues a follow-up. `/queue` can pause, resume, or remov
 
 ## Drafts and local context
 
-Text and attachments are saved separately for each server/session in `$XDG_STATE_HOME/speedrail/tui`, defaulting to `~/.local/state/speedrail/tui`. Drafts are flushed on clean exit, and submitted-input history retains the most recent 200 entries. This cache is private local state; it is separate from browser drafts and server conversation history. A rejected submission retains the draft. Mutations are not automatically replayed after a connection failure.
+Text and attachments are saved separately for each server/session in `$XDG_STATE_HOME/litespeed/tui`, defaulting to `~/.local/state/litespeed/tui`. Drafts are flushed on clean exit, and submitted-input history retains the most recent 200 entries. This cache is private local state; it is separate from browser drafts and server conversation history. A rejected submission retains the draft. Mutations are not automatically replayed after a connection failure.
 
 Workspace references are read by the server when the message is accepted. Local attachments are read by the terminal client. Up to ten attachments are supported, with a 4.4 MB file limit and 200,000-character text limit, subject to the server's aggregate request limits. Use references for workspace files. Bracketed multiline paste stays in the composer until you send it.
 
-`/editor` uses `$VISUAL`, then `$EDITOR`, then `vi`. Saving and leaving the editor returns the text to the composer without submitting it. If the editor fails, Speedrail preserves the temporary file and reports its path. `/shell` hands the terminal to an interactive shell in the workspace; type `exit` to return. These shell commands are your direct actions and are outside agent file-history tracking.
+`/editor` uses `$VISUAL`, then `$EDITOR`, then `vi`. Saving and leaving the editor returns the text to the composer without submitting it. If the editor fails, Litespeed preserves the temporary file and reports its path. `/shell` hands the terminal to an interactive shell in the workspace; type `exit` to return. These shell commands are your direct actions and are outside agent file-history tracking.
 
-Project templates in `.speedrail/commands` and `.claude/commands` appear in Ctrl+P. `/command arguments` expands `$ARGUMENTS` and `$1` through `$9` using the web composer's substitution rules. Built-in terminal commands take precedence on name conflicts; unrecognized slash text is sent literally.
+Project templates in `.litespeed/commands` and `.claude/commands` appear in Ctrl+P. `/command arguments` expands `$ARGUMENTS` and `$1` through `$9` using the web composer's substitution rules. Built-in terminal commands take precedence on name conflicts; unrecognized slash text is sent literally.
 
 ## Settings and appearance
 
 Settings has consistent sections for Providers, General, Permissions, Project profiles, Integrations, and Usage. Profiles can be created, edited, previewed, and applied, including recommended models and skills. MCP configuration is reviewed before an explicit connect or refresh. Usage counts provider-reported tokens; memory is off until enabled.
 
-Put terminal preferences in `~/.config/speedrail/speedrail-tui.jsonc`, or your project's `.speedrail/speedrail-tui.jsonc`. Configuration follows the selected session's workspace. `SPEEDRAIL_TUI_CONFIG` selects an explicit configuration file; `SPEEDRAIL_DISABLE_PROJECT_CONFIG=1` disables project discovery. The loader supports layered JSONC configuration and custom themes; see `tui/tuiConfig.ts` for precedence.
+Put terminal preferences in `~/.config/litespeed/litespeed-tui.jsonc`, or your project's `.litespeed/litespeed-tui.jsonc`. Configuration follows the selected session's workspace. `LITESPEED_TUI_CONFIG` selects an explicit configuration file; `LITESPEED_DISABLE_PROJECT_CONFIG=1` disables project discovery. The loader supports layered JSONC configuration and custom themes; see `tui/tuiConfig.ts` for precedence.
 
 ```jsonc
 {
-  "theme": "speedrail",
+  "theme": "litespeed",
   "mouse": true,
   "scroll_speed": 2,
   "diff_style": "auto",

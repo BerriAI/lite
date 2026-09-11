@@ -42,7 +42,7 @@ describe('immutable MCP turn lease and explicit lifecycle API integration',()=>{
   const configRevision=()=>createHash('sha256').update(JSON.stringify(store.settings().mcpServers)).digest('hex');
   const statuses=():McpServerStatus[]=>[{name:'demo',revision:String(generation),status:connected?'connected':'disconnected',tools:connected?[{name:definition.function.name,remoteName:'echo',description:definition.function.description}]:[]}];
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-mcp-runner-')));store=new Store(join(directory,'state'));calls=[];captured=[];executions=[];generation=1;scopeValue='demo-schema-one';connected=true;releaseError=false;
+    directory=await realpath(await mkdtemp(join(tmpdir(),'litespeed-mcp-runner-')));store=new Store(join(directory,'state'));calls=[];captured=[];executions=[];generation=1;scopeValue='demo-schema-one';connected=true;releaseError=false;
     definition={type:'function',function:{name:'mcp_demo_echo',description:'Original description',parameters:{type:'object',properties:{text:{type:'string'}}}}};
     respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res);
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
@@ -73,7 +73,7 @@ describe('immutable MCP turn lease and explicit lifecycle API integration',()=>{
 
   it.each(['plan','profile'])('%s never captures a connected-tool lease or advertises MCP',async(kind)=>{
     let input:Record<string,unknown>={mode:'plan'};
-    if(kind==='profile'){await mkdir(join(directory,'.speedrail'));await writeFile(join(directory,'.speedrail','profiles.json'),JSON.stringify({version:1,profiles:[{id:'safe',name:'Safe',instructions:'Only read',tools:['read_file']}],skills:[]}));const catalog=(await api('/profiles')).body;input={mode:'build',profile:{profileId:'safe',skillIds:[],catalogRevision:catalog.revision}};}
+    if(kind==='profile'){await mkdir(join(directory,'.litespeed'));await writeFile(join(directory,'.litespeed','profiles.json'),JSON.stringify({version:1,profiles:[{id:'safe',name:'Safe',instructions:'Only read',tools:['read_file']}],skills:[]}));const catalog=(await api('/profiles')).body;input={mode:'build',profile:{profileId:'safe',skillIds:[],catalogRevision:catalog.revision}};}
     respond=(_body,res)=>text(res);const s=await create(input);await run(s.id);expect(external.capture).not.toHaveBeenCalled();expect(calls[0].tools.some((t:ToolDefinition)=>t.function.name.startsWith('mcp_'))).toBe(false);
   });
 

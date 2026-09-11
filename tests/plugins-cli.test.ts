@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 // Same spawned-process posture as tests/cli.test.ts, but ONE fixture server for
 // the whole file: plugin commands are plain request/response (no SSE, no PTY),
 // so the per-test isolation cli.test.ts needs is not worth the boot cost here.
-const cli = fileURLToPath(new URL('../bin/speedrail.mjs', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/litespeed.mjs', import.meta.url));
 const fixtureEntry = fileURLToPath(new URL('./fixtures/cli-server.ts', import.meta.url));
 const loader = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
 interface Result { code: number | null; stdout: string; stderr: string }
@@ -26,18 +26,18 @@ function start(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   return { child, result, stdout: () => stdout };
 }
 
-describe('spawned speedrail plugin subcommands against a real fixture server', () => {
+describe('spawned litespeed plugin subcommands against a real fixture server', () => {
   let workspace: string, pkg: string, base: string, fixture: ReturnType<typeof start>;
   const environment = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
     PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(workspace, 'home'), TMPDIR: workspace,
     LANG: 'en_US.UTF-8', NO_COLOR: '1', NODE_NO_WARNINGS: '1', ...extra,
   });
   beforeAll(async () => {
-    workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-plugins-cli-')));
+    workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-plugins-cli-')));
     await mkdir(join(workspace, 'home'));
     pkg = join(workspace, 'pkg'); await mkdir(pkg);
     await writeFile(join(pkg, 'notes.md'), '# Notes command\n');
-    await writeFile(join(pkg, 'speedrail-plugin.json'), JSON.stringify({ name: 'cli-kit', version: '0.9.0', commands: [{ name: 'notes', path: 'notes.md' }], mcpServers: { helper: { command: 'helper-server' } } }));
+    await writeFile(join(pkg, 'litespeed-plugin.json'), JSON.stringify({ name: 'cli-kit', version: '0.9.0', commands: [{ name: 'notes', path: 'notes.md' }], mcpServers: { helper: { command: 'helper-server' } } }));
     fixture = start(['--import', loader, fixtureEntry], workspace, environment({ CLI_TEST_WORKSPACE: workspace }));
     const startAt = Date.now();
     while (!fixture.stdout().includes('\n')) {
@@ -61,16 +61,16 @@ describe('spawned speedrail plugin subcommands against a real fixture server', (
     const plan = await run(['plugin', 'plan', pkg, '--workspace', workspace]);
     expect(plan.code, plan.stderr).toBe(0);
     expect(plan.stdout).toContain('Plugin: cli-kit@0.9.0');
-    expect(plan.stdout).toMatch(/add\s+command\s+notes\s+-> \.speedrail\/commands\/notes\.md/);
+    expect(plan.stdout).toMatch(/add\s+command\s+notes\s+-> \.litespeed\/commands\/notes\.md/);
     expect(plan.stdout).toMatch(/add\s+mcp\s+helper\s+-> mcpServers\.helper/);
     expect(plan.stdout).toContain('Dry run only.');
-    await expect(readFile(join(workspace, '.speedrail', 'commands', 'notes.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'commands', 'notes.md'))).rejects.toMatchObject({ code: 'ENOENT' });
 
     const install = await run(['plugin', 'install', pkg, '--workspace', workspace]);
     expect(install.code, install.stderr).toBe(0);
     expect(install.stdout).toContain('Installed cli-kit@0.9.0: 2 items landed.');
     expect(install.stdout).toContain('MCP servers were installed DISABLED');
-    expect(await readFile(join(workspace, '.speedrail', 'commands', 'notes.md'), 'utf8')).toBe('# Notes command\n');
+    expect(await readFile(join(workspace, '.litespeed', 'commands', 'notes.md'), 'utf8')).toBe('# Notes command\n');
 
     const list = await run(['plugin', 'list']);
     expect(list.code).toBe(0);
@@ -78,9 +78,9 @@ describe('spawned speedrail plugin subcommands against a real fixture server', (
 
     const removed = await run(['plugin', 'remove', 'cli-kit', '--workspace', workspace]);
     expect(removed.code, removed.stderr).toBe(0);
-    expect(removed.stdout).toContain('Removed command: .speedrail/commands/notes.md');
+    expect(removed.stdout).toContain('Removed command: .litespeed/commands/notes.md');
     expect(removed.stdout).toContain('Uninstalled cli-kit (2 items removed).');
-    await expect(readFile(join(workspace, '.speedrail', 'commands', 'notes.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'commands', 'notes.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect((await run(['plugin', 'list'])).stdout).toContain('No plugins installed.');
   });
 
@@ -88,10 +88,10 @@ describe('spawned speedrail plugin subcommands against a real fixture server', (
     for (const args of [['plugin'], ['plugin', 'unknown'], ['plugin', 'plan'], ['plugin', 'remove'], ['plugin', 'plan', 'a', 'b']]) {
       const result = await run(args);
       expect(result.code, args.join(' ')).toBe(1);
-      expect(result.stderr).toContain('Usage: speedrail plugin plan <dir> | install <dir> | list | remove <name>');
+      expect(result.stderr).toContain('Usage: litespeed plugin plan <dir> | install <dir> | list | remove <name>');
     }
     const hostile = join(workspace, 'hostile'); await mkdir(hostile, { recursive: true });
-    await writeFile(join(hostile, 'speedrail-plugin.json'), JSON.stringify({ name: 'hostile', version: '1', commands: [{ name: 'x', path: '../escape.md' }] }));
+    await writeFile(join(hostile, 'litespeed-plugin.json'), JSON.stringify({ name: 'hostile', version: '1', commands: [{ name: 'x', path: '../escape.md' }] }));
     const result = await run(['plugin', 'plan', hostile, '--workspace', workspace]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain('must stay inside the package directory');

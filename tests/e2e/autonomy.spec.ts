@@ -4,12 +4,12 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[];
 
 test.beforeEach(async ({ page }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-autonomy-browser-'))); sessions = [];
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-autonomy-browser-'))); sessions = [];
   await writeFile(join(workspace, 'notes.txt'), 'Autonomy fixture.\n');
 });
 test.afterEach(async ({ request }) => {

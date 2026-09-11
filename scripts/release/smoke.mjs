@@ -11,9 +11,10 @@ import { createHash } from 'node:crypto';
 import pty from 'node-pty';
 import xterm from '@xterm/headless';
 const source = resolve(import.meta.dirname, '../..'), platform = `${process.platform}-${process.arch}`;
-const release = JSON.parse(await readFile(join(source, 'release-artifacts', `manifest-${platform}.json`), 'utf8'));
-const asset = release.assets[platform], archive = join(source, 'release-artifacts', asset.file);
-const temporary = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-package-smoke-')));
+const artifacts = resolve(process.argv[2] || join(source, 'release-artifacts'));
+const release = JSON.parse(await readFile(join(artifacts, `manifest-${platform}.json`), 'utf8'));
+const asset = release.assets[platform], archive = join(artifacts, asset.file);
+const temporary = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-package-smoke-')));
 let server, terminal, provider, held, updatedPid;
 const delay = ms => new Promise(done => setTimeout(done, ms));
 const emulator = new xterm.Terminal({ cols: 110, rows: 34, allowProposedApi: true });
@@ -22,12 +23,12 @@ const waitFor = async (predicate, message, timeout = 20000) => { const end = Dat
 const apiAt = base => async (path, body, method) => { const response = await fetch(`${base}/api${path}`, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); const value = await response.json(); if (!response.ok) throw Object.assign(new Error(value.error), { status: response.status }); return value; };
 try {
   execFileSync('/usr/bin/tar', ['-xzf', archive, '-C', temporary]);
-  const unpacked = join(temporary, 'speedrail'), home = join(temporary, 'home'), install = join(home, 'app'), bin = join(home, 'bin'), state = join(home, 'state'), workspace = join(temporary, 'project');
+  const unpacked = join(temporary, 'litespeed'), home = join(temporary, 'home'), install = join(home, 'app'), bin = join(home, 'bin'), state = join(home, 'state'), workspace = join(temporary, 'project');
   await mkdir(home); await mkdir(workspace); await writeFile(join(workspace, 'keep.txt'), 'user work stays here');
-  const env = { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/sh', TERM: 'xterm-256color', SPEEDRAIL_INSTALL_DIR: install, SPEEDRAIL_BIN_DIR: bin, SPEEDRAIL_DATA_DIR: state, SPEEDRAIL_DISABLE_PROJECT_CONFIG: '1', XDG_STATE_HOME: join(home, 'tui'), XDG_CONFIG_HOME: join(home, 'config'), SPEEDRAIL_NO_UPDATE_CHECK: '1' };
+  const env = { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/sh', TERM: 'xterm-256color', LITESPEED_INSTALL_DIR: install, LITESPEED_BIN_DIR: bin, LITESPEED_DATA_DIR: state, LITESPEED_DISABLE_PROJECT_CONFIG: '1', XDG_STATE_HOME: join(home, 'tui'), XDG_CONFIG_HOME: join(home, 'config'), LITESPEED_NO_UPDATE_CHECK: '1' };
   const metadata = join(temporary, 'manifest.json'); await writeFile(metadata, JSON.stringify(release));
   execFileSync(join(unpacked, 'runtime/node'), [join(unpacked, 'bin/install.mjs'), archive, metadata], { cwd: workspace, env, stdio: 'pipe' });
-  const command = join(bin, 'speedrail');
+  const command = join(bin, 'litespeed');
   assert.equal(execFileSync(command, ['--version'], { env, encoding: 'utf8' }).trim(), release.version);
   const probe = createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening'); const port = probe.address().port; await new Promise(done => probe.close(done));
   const base = `http://127.0.0.1:${port}`, api = apiAt(base);
@@ -42,12 +43,12 @@ try {
   });
   provider.listen(0, '127.0.0.1'); await once(provider, 'listening'); const gateway = `http://127.0.0.1:${provider.address().port}`;
   const hook = join(temporary, 'fixture-fetch.mjs');
-  await writeFile(hook, `const original = globalThis.fetch; globalThis.fetch = (input, options) => { const url = String(input); if (url.startsWith('https://github.com/BerriAI/speedrail/releases/')) return original(${JSON.stringify(gateway)} + new URL(url).pathname, options); if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('http://localhost:')) throw new Error('External network disabled in package smoke'); return original(input, options); };`);
-  env.NODE_OPTIONS = `--import=${pathToFileURL(hook).href}`; env.SPEEDRAIL_NO_UPDATE_CHECK = '0'; env.SPEEDRAIL_PORT = String(port);
+  await writeFile(hook, `const original = globalThis.fetch; globalThis.fetch = (input, options) => { const url = String(input); if (url.startsWith('https://github.com/BerriAI/litespeed/releases/')) return original(${JSON.stringify(gateway)} + new URL(url).pathname, options); if (!url.startsWith('http://127.0.0.1:') && !url.startsWith('http://localhost:')) throw new Error('External network disabled in package smoke'); return original(input, options); };`);
+  env.NODE_OPTIONS = `--import=${pathToFileURL(hook).href}`; env.LITESPEED_NO_UPDATE_CHECK = '0'; env.LITESPEED_PORT = String(port);
   server = spawn(command, ['serve', '--port', String(port), '--workspace', workspace], { cwd: workspace, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; server.stdout.on('data', data => { log += data; }); server.stderr.on('data', data => { log += data; });
   await waitFor(async () => { try { return (await api('/health')).version === release.version; } catch { if (server.exitCode !== null) throw new Error(log); return false; } }, 'Bundled backend did not start');
-  assert.match(await (await fetch(base)).text(), /Speedrail|speedrail/);
+  assert.match(await (await fetch(base)).text(), /Litespeed|litespeed/);
   assert.equal((await api('/settings')).memoryEnabled, true);
   await api('/settings', { providers: [{ id: 'fixture', name: 'Fixture', kind: 'openai', baseUrl: gateway }], defaultProvider: 'fixture', defaultModel: 'fixture' }, 'PATCH');
   const session = await api('/sessions', { workspace, providerId: 'fixture', model: 'fixture', permissionMode: 'auto' });
@@ -60,8 +61,8 @@ try {
   assert.equal((await Promise.race([tuiExited, delay(5000).then(() => { throw new Error('TUI did not exit'); })])).exitCode, 0);
   terminal = undefined;
   const nextVersion = release.version.split('.').map(Number); nextVersion[2]++;
-  const version = nextVersion.join('.'), upgraded = join(temporary, 'upgrade'); await mkdir(upgraded); await cp(unpacked, join(upgraded, 'speedrail'), { recursive: true, verbatimSymlinks: true });
-  const target = join(upgraded, 'speedrail');
+  const version = nextVersion.join('.'), upgraded = join(temporary, 'upgrade'); await mkdir(upgraded); await cp(unpacked, join(upgraded, 'litespeed'), { recursive: true, verbatimSymlinks: true });
+  const target = join(upgraded, 'litespeed');
   for (const path of ['package.json', 'release.json']) { const value = JSON.parse(await readFile(join(target, path), 'utf8')); value.version = version; await writeFile(join(target, path), JSON.stringify(value)); }
   let changed = 0;
   for (const file of await readdir(join(target, 'dist/server'))) if (file.endsWith('.js')) {
@@ -69,8 +70,8 @@ try {
     if (text !== replacement) { await writeFile(path, replacement); changed++; }
   }
   assert.equal(changed, 1, 'The synthetic upgrade must change the bundled application version exactly once');
-  const nextFile = `speedrail-${version}-${platform}.tar.gz`; nextArchive = join(temporary, nextFile);
-  execFileSync('/usr/bin/tar', ['-czf', nextArchive, '-C', upgraded, 'speedrail']);
+  const nextFile = `litespeed-${version}-${platform}.tar.gz`; nextArchive = join(temporary, nextFile);
+  execFileSync('/usr/bin/tar', ['-czf', nextArchive, '-C', upgraded, 'litespeed']);
   const bytes = await readFile(nextArchive);
   nextRelease = { schema: 1, version, assets: { [platform]: { file: nextFile, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') } } };
   await delay(1100);

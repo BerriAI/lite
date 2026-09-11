@@ -10,20 +10,20 @@ const hook = (command: string, extra: Partial<HookConfig> = {}): HookConfig => (
 
 describe('Hooks unit: capture, matcher filtering, and run()', () => {
   let directory: string;
-  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-hooks-'))); });
+  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-hooks-'))); });
   afterEach(async () => { await rm(directory, { recursive: true, force: true }); });
 
   it('captureHooks merges app hooks with trusted-project hooks in order (app first)', async () => {
-    await mkdir(join(directory, '.speedrail'), { recursive: true });
-    await writeFile(join(directory, '.speedrail', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
+    await mkdir(join(directory, '.litespeed'), { recursive: true });
+    await writeFile(join(directory, '.litespeed', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
     const captured = new Hooks().captureHooks(directory, { hooks: [{ event: 'PreToolUse', command: 'echo app' }], trustedWorkspaces: [directory] });
     expect(captured.advisory).toBeUndefined();
     expect(captured.hooks).toEqual([{ event: 'PreToolUse', command: 'echo app' }, { event: 'Stop', command: 'echo project' }]);
   });
 
   it('an untrusted workspace skips project hooks with the advisory, keeping app hooks', async () => {
-    await mkdir(join(directory, '.speedrail'), { recursive: true });
-    await writeFile(join(directory, '.speedrail', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
+    await mkdir(join(directory, '.litespeed'), { recursive: true });
+    await writeFile(join(directory, '.litespeed', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
     const captured = new Hooks().captureHooks(directory, { hooks: [{ event: 'Stop', command: 'echo app' }], trustedWorkspaces: [] });
     expect(captured.hooks).toEqual([{ event: 'Stop', command: 'echo app' }]);
     expect(captured.advisory).toBe('Project hooks are present but this workspace is not trusted; enable in Settings.');
@@ -35,9 +35,9 @@ describe('Hooks unit: capture, matcher filtering, and run()', () => {
   });
 
   it('an invalid hooks.json in a trusted workspace is ignored with an advisory, never a throw', async () => {
-    await mkdir(join(directory, '.speedrail'), { recursive: true });
+    await mkdir(join(directory, '.litespeed'), { recursive: true });
     for (const bad of ['{not json', JSON.stringify({ version: 2, hooks: [] }), JSON.stringify({ version: 1, hooks: [{ event: 'NotAnEvent', command: 'x' }] }), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'x'.repeat(1001) }] })]) {
-      await writeFile(join(directory, '.speedrail', 'hooks.json'), bad);
+      await writeFile(join(directory, '.litespeed', 'hooks.json'), bad);
       const captured = new Hooks().captureHooks(directory, { trustedWorkspaces: [directory] });
       expect(captured.hooks).toEqual([]);
       expect(captured.advisory).toContain('invalid and were ignored');
@@ -45,8 +45,8 @@ describe('Hooks unit: capture, matcher filtering, and run()', () => {
   });
 
   it('trust matching is by canonical path: a non-canonical trusted entry does not match', async () => {
-    await mkdir(join(directory, '.speedrail'), { recursive: true });
-    await writeFile(join(directory, '.speedrail', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
+    await mkdir(join(directory, '.litespeed'), { recursive: true });
+    await writeFile(join(directory, '.litespeed', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'Stop', command: 'echo project' }] }));
     const captured = new Hooks().captureHooks(directory, { trustedWorkspaces: [directory + '/'] });
     expect(captured.hooks).toEqual([]);
     expect(captured.advisory).toContain('not trusted');

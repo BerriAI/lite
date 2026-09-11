@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 // Same one-fixture posture as tests/plugins-cli.test.ts: usage/doctor are plain
 // request/response commands, so a single shared fixture server is enough.
-const cli = fileURLToPath(new URL('../bin/speedrail.mjs', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/litespeed.mjs', import.meta.url));
 const fixtureEntry = fileURLToPath(new URL('./fixtures/cli-server.ts', import.meta.url));
 const loader = fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url));
 interface Result { code: number | null; stdout: string; stderr: string }
@@ -25,14 +25,14 @@ function start(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   return { child, result, stdout: () => stdout };
 }
 
-describe('spawned speedrail usage / speedrail doctor against a real fixture server', () => {
+describe('spawned litespeed usage / litespeed doctor against a real fixture server', () => {
   let workspace: string, base: string, fixture: ReturnType<typeof start>;
   const environment = (extra: Record<string, string> = {}): NodeJS.ProcessEnv => ({
     PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: join(workspace, 'home'), TMPDIR: workspace,
     LANG: 'en_US.UTF-8', NO_COLOR: '1', NODE_NO_WARNINGS: '1', ...extra,
   });
   beforeAll(async () => {
-    workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-usage-cli-')));
+    workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-usage-cli-')));
     await mkdir(join(workspace, 'home'));
     fixture = start(['--import', loader, fixtureEntry], workspace, environment({ CLI_TEST_WORKSPACE: workspace }));
     const startAt = Date.now();

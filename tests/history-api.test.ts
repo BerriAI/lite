@@ -21,7 +21,7 @@ describe('turn history API', () => {
   const history = async (id: string) => (await request(`/sessions/${id}/history`)).data;
   async function send(id: string, content: string) { expect((await request(`/sessions/${id}/messages`,{content})).status).toBe(202); await until(()=>!runner.active(id)); }
   beforeEach(async () => {
-    directory=await mkdtemp(join(tmpdir(),'speedrail-history-api-'));store=new Store(join(directory,'state'));providerCalls=0;behavior='write';
+    directory=await mkdtemp(join(tmpdir(),'litespeed-history-api-'));store=new Store(join(directory,'state'));providerCalls=0;behavior='write';
     provider=createServer(async(req,res)=>{
       const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());providerCalls++;
       if(behavior==='error'){res.writeHead(401,{'Content-Type':'application/json'});res.end('{"error":{"code":"invalid_api_key"}}');return;}

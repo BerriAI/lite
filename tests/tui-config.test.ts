@@ -45,12 +45,12 @@ describe('parseJsonc', () => {
 
 describe('substituteVariables', () => {
   it('replaces {env:NAME} and leaves missing vars empty', () => {
-    const out = substituteVariables('theme={env:MY_THEME} gap={env:MISSING}!', { env: { MY_THEME: 'speedrail' } });
-    expect(out).toBe('theme=speedrail gap=!');
+    const out = substituteVariables('theme={env:MY_THEME} gap={env:MISSING}!', { env: { MY_THEME: 'litespeed' } });
+    expect(out).toBe('theme=litespeed gap=!');
   });
 
   it('replaces {file:path} relative to baseDir, trimmed, missing → empty', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'speedrail-config-'));
+    const dir = mkdtempSync(join(tmpdir(), 'litespeed-config-'));
     try {
       writeFileSync(join(dir, 'token.txt'), '  secret-value \n');
       const out = substituteVariables('x={file:token.txt} y={file:nope.txt}', { baseDir: dir });
@@ -77,13 +77,13 @@ describe('validateConfig', () => {
   it('drops bad fields individually and keeps good ones', () => {
     const warnings: string[] = [];
     const out = validateConfig({
-      theme: 'speedrail',
+      theme: 'litespeed',
       leader_timeout: -5,
       scroll_speed: 'fast',
       diff_style: 'stacked',
       mouse: false,
     }, m => warnings.push(m));
-    expect(out.theme).toBe('speedrail');
+    expect(out.theme).toBe('litespeed');
     expect(out.leader_timeout).toBeUndefined();
     expect(out.scroll_speed).toBeUndefined();
     expect(out.diff_style).toBe('stacked');
@@ -165,59 +165,59 @@ describe('resolvePlatform', () => {
 
 describe('configFilePaths', () => {
   const cwd = '/repo/pkg/app';
-  const globalDir = '/home/u/.config/speedrail';
+  const globalDir = '/home/u/.config/litespeed';
 
-  it('orders global → explicit → project ancestors root-first → .speedrail → extra dir', () => {
+  it('orders global → explicit → project ancestors root-first → .litespeed → extra dir', () => {
     const files = fakeFs({
-      [`${globalDir}/speedrail-tui.json`]: '{}',
+      [`${globalDir}/litespeed-tui.json`]: '{}',
       '/explicit/conf.jsonc': '{}',
-      '/repo/speedrail-tui.json': '{}',
-      '/repo/pkg/app/speedrail-tui.jsonc': '{}',
-      '/repo/.speedrail/speedrail-tui.json': '{}',
-      '/extra/speedrail-tui.json': '{}',
+      '/repo/litespeed-tui.json': '{}',
+      '/repo/pkg/app/litespeed-tui.jsonc': '{}',
+      '/repo/.litespeed/litespeed-tui.json': '{}',
+      '/extra/litespeed-tui.json': '{}',
     });
     const paths = configFilePaths({
       cwd, globalConfigDir: globalDir, ...files,
-      env: { SPEEDRAIL_TUI_CONFIG: '/explicit/conf.jsonc', SPEEDRAIL_CONFIG_DIR: '/extra' },
+      env: { LITESPEED_TUI_CONFIG: '/explicit/conf.jsonc', LITESPEED_CONFIG_DIR: '/extra' },
     });
     expect(paths).toEqual([
-      `${globalDir}/speedrail-tui.json`,
+      `${globalDir}/litespeed-tui.json`,
       '/explicit/conf.jsonc',
-      '/repo/speedrail-tui.json',
-      '/repo/pkg/app/speedrail-tui.jsonc',
-      '/repo/.speedrail/speedrail-tui.json',
-      '/extra/speedrail-tui.json',
+      '/repo/litespeed-tui.json',
+      '/repo/pkg/app/litespeed-tui.jsonc',
+      '/repo/.litespeed/litespeed-tui.json',
+      '/extra/litespeed-tui.json',
     ]);
   });
 
-  it('suppresses project ancestor files under SPEEDRAIL_DISABLE_PROJECT_CONFIG', () => {
-    const files = fakeFs({ '/repo/speedrail-tui.json': '{}', '/repo/.speedrail/speedrail-tui.json': '{}' });
+  it('suppresses project ancestor files under LITESPEED_DISABLE_PROJECT_CONFIG', () => {
+    const files = fakeFs({ '/repo/litespeed-tui.json': '{}', '/repo/.litespeed/litespeed-tui.json': '{}' });
     const paths = configFilePaths({
       cwd, globalConfigDir: globalDir, ...files,
-      env: { SPEEDRAIL_DISABLE_PROJECT_CONFIG: '1' },
+      env: { LITESPEED_DISABLE_PROJECT_CONFIG: '1' },
     });
-    expect(paths).toEqual(['/repo/.speedrail/speedrail-tui.json']);
+    expect(paths).toEqual(['/repo/.litespeed/litespeed-tui.json']);
   });
 
   it('keeps only the highest-priority position for a duplicate path', () => {
-    const files = fakeFs({ '/repo/speedrail-tui.json': '{}' });
+    const files = fakeFs({ '/repo/litespeed-tui.json': '{}' });
     const paths = configFilePaths({
       cwd, globalConfigDir: globalDir, ...files,
-      env: { SPEEDRAIL_TUI_CONFIG: '/repo/speedrail-tui.json' },
+      env: { LITESPEED_TUI_CONFIG: '/repo/litespeed-tui.json' },
     });
-    expect(paths).toEqual(['/repo/speedrail-tui.json']);
+    expect(paths).toEqual(['/repo/litespeed-tui.json']);
   });
 });
 
 describe('loadTuiConfig', () => {
   const cwd = '/repo/pkg/app';
-  const globalDir = '/home/u/.config/speedrail';
+  const globalDir = '/home/u/.config/litespeed';
 
   it('merges files in priority order — closest project file wins', () => {
     const files = fakeFs({
-      [`${globalDir}/speedrail-tui.json`]: '{"theme": "global", "scroll_speed": 9}',
-      '/repo/speedrail-tui.json': '{"theme": "root", "leader_timeout": 900}',
-      '/repo/pkg/app/speedrail-tui.json': '{"theme": "closest"}',
+      [`${globalDir}/litespeed-tui.json`]: '{"theme": "global", "scroll_speed": 9}',
+      '/repo/litespeed-tui.json': '{"theme": "root", "leader_timeout": 900}',
+      '/repo/pkg/app/litespeed-tui.json': '{"theme": "closest"}',
     });
     const config = loadTuiConfig({ cwd, globalConfigDir: globalDir, env: {}, platform: 'darwin', ...files });
     expect(config.theme).toBe('closest');
@@ -227,8 +227,8 @@ describe('loadTuiConfig', () => {
 
   it('merges keybinds across layers instead of replacing the whole table', () => {
     const files = fakeFs({
-      [`${globalDir}/speedrail-tui.json`]: '{"keybinds": {"app_exit": "ctrl+q", "session_new": "ctrl+n"}}',
-      '/repo/speedrail-tui.json': '{"keybinds": {"app_exit": "ctrl+shift+q"}}',
+      [`${globalDir}/litespeed-tui.json`]: '{"keybinds": {"app_exit": "ctrl+q", "session_new": "ctrl+n"}}',
+      '/repo/litespeed-tui.json': '{"keybinds": {"app_exit": "ctrl+shift+q"}}',
     });
     const config = loadTuiConfig({ cwd, globalConfigDir: globalDir, env: {}, platform: 'darwin', ...files });
     expect(config.keybinds.app_exit).toBe('ctrl+shift+q');
@@ -237,11 +237,11 @@ describe('loadTuiConfig', () => {
 
   it('applies substitution with the env and file base dir of each config', () => {
     const files = fakeFs({
-      '/repo/speedrail-tui.json': '{"theme": "{env:SPEEDRAIL_THEME_PICK}"}',
+      '/repo/litespeed-tui.json': '{"theme": "{env:LITESPEED_THEME_PICK}"}',
     });
     const config = loadTuiConfig({
       cwd, globalConfigDir: globalDir, platform: 'darwin', ...files,
-      env: { SPEEDRAIL_THEME_PICK: 'tokyonight' },
+      env: { LITESPEED_THEME_PICK: 'tokyonight' },
     });
     expect(config.theme).toBe('tokyonight');
   });
@@ -249,15 +249,15 @@ describe('loadTuiConfig', () => {
   it('warns and skips an unreadable or invalid file without crashing', () => {
     const warnings: string[] = [];
     const files = fakeFs({
-      '/repo/speedrail-tui.json': '{not json at all',
-      '/repo/pkg/app/speedrail-tui.json': '{"theme": "ok"}',
+      '/repo/litespeed-tui.json': '{not json at all',
+      '/repo/pkg/app/litespeed-tui.json': '{"theme": "ok"}',
     });
     const config = loadTuiConfig({
       cwd, globalConfigDir: globalDir, env: {}, platform: 'darwin', ...files,
       warn: m => warnings.push(m),
     });
     expect(config.theme).toBe('ok');
-    expect(warnings.some(w => w.includes('Skipping /repo/speedrail-tui.json'))).toBe(true);
+    expect(warnings.some(w => w.includes('Skipping /repo/litespeed-tui.json'))).toBe(true);
   });
 
   it('applies platform rules: win32 gets ctrl+z undo and forced suspend-off', () => {
@@ -280,22 +280,22 @@ describe('loadTuiConfig', () => {
 });
 
 describe('discoverCustomThemes', () => {
-  it('reads only .json files from themes/ dirs, deepest .speedrail wins', () => {
-    const root = mkdtempSync(join(tmpdir(), 'speedrail-themes-'));
+  it('reads only .json files from themes/ dirs, deepest .litespeed wins', () => {
+    const root = mkdtempSync(join(tmpdir(), 'litespeed-themes-'));
     try {
       const globalDir = join(root, 'global');
       const repo = join(root, 'repo');
       const app = join(repo, 'pkg', 'app');
       mkdirSync(join(globalDir, 'themes'), { recursive: true });
-      mkdirSync(join(repo, '.speedrail', 'themes'), { recursive: true });
-      mkdirSync(join(app, '.speedrail', 'themes'), { recursive: true });
+      mkdirSync(join(repo, '.litespeed', 'themes'), { recursive: true });
+      mkdirSync(join(app, '.litespeed', 'themes'), { recursive: true });
       const theme = (primary: string) => JSON.stringify({ theme: { primary } });
       writeFileSync(join(globalDir, 'themes', 'mine.json'), theme('#111111'));
-      writeFileSync(join(repo, '.speedrail', 'themes', 'mine.json'), theme('#222222'));
-      writeFileSync(join(app, '.speedrail', 'themes', 'mine.json'), theme('#333333'));
-      writeFileSync(join(app, '.speedrail', 'themes', 'other.json'), theme('#444444'));
-      writeFileSync(join(app, '.speedrail', 'themes', 'skipped.jsonc'), theme('#555555'));
-      writeFileSync(join(app, '.speedrail', 'themes', 'invalid.json'), '{"nope": true}');
+      writeFileSync(join(repo, '.litespeed', 'themes', 'mine.json'), theme('#222222'));
+      writeFileSync(join(app, '.litespeed', 'themes', 'mine.json'), theme('#333333'));
+      writeFileSync(join(app, '.litespeed', 'themes', 'other.json'), theme('#444444'));
+      writeFileSync(join(app, '.litespeed', 'themes', 'skipped.jsonc'), theme('#555555'));
+      writeFileSync(join(app, '.litespeed', 'themes', 'invalid.json'), '{"nope": true}');
 
       const warnings: string[] = [];
       const out = discoverCustomThemes({ cwd: app, globalConfigDir: globalDir, env: {}, warn: m => warnings.push(m) });
@@ -307,16 +307,16 @@ describe('discoverCustomThemes', () => {
     }
   });
 
-  it('honors SPEEDRAIL_CONFIG_DIR as the final overriding directory', () => {
-    const root = mkdtempSync(join(tmpdir(), 'speedrail-themes-'));
+  it('honors LITESPEED_CONFIG_DIR as the final overriding directory', () => {
+    const root = mkdtempSync(join(tmpdir(), 'litespeed-themes-'));
     try {
       const extra = join(root, 'extra');
       const repo = join(root, 'repo');
       mkdirSync(join(extra, 'themes'), { recursive: true });
-      mkdirSync(join(repo, '.speedrail', 'themes'), { recursive: true });
-      writeFileSync(join(repo, '.speedrail', 'themes', 'mine.json'), JSON.stringify({ theme: { primary: '#111111' } }));
+      mkdirSync(join(repo, '.litespeed', 'themes'), { recursive: true });
+      writeFileSync(join(repo, '.litespeed', 'themes', 'mine.json'), JSON.stringify({ theme: { primary: '#111111' } }));
       writeFileSync(join(extra, 'themes', 'mine.json'), JSON.stringify({ theme: { primary: '#999999' } }));
-      const out = discoverCustomThemes({ cwd: repo, globalConfigDir: join(root, 'global'), env: { SPEEDRAIL_CONFIG_DIR: extra } });
+      const out = discoverCustomThemes({ cwd: repo, globalConfigDir: join(root, 'global'), env: { LITESPEED_CONFIG_DIR: extra } });
       expect((out.mine.theme as Record<string, unknown>).primary).toBe('#999999');
     } finally {
       rmSync(root, { recursive: true, force: true });

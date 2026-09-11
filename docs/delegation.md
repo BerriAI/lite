@@ -25,7 +25,7 @@ Read-only here describes the available tools, not an operating-system sandbox. W
 
 A parent turn can launch at most four researchers, one at a time. At most four researchers run across the app. A researcher stops after ten minutes without model or tool progress. Progress resets that timer; there is no cumulative wall-clock ceiling. There is no model-step ceiling. Context can compact automatically within a research turn. Prompts are limited to 16 KiB, reports to 32 KiB, and child transcripts to 4 MiB. Exceeded limits produce a visible failure or timeout rather than an unbounded background task. Model steps count logical requests, not each physical retry after an explicit transient provider rejection.
 
-Cancelling the child records its cancelled result once and lets the parent explain the outcome. Queued follow-ups are held for deliberate Resume. Cancelling the parent or shutting down Speedrail aborts the child and waits for its bookkeeping before the parent finishes. Already-sent provider requests may still incur usage; cancellation cannot undo a request already received by a remote service.
+Cancelling the child records its cancelled result once and lets the parent explain the outcome. Queued follow-ups are held for deliberate Resume. Cancelling the parent or shutting down Litespeed aborts the child and waits for its bookkeeping before the parent finishes. Already-sent provider requests may still incur usage; cancellation cannot undo a request already received by a remote service.
 
 A failed task is not silently recreated. Restart interrupts unfinished research rather than replaying it. There is no detached/background resume, nested delegation, or mutable child workspace in this version.
 

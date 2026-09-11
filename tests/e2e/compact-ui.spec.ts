@@ -18,11 +18,11 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 700 
     await expect(page.getByRole('button', { name: 'Architecture', exact: true })).toContainText('Single model');
     await page.getByRole('button', { name: 'Architecture', exact: true }).click();
     await expect(page.getByRole('listbox', { name: 'Architecture', exact: true }).getByRole('option')).toHaveCount(4);
-    await page.screenshot({ path: `/tmp/speedrail-architectures-${viewport.width}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `/tmp/litespeed-architectures-${viewport.width}.png`, animations: 'disabled' });
     await page.getByRole('option', { name: /^Sidekick Fusion/ }).click();
     await page.getByRole('button', { name: 'Sidekick model', exact: true }).click();
     await expect(page.getByRole('option', { name: 'test-fast', exact: true })).toBeVisible();
-    await page.screenshot({ path: `/tmp/speedrail-model-search-${viewport.width}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `/tmp/litespeed-model-search-${viewport.width}.png`, animations: 'disabled' });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole('textbox', { name: 'Search sidekick models' }).fill('fast');
     await page.getByRole('option', { name: 'test-fast', exact: true }).click();
@@ -40,7 +40,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 700 
     await expect(page.getByRole('button', {name:'Done',exact:true})).toBeInViewport();
     if (geometry.overflow > 1) await page.getByLabel('Output style', {exact:true}).scrollIntoViewIfNeeded();
     await expect(page.getByLabel('Output style', {exact:true})).toBeInViewport();
-    await page.screenshot({ path: `/tmp/speedrail-model-${viewport.width}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `/tmp/litespeed-model-${viewport.width}.png`, animations: 'disabled' });
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await page.reload();
     const saved = await (await request.get(`/api/sessions/${session.id}`)).json();
@@ -56,7 +56,7 @@ test('delegation has one status and usage appears only after the turn finishes',
   const session = await response.json();
   try {
     await page.goto(`/#session/${session.id}`);
-    await page.getByRole('textbox', { name: 'Message Speedrail', exact: true }).fill('SIDEKICK_BROWSER compact UI');
+    await page.getByRole('textbox', { name: 'Message Litespeed', exact: true }).fill('SIDEKICK_BROWSER compact UI');
     await page.getByRole('button', { name: 'Send message', exact: true }).click();
     const approval = page.getByRole('region', { name: 'Permission requested', exact: true });
     await expect(approval).toBeVisible();
@@ -69,7 +69,7 @@ test('delegation has one status and usage appears only after the turn finishes',
     await approval.getByRole('button', { name: 'Allow once', exact: true }).click();
     await expect(page.locator('.usage')).toHaveCount(1);
     await expect(page.locator('.context-estimate')).toHaveCount(0);
-    await page.screenshot({ path: '/tmp/speedrail-conversation-compact.png', animations: 'disabled' });
+    await page.screenshot({ path: '/tmp/litespeed-conversation-compact.png', animations: 'disabled' });
     await page.getByRole('button', { name: 'Session actions', exact: true }).click();
     await page.getByRole('button', { name: 'Context details', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Context details', exact: true }).getByLabel('Context estimate', { exact: true })).toBeVisible();
@@ -99,7 +99,7 @@ for (const width of [1280, 390]) {
     expect(stepsBounds!.y).toBeGreaterThanOrEqual(introBounds!.y + introBounds!.height);
     expect(answerBounds!.y).toBeGreaterThanOrEqual(stepsBounds!.y + stepsBounds!.height);
     await page.locator('.conversation-scroll').evaluate(el => { el.scrollTop = 0; });
-    await page.screenshot({ path: `/tmp/speedrail-clean-overview-${width}.png`, animations: 'disabled' });
+    await page.screenshot({ path: `/tmp/litespeed-clean-overview-${width}.png`, animations: 'disabled' });
     await page.locator('.work-log > summary').click();
     await expect(page.locator('.tool-card').last()).toBeVisible();
     await page.locator('.tool-card').last().locator('summary').click();

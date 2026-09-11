@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ApplyProfileRequest, ProfileCatalog, ProfileChoice, ProfileDetail, ProfileDiagnostic, ProfileTool } from '../../shared/profiles';
 import type { Selection } from './Composer';
 import { api, errorMessage, post, query } from './api';
-import { Modal, SpeedRail } from './ui';
+import { Modal, LiteSpeed } from './ui';
 import { ProfileEditor } from './ProfileEditor';
 
 const tools: ProfileTool[] = ['read_file', 'glob', 'grep', 'web_fetch', 'write_file', 'edit_file', 'bash', 'todo_read', 'todo_write'];
@@ -85,7 +85,7 @@ export function ProfilePicker({ workspace, sessionId, initialChoice, selection, 
   const content = editing && catalog ? <ProfileEditor workspace={workspace} id={editing.id} catalog={catalog} onCancel={() => setEditing(null)} onSaved={id => { setEditing(null); change({ profileId: id, skillIds: [] }); setSavedNotice('Profile saved. Choose Use profile to apply it to this session.'); setReload(value => value + 1); }} /> : <div className="profile-picker">
       <div className="section-heading"><div><h3>Project profiles</h3><p>Reusable instructions and tool limits for this project. Choose a profile for this session, or create your own.</p></div></div>
       {savedNotice && <p className="success-note" role="status">{savedNotice}</p>}
-      {loading && <SpeedRail active compact />}
+      {loading && <LiteSpeed active compact />}
       {error && <div className="inline-alert" role="alert">{error}</div>}
       {active?.active && <section className="profile-active" aria-label="Active profile"><strong>Active · {active.active.name || (active.active.profileId ?? 'Skills only')}</strong>{active.source.status !== 'current' && <p className="profile-warning" role="status">Project source is {active.source.status}. The pinned snapshot remains active; source changes are not applied automatically.</p>}<details><summary>Active pinned instructions</summary><Instructions detail={active} label="Pinned snapshot" /></details></section>}
       <Diagnostics items={(catalog?.diagnostics ?? []).filter(item => selected || active?.active || item.code !== 'missing')} />

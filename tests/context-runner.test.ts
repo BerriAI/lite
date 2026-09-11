@@ -25,7 +25,7 @@ describe('context budget Runner and API integration', () => {
   let calls: any[], catalogs: number, respond: (body: any, res: ServerResponse) => void;
   const extraTools: ToolDefinition[] = [];
   beforeEach(async () => {
-    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-context-runner-'))); store = new Store(join(directory, 'state')); calls = []; catalogs = 0; extraTools.length = 0;
+    modelCatalog.clear(); directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-context-runner-'))); store = new Store(join(directory, 'state')); calls = []; catalogs = 0; extraTools.length = 0;
     respond = (body, res) => text(res, summaryRequest(body) ? 'Earlier work summarized faithfully.' : 'Finished');
     providerServer = createServer(async (req, res) => {
       if (req.method === 'GET') { catalogs++; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ data: [{ id: 'budget-model', context_window: 16384 }, { id: 'invalid-model', context_window: -1 }] })); return; }

@@ -9,7 +9,7 @@ import { ContextIndicator } from '../client/src/ContextIndicator';
 import { Settings as SettingsPanel } from '../client/src/Settings';
 import type { QuestionRequest } from '../shared/questions';
 
-const draftKey = (id: string) => `speedrail:draft:v1:${id}`;
+const draftKey = (id: string) => `litespeed:draft:v1:${id}`;
 const stored = (id: string): ComposerDraft | null => JSON.parse(localStorage.getItem(draftKey(id)) ?? 'null');
 const roots: Root[] = [];
 

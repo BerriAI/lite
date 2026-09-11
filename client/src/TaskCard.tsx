@@ -4,7 +4,7 @@ import type { DelegationDetail, DelegationSummary } from '../../shared/delegatio
 import type { RunEvent, ToolCall } from '../../shared/types';
 import { api, applyEvent, errorMessage } from './api';
 import { Conversation, Markdown } from './Conversation';
-import { SpeedRail } from './ui';
+import { LiteSpeed } from './ui';
 
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
 const sidekick = (task: DelegationSummary) => Boolean(task.role);
@@ -100,7 +100,7 @@ export function TaskTranscript({ task, label }: { task: DelegationSummary; label
   return <div className="research-transcript inline-transcript" role="region" aria-label={`${identity} transcript`}>
     <button className="icon-button transcript-refresh" title="Refresh transcript" disabled={loading} onClick={() => { if (detail) void refresh.current(); else setReload(value => value + 1); }}><RotateCw size={12} /><span className="sr-only">Refresh transcript</span></button>
     {error && <div className="inline-alert" role="alert">{error}</div>}
-    {loading && <div className="research-loading"><SpeedRail compact active /><p>Loading {noun} transcript…</p></div>}
+    {loading && <div className="research-loading"><LiteSpeed compact active /><p>Loading {noun} transcript…</p></div>}
     {detail && <div className="transcript-model">{detail.session.model}</div>}
     <div className="task-transcript-content" ref={viewport} onScroll={event => { const el = event.currentTarget; setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 60); }}>
     {detail && <Conversation detail={detail} connection={connection} busy={false} readOnly inline onDecide={() => {}} onFork={() => {}} renderQuestion={() => null} />}

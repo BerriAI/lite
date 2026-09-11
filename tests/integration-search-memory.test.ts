@@ -32,7 +32,7 @@ describe('history_search, memory tools and session-context envelope integration'
   const toolCalls = (id: string): ToolCall[] => store.messages(id).flatMap(m => m.toolCalls ?? []);
   const prompts = (id: string) => store.events(id, 0).filter(e => e.type === 'permission');
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-search-memory-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-search-memory-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);

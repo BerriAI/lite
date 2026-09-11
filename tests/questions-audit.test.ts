@@ -30,7 +30,7 @@ function begin() {
 }
 const row = (id: string) => store.db.prepare('SELECT status,answer FROM questions WHERE id=?').get(id);
 beforeEach(async () => {
-  directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-questions-audit-')));
+  directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-questions-audit-')));
   store = new Store(join(directory, 'state')); bus = new EventBus(store); history = new History(store); questions = new Questions(store, bus);
 });
 afterEach(async () => {

@@ -32,7 +32,7 @@ export function Onboarding({ controller, initial, onClose, quick = false }: { co
     setWorker(current => current?.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current : null);
     setStep(quick ? 2 : 1);
   }} />;
-  if (step === 1) return <Menu title="Set up Speedrail · 2 of 3" search={false} onClose={() => setStep(0)} footer="Choose how to work. You can change this later with /setup." items={[
+  if (step === 1) return <Menu title="Set up Litespeed · 2 of 3" search={false} onClose={() => setStep(0)} footer="Choose how to work. You can change this later with /setup." items={[
     ...SETUP_ARCHITECTURES.map(item => ({ id: item.kind, label: `${kind === item.kind ? '●' : '○'} ${item.name}${item.recommended ? ' · Recommended' : ''}`, description: item.description, action: () => { setKind(item.kind); setStep(2); } })),
     { id: 'back', label: 'Back to gateway', action: () => setStep(0) },
   ]} />;

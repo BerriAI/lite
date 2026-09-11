@@ -5,7 +5,7 @@ import { join } from 'node:path';
 /** A bounded provider fixture exercises the actual runner, policy, child
  * sessions, approvals, verification, file history, and terminal input. */
 export async function fusionCases({ api, terminal, screen, waitFor, save, settings, session, detail }) {
-  const idle = () => waitFor(() => screen().includes('idle') && screen().includes('Ask Speedrail to do') && !screen().includes('×'), 'Fusion idle composer');
+  const idle = () => waitFor(() => screen().includes('idle') && screen().includes('Ask Litespeed to do') && !screen().includes('×'), 'Fusion idle composer');
   const configure = async (kind, index, label) => {
     await idle(); terminal.write('/models\r');
     await waitFor(() => screen().includes('Architecture:'), 'architecture editor');

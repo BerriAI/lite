@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { TerminalStorage } from '../tui/storage.js';
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
-function storage() { const directory = mkdtempSync(join(tmpdir(), 'speedrail-draft-test-')); directories.push(directory); return new TerminalStorage(directory); }
+function storage() { const directory = mkdtempSync(join(tmpdir(), 'litespeed-draft-test-')); directories.push(directory); return new TerminalStorage(directory); }
 describe('terminal drafts', () => {
   it('restores unsent text and attachments after restart without sharing between servers', () => {
     const cache = storage(), key = JSON.stringify(['http://one', 'session']);
@@ -22,7 +22,7 @@ describe('terminal drafts', () => {
     const cache = storage(); for (let i = 0; i < 210; i++) cache.remember(String(i)); cache.remember('207');
     expect(cache.history()).toHaveLength(200); expect(cache.history().at(-1)).toBe('207');
     expect(cache.history().filter(text => text === '207')).toHaveLength(1);
-    cache.savePreferences({ theme: 'speedrail', mode: 'light' });
-    expect(new TerminalStorage(cache.directory).preferences()).toEqual({ theme: 'speedrail', mode: 'light' });
+    cache.savePreferences({ theme: 'litespeed', mode: 'light' });
+    expect(new TerminalStorage(cache.directory).preferences()).toEqual({ theme: 'litespeed', mode: 'light' });
   });
 });

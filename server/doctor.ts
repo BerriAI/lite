@@ -46,7 +46,7 @@ const packageVersion = (): string => {
  * SQLite's own PRAGMA integrity_check (first row; 'ok' on a healthy file). */
 export function collectDiagnostics(store: Store): DoctorReport {
   const settings = store.settings();
-  const databasePath = join(store.directory, 'speedrail.db');
+  const databasePath = join(store.directory, 'litespeed.db');
   let sizeBytes = 0, exists = false;
   try { const info = statSync(databasePath); exists = true; sizeBytes = info.size; } catch { /* honest false/0 */ }
   let sessions = 0, messages = 0, integrity = 'unavailable';

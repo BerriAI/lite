@@ -10,6 +10,6 @@ export const OUTPUT_STYLES = {
   learning: 'Teach while you work: when you use a concept, API, or pattern the user may not know, briefly explain what it is and why it fits here. Connect each change to the underlying principle so the user could apply it independently next time. Favor clarity over brevity, but never pad.',
 } as const;
 export type BuiltinOutputStyle = keyof typeof OUTPUT_STYLES;
-/** fileBytes: custom .speedrail/styles/<name>.md files are truncated to this cap —
+/** fileBytes: custom .litespeed/styles/<name>.md files are truncated to this cap —
  * a style is a short standing preference, not a second instructions file. */
 export const STYLE_LIMITS = { fileBytes: 4096, nameChars: 64 } as const;

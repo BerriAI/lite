@@ -6,8 +6,8 @@ test('setup explains roles, saves a workspace default, and keeps advanced contro
   try {
     await request.post('/api/workspace-preferences', { data: { ...original, workspace:settings.workspace, providerId:'fixture', model:'test-model', setupComplete:false } });
     await page.goto('/');
-    await page.getByRole('button',{name:'Set up Speedrail',exact:true}).click();
-    const dialog = page.getByRole('dialog', { name:'Set up Speedrail', exact:true });
+    await page.getByRole('button',{name:'Set up Litespeed',exact:true}).click();
+    const dialog = page.getByRole('dialog', { name:'Set up Litespeed', exact:true });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name:'Connect & continue', exact:true }).click();
     await expect(dialog.getByText('Connected · 3 models available')).toBeVisible();
@@ -29,20 +29,20 @@ test('setup explains roles, saves a workspace default, and keeps advanced contro
     expect(preferences).toMatchObject({setupComplete:true,permissionMode:'auto',architecture:{kind:'team-fusion',worker:{providerId:'fixture',model:'test-fast'}}});
     const session=await (await request.post('/api/sessions',{data:{workspace:settings.workspace}})).json();
     expect(session.architecture).toEqual(preferences.architecture);expect(session.permissionMode).toBe('auto');
-    await page.reload();await expect(page.getByRole('textbox',{name:'Message Speedrail',exact:true})).toBeVisible();await expect(dialog).toHaveCount(0);
+    await page.reload();await expect(page.getByRole('textbox',{name:'Message Litespeed',exact:true})).toBeVisible();await expect(dialog).toHaveCount(0);
   } finally { await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:original.architecture??null,permissionMode:original.permissionMode??'ask',setupComplete:true}}); }
 });
 
 test('Allow all tools resolves a live prompt and updates the visible session mode', async ({page,request}) => {
   const session=await (await request.post('/api/sessions',{data:{providerId:'fixture',model:'test-model',permissionMode:'ask',architecture:null}})).json();
   await page.goto(`/#session/${session.id}`);
-  await page.getByRole('textbox',{name:'Message Speedrail',exact:true}).fill('create fixture with new permissions');
+  await page.getByRole('textbox',{name:'Message Litespeed',exact:true}).fill('create fixture with new permissions');
   await page.getByRole('button',{name:'Send message',exact:true}).click();
   await page.getByRole('region',{name:'Permission requested'}).getByRole('button',{name:'Allow all tools',exact:true}).click();
   await expect.poll(async()=>(await (await request.get(`/api/sessions/${session.id}`)).json()).session.status).toBe('idle');
   await expect(page.locator('.permission-select summary')).toContainText('Allow all tools');
   await expect(page.getByRole('region',{name:'Permission requested'})).toHaveCount(0);
-  await page.getByRole('textbox',{name:'Message Speedrail',exact:true}).fill('slow response');
+  await page.getByRole('textbox',{name:'Message Litespeed',exact:true}).fill('slow response');
   await page.getByRole('button',{name:'Send message',exact:true}).click();
   await expect.poll(async()=>(await (await request.get(`/api/sessions/${session.id}`)).json()).session.status).toBe('running');
   await page.locator('.permission-select summary').click();
@@ -59,7 +59,7 @@ test('gateway setup asks for the URL and key, handles failure inline, and then s
     await request.post('/api/workspace-preferences',{data:{...original,workspace:settings.workspace,providerId:'fixture',model:'test-model',setupComplete:false}});
     await request.patch('/api/settings',{data:{providers:[],defaultModel:''}});
     await page.goto('/');
-    const dialog=page.getByRole('dialog',{name:'Set up Speedrail',exact:true});
+    const dialog=page.getByRole('dialog',{name:'Set up Litespeed',exact:true});
     const url=dialog.getByLabel('Gateway base URL'),key=dialog.getByLabel('API key',{exact:false});
     await expect(url).toHaveValue('');await expect(key).toHaveAttribute('type','password');
     await expect(dialog.getByRole('button',{name:'Connect & continue'})).toBeDisabled();
@@ -103,8 +103,8 @@ test('a configured install opens straight into chat even without a workspace set
   const settings=await(await request.get('/api/settings')).json();
   await request.post('/api/workspace-preferences',{data:{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:null,setupComplete:false}});
   await page.goto('/');
-  await page.getByRole('textbox',{name:'Message Speedrail',exact:true}).fill('Hello from the configured startup check');
+  await page.getByRole('textbox',{name:'Message Litespeed',exact:true}).fill('Hello from the configured startup check');
   await page.getByRole('button',{name:'Send message',exact:true}).click();
-  await expect(page.getByRole('article',{name:'Assistant message'})).toContainText('Hello from Speedrail.');
-  await expect(page.getByRole('dialog',{name:'Set up Speedrail',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('article',{name:'Assistant message'})).toContainText('Hello from Litespeed.');
+  await expect(page.getByRole('dialog',{name:'Set up Litespeed',exact:true})).toHaveCount(0);
 });

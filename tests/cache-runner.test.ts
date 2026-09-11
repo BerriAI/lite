@@ -21,7 +21,7 @@ describe('cache diagnostics in the request path', () => {
   const run = async (id: string, content: string) => { runner.start(id, content); await runner.whenIdle(); };
   const lastCache = (id: string) => store.messages(id).filter(m => m.role === 'assistant').at(-1)?.context?.cache;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-cache-diag-'))); store = new Store(join(directory, 'state')); cachedTokens = undefined;
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-cache-diag-'))); store = new Store(join(directory, 'state')); cachedTokens = undefined;
     provider = createServer(async (req, res) => { for await (const part of req) void part; text(res, cachedTokens); });
     const baseUrl = await listen(provider);
     store.saveSettings({ workspace: directory, providers: [{ id: 'test', name: 'Test', kind: 'openai', baseUrl, apiKey: 'fake-key' }], defaultProvider: 'test', defaultModel: 'model' });

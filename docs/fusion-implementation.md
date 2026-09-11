@@ -19,7 +19,7 @@ September 10, 2026. Implements the approved product plan on top of `33f45d6` usi
 | Isolated parallel Team workers | `server/parallel-workers.ts`: private copies of the current source baseline; a completion barrier; guarded text integration; retained conflict/failure evidence. | Parallel-worker and runner integration tests cover successful batches, overlapping paths, external edits, cancellation, steering invalidation, and a fault during publication followed by recovery/Undo/Redo. |
 | Editable profiles in normal Settings | `client/src/ProfileEditor.tsx`, `client/src/ProfilePicker.tsx`, `client/src/Settings.tsx`, `server/profiles.ts`: create/edit project profiles, save safely, then explicitly apply pinned instructions. Other profile/skill declarations are preserved. | Profile server/client/browser suites cover round trips, invalid or changed manifests, stale saves, file aliases, preserving other definitions, explicit application, and switching Settings tabs without losing the editor draft. |
 | Sidebar cleanup | `client/src/App.tsx`, `client/src/styles.css`: less space above Your sessions, bottom Settings gear, removed Search anything row. Existing ⌘K command palette remains. | Navigation/settings browser flows pass; sidebar and settings layouts inspected during visual checks. |
-| Product documentation | Top-level `README.md` describes Speedrail as a harness for multi-model agents, lists all four arrangements, and explains the opening workflow. Architecture, profile, interception, and UI documentation describe the delivered behavior. | Documentation and diff audit; the original product plan is updated to the delivered UI and scope. |
+| Product documentation | Top-level `README.md` describes Litespeed as a harness for multi-model agents, lists all four arrangements, and explains the opening workflow. Architecture, profile, interception, and UI documentation describe the delivered behavior. | Documentation and diff audit; the original product plan is updated to the delivered UI and scope. |
 
 ## Validation
 
@@ -28,7 +28,7 @@ September 10, 2026. Implements the approved product plan on top of `33f45d6` usi
 - After the last presentation refinements, **23 targeted browser checks passed** across the picker, profiles, and Team/Expert flows. The profile tab-navigation check initially used an incorrect test selector (`General` instead of the visible `Workspace` tab); it passed after correcting the selector, with no application change.
 - Light and dark desktop/mobile screenshots were inspected, including expanded model search, the architecture menu, enabled planning, and profile creation/editing.
 - The live Expert trace prompted one final refinement: hide source-edit tools until takeover. Typecheck, **21 runner regressions**, **four complete Fusion browser flows**, and a fresh production build passed after that change. The tests verify both normal tool exclusion and availability after a recorded takeover.
-- `scripts/fusion-smoke.mjs` completed a bounded live comparison through the configured local Speedrail server. Every arrangement received an independent copy of the same CSV fixture. Eight independent checks were restored before external verification. Completion requires an idle task with no reported error and passing independent checks.
+- `scripts/fusion-smoke.mjs` completed a bounded live comparison through the configured local Litespeed server. Every arrangement received an independent copy of the same CSV fixture. Eight independent checks were restored before external verification. Completion requires an idle task with no reported error and passing independent checks.
 
 ## Live model comparison
 
@@ -41,7 +41,7 @@ The initial gateway HTTP 503 was resolved during validation. The live comparison
 | Team Fusion | 8/8 passed | 40.4s | 11 | 55,442 | 2,751 | 1 worker |
 | Expert Fusion | 8/8 passed | 61.6s | 15 | 85,412 | 4,665 | 1 expert |
 
-This table records the first comparison. All four passed the independent checks and finished idle without assistant/provider errors or takeovers. The first Expert driver nevertheless attempted two direct source edits, which Speedrail denied, and recovered from a mistaken directory read. The trace exposed that edit schemas were advertised before takeover even though execution was blocked; the final implementation now hides them until takeover. These attempts are retained in the raw report and included in its usage totals.
+This table records the first comparison. All four passed the independent checks and finished idle without assistant/provider errors or takeovers. The first Expert driver nevertheless attempted two direct source edits, which Litespeed denied, and recovered from a mistaken directory read. The trace exposed that edit schemas were advertised before takeover even though execution was blocked; the final implementation now hides them until takeover. These attempts are retained in the raw report and included in its usage totals.
 
 Every request reported token usage. The gateway did not report prices, so monetary cost stays unknown. Single model was fastest on this small task; the extra coordination did not demonstrate a latency or total-token saving. No general quota or quality claim follows from one fixture. The live Team case used the default sequential setting; parallel publication and fault cases are covered by deterministic tests.
 
@@ -49,13 +49,13 @@ The final Expert rerun with corrected tool advertisement passed **8/8 checks in 
 
 The first comparison report is retained as `10-live-fusion-comparison.json` and the final Expert verification as `11-live-expert-final.json` alongside the local planning artifacts. Each comparison session was archived, and its temporary fixture remains available for inspection. An intermediate rerun interrupted by the development server restarting was stopped and archived before the final verification; no uncertain request was replayed in that session.
 
-To repeat with provider IDs and model IDs already configured in Speedrail:
+To repeat with provider IDs and model IDs already configured in Litespeed:
 
 ```sh
 node scripts/fusion-smoke.mjs \
   --strong-provider litellm --strong-model anthropic/claude-sonnet-4-5 \
   --cheap-provider litellm --cheap-model claude-haiku-4-5-20251001 \
-  --timeout-seconds 240 --output /tmp/speedrail-fusion-comparison.json
+  --timeout-seconds 240 --output /tmp/litespeed-fusion-comparison.json
 ```
 
 ## Practical limits

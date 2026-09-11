@@ -1,10 +1,10 @@
 // Theme definitions include MIT-licensed OpenCode assets; see THIRD_PARTY_NOTICES.md.
 /** Built-in theme catalog for the terminal client. Generated data: each entry is
  * a raw ThemeJson (defs + theme token map) resolved by tui/theme.ts. The
- * default theme is `speedrail`. */
+ * default theme is `litespeed`. */
 import type { ThemeJson } from './theme.js';
 
-export const DEFAULT_THEME_NAME = 'speedrail';
+export const DEFAULT_THEME_NAME = 'litespeed';
 
 export const BUILTIN_THEMES: Record<string, ThemeJson> = {
   "aura": {
@@ -4811,7 +4811,7 @@ export const BUILTIN_THEMES: Record<string, ThemeJson> = {
       }
     }
   },
-  "speedrail": {
+  "litespeed": {
     "defs": {
       "darkStep1": "#0a0a0a",
       "darkStep2": "#141414",

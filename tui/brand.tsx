@@ -7,6 +7,6 @@ export function Brand() {
   const theme = useTheme();
   return <box flexDirection="row" alignItems="center" gap={2} flexShrink={0}>
     <text fg={toHex(theme.primary)}>{'    ╭──────╮\n ───┤  ▰▰   ╲\n  ──┴────────╯'}</text>
-    <text fg={toHex(theme.text)}><strong>speedrail.</strong></text>
+    <text fg={toHex(theme.text)}><strong>litespeed.</strong></text>
   </box>;
 }

@@ -1,5 +1,5 @@
 // Plugin packages (design note 4.4): install-time trust. A package is a LOCAL
-// directory with speedrail-plugin.json (or a compatible .claude-plugin/plugin.json
+// directory with litespeed-plugin.json (or a compatible .claude-plugin/plugin.json
 // where the shapes map). Install is dry-run-plan first, then an explicit apply;
 // every installed item is recorded with provenance (kind + exact target +
 // sha256 of the installed content) so uninstall removes exactly what the
@@ -25,7 +25,7 @@ export interface PluginRegistryEntry { version: string; description?: string; in
 export interface InstallAction { kind: PluginItem['kind']; name: string; target: string; preview: string; conflict?: 'exists' | 'same-plugin-update' }
 
 /** The dry-run plan. `unmapped` lists top-level compat-manifest keys that have
- * no speedrail equivalent and were ignored. */
+ * no litespeed equivalent and were ignored. */
 export interface InstallPlan { plugin: { name: string; version: string; description?: string }; actions: InstallAction[]; warnings: string[]; unmapped?: string[] }
 
 export interface UninstallResult { removed: { kind: PluginItem['kind']; target: string }[]; warnings: string[] }

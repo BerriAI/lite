@@ -48,7 +48,7 @@ export class ParallelWorkers {
         const git=promisify(execFile);
         await git('git',['-C',destination,'-c','core.hooksPath=/dev/null','init','-q'],{signal});
         await git('git',['-C',destination,'-c','core.hooksPath=/dev/null','add','-A'],{signal});
-        await git('git',['-C',destination,'-c','core.hooksPath=/dev/null','-c','user.name=Speedrail','-c','user.email=speedrail@localhost','commit','-qm','Workspace baseline','--allow-empty'],{signal});
+        await git('git',['-C',destination,'-c','core.hooksPath=/dev/null','-c','user.name=Litespeed','-c','user.email=litespeed@localhost','commit','-qm','Workspace baseline','--allow-empty'],{signal});
         batch.workspaces.set(key,{workspace:destination,batch,key});
       }
       return batch;

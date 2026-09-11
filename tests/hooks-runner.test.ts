@@ -27,7 +27,7 @@ describe('lifecycle hooks Runner/API integration', () => {
   const notices = (id: string) => store.messages(id).filter(m => m.role === 'system').map(m => m.content);
   const setHooks = (hooks: HookConfig[]) => store.saveSettings({ hooks });
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-hooks-runner-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-hooks-runner-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);
@@ -123,8 +123,8 @@ describe('lifecycle hooks Runner/API integration', () => {
   });
 
   it('project hooks run only for a trusted workspace; untrusted gets the advisory', async () => {
-    await mkdir(join(directory, '.speedrail'), { recursive: true });
-    await writeFile(join(directory, '.speedrail', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'PreToolUse', command: 'exit 2', matcher: 'write_file' }] }));
+    await mkdir(join(directory, '.litespeed'), { recursive: true });
+    await writeFile(join(directory, '.litespeed', 'hooks.json'), JSON.stringify({ version: 1, hooks: [{ event: 'PreToolUse', command: 'exit 2', matcher: 'write_file' }] }));
     respond = oneCallThenText('write_file', { path: 'trusted.txt', content: 't' });
     const untrusted = await create(); await run(untrusted.id);
     expect(await readFile(join(directory, 'trusted.txt'), 'utf8')).toBe('t'); // Untrusted: the project hook did not fire.

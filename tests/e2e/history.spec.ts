@@ -5,7 +5,7 @@ import { test, expect, type APIRequestContext, type Page } from '@playwright/tes
 import type { FileChange, Session, SessionDetail } from '../../shared/types';
 import type { HistoryState } from '../../shared/history';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail' });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed' });
 async function strip(page: Page) {
   if (!await page.locator('.session-menu').isVisible()) await page.getByRole('button', { name: 'Session actions', exact: true }).click();
   return page.locator('.session-menu');
@@ -17,7 +17,7 @@ let workspace: string;
 let sessions: Session[] = [];
 
 test.beforeEach(async () => {
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-history-browser-')));
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-history-browser-')));
   sessions = [];
 });
 test.afterEach(async ({ request }) => {

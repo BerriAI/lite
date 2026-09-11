@@ -46,7 +46,7 @@ export class SearchIndex {
       CREATE TABLE IF NOT EXISTS history_fts_state (session_id TEXT PRIMARY KEY, message_count INTEGER NOT NULL, max_message_rowid INTEGER NOT NULL, data_bytes INTEGER NOT NULL, parts INTEGER NOT NULL);`);
   }
   private atomic<T>(operation: () => T): T {
-    const name = `speedrail_search_${randomUUID().replaceAll('-', '')}`;
+    const name = `litespeed_search_${randomUUID().replaceAll('-', '')}`;
     this.db.exec(`SAVEPOINT ${name}`);
     try { const result = operation(); this.db.exec(`RELEASE SAVEPOINT ${name}`); return result; }
     catch (error) { this.db.exec(`ROLLBACK TO SAVEPOINT ${name}; RELEASE SAVEPOINT ${name}`); throw error; }

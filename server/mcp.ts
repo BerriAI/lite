@@ -422,7 +422,7 @@ export class McpManager implements ExternalTools {
     const transport: Transport = entry.config.command ? new BoundedStdioTransport(entry.config) : legacy
       ? new SSEClientTransport(new URL(entry.config.url!), { fetch, eventSourceInit: { fetch } })
       : new StreamableHTTPClientTransport(new URL(entry.config.url!), { fetch, reconnectionOptions: { maxRetries: 0, maxReconnectionDelay: 0, initialReconnectionDelay: 0, reconnectionDelayGrowFactor: 1 } });
-    const client = new Client({ name: 'speedrail', version: '0.1.0' }, { capabilities: {} });
+    const client = new Client({ name: 'litespeed', version: '0.1.0' }, { capabilities: {} });
     const connection: Connection = { client, transport, lifetime, ready: false, sends: new Set(), cancellations: new Set() };
     const send = transport.send.bind(transport);
     transport.send = (message, options) => {

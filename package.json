@@ -1,24 +1,24 @@
 {
-  "name": "@litellm/speedrail",
+  "name": "@litellm/litespeed",
   "version": "0.1.0",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "description": "Speedrail — a local coding agent with multi-model workflows for your terminal and browser.",
-  "repository": { "type": "git", "url": "git+https://github.com/BerriAI/speedrail.git" },
-  "homepage": "https://github.com/BerriAI/speedrail#readme",
-  "bugs": { "url": "https://github.com/BerriAI/speedrail/issues" },
+  "description": "Litespeed — a local coding agent with multi-model workflows for your terminal and browser.",
+  "repository": { "type": "git", "url": "git+https://github.com/BerriAI/litespeed.git" },
+  "homepage": "https://github.com/BerriAI/litespeed#readme",
+  "bugs": { "url": "https://github.com/BerriAI/litespeed/issues" },
   "engines": {
     "node": ">=26.4.0"
   },
   "bin": {
-    "speedrail": "bin/speedrail.mjs"
+    "litespeed": "bin/litespeed.mjs"
   },
   "scripts": {
     "preinstall": "node bin/check-node.mjs",
     "postinstall": "node scripts/prepare-terminal.mjs",
     "dev": "tsx watch server/index.ts",
-    "tui": "node bin/speedrail.mjs",
+    "tui": "node bin/litespeed.mjs",
     "package:macos": "npm run build && node scripts/release/package.mjs",
     "test:package": "node scripts/release/smoke.mjs",
     "migrate": "node scripts/migrate-state.mjs",

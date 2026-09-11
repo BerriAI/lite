@@ -1,6 +1,6 @@
 # Cross-session history search
 
-Speedrail keeps every session's conversation in its local database. History search lets you — and the agent — find past decisions, commands, errors, and tool activity across all saved sessions on this machine, then read the surrounding transcript.
+Litespeed keeps every session's conversation in its local database. History search lets you — and the agent — find past decisions, commands, errors, and tool activity across all saved sessions on this machine, then read the surrounding transcript.
 
 ## The `history_search` tool
 
@@ -19,4 +19,4 @@ Because the tool is read-only, researchers launched with the `task` tool can use
 
 ## Scope and bounds
 
-Search covers this machine's local Speedrail database only. Indexed content is capped per message part, snippets and context reads are bounded, and result counts are clamped — a search cannot dump unbounded history into the conversation. Exported session JSON is unaffected by indexing.
+Search covers this machine's local Litespeed database only. Indexed content is capped per message part, snippets and context reads are bounded, and result counts are clamped — a search cannot dump unbounded history into the conversation. Exported session JSON is unaffected by indexing.

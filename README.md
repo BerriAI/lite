@@ -1,4 +1,4 @@
-# Speedrail
+# Litespeed
 
 A local coding agent for your terminal and browser, built around **multi-model workflows**. Use one model or combine a driver with sidekicks, workers, or experts. Follow their work, approve changes, and review the result in one conversation. Pairing models lets a faster, cheaper model handle routine work while a stronger model handles planning or difficult tasks, which can reduce cost and wait time.
 
@@ -9,23 +9,23 @@ Connect through LiteLLM, OpenAI-compatible APIs, native Anthropic, or ChatGPT de
 Download the **macOS package** with its runtimes included—no Node or npm setup:
 
 ```sh
-curl -fsSL https://github.com/BerriAI/speedrail/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/BerriAI/litespeed/releases/latest/download/install.sh | sh
 ```
 
 Then run it from **the project you want to work on**:
 
 ```sh
 cd /path/to/your/project
-~/.local/bin/speedrail
+~/.local/bin/litespeed
 ```
 
-Use `speedrail` once `~/.local/bin` is on your PATH; the installer prints the setup line if needed. Speedrail starts its local backend automatically. Updates appear in both UIs, or run `speedrail update`. Saved sessions and settings stay outside the application package.
+Use `litespeed` once `~/.local/bin` is on your PATH; the installer prints the setup line if needed. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
 
 See [installation, updates, and the source-build alternative](docs/installing.md). Packages support Apple silicon and Intel Macs. Git and your project's development tools remain separate.
 
-Speedrail has its own command, separate from the [LiteLLM gateway CLI](https://docs.litellm.ai/docs/proxy/management_cli). If you used an earlier version of this agent, follow the [upgrade guide](docs/upgrading.md) to carry over saved sessions and configuration.
+Litespeed has its own command, separate from the [LiteLLM gateway CLI](https://docs.litellm.ai/docs/proxy/management_cli). If you used an earlier version of this agent, follow the [upgrade guide](docs/upgrading.md) to carry over saved sessions and configuration.
 
-1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then choose your setup and models. **Sidekick Fusion is recommended:** pick a powerful driver and an efficient coding workhorse as its Sidekick. Choose **Single model** if you prefer one model for everything. Speedrail remembers the connection and model; running `speedrail` in another project opens chat directly.
+1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then choose your setup and models. **Sidekick Fusion is recommended:** pick a powerful driver and an efficient coding workhorse as its Sidekick. Choose **Single model** if you prefer one model for everything. Litespeed remembers the connection and model; running `litespeed` in another project opens chat directly.
 2. Use **Models** or `/models` to change your arrangement. **Ask first** is the default; **Allow all tools** is available in permissions. The full setup is available from the web sidebar or `/setup`.
 3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. Type `/` for command suggestions in either client; use **↑/↓**, **Tab** or **Enter** to complete, and **Esc** to dismiss. **Ctrl+P** opens terminal commands and navigation.
 
@@ -33,9 +33,9 @@ See the [terminal guide](docs/tui.md) for shortcuts, resuming sessions, and conf
 
 ## Prefer the browser?
 
-Once Speedrail is running, open **http://localhost:3210**. The browser and terminal share saved sessions, providers, and model settings.
+Once Litespeed is running, open **http://localhost:3210**. The browser and terminal share saved sessions, providers, and model settings.
 
-For a web-only session, run `speedrail serve`. For development, use `npm run dev` from the checkout. See [development and updating](docs/development.md).
+For a web-only session, run `litespeed serve`. For development, use `npm run dev` from the checkout. See [development and updating](docs/development.md).
 
 ## Choose how models work together
 
@@ -46,15 +46,19 @@ For a web-only session, run `speedrail serve`. For development, use `npm run dev
 | **Team Fusion** | A strong driver assigns fresh cheaper workers, runs independent work in parallel, and verifies the combined result. |
 | **Expert Fusion** | A cheaper driver coordinates fresh strong experts and verifies their work. Independent assignments can run in parallel. |
 
-Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Speedrail remembers your model arrangement per workspace; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
+Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Litespeed remembers your model arrangement per workspace; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
+
+## Additional options
+
+**Shunt (proposed)** would send large reads and predictable file generation to an efficient model, keeping the main agent focused on reasoning and review. It would be off by default and configurable in both clients. It is not shipped yet; see the [research, measured results, and integration proposal](docs/design-shunt.md).
 
 ## Guides
 
-- [Using Speedrail](docs/usage.md): queue follow-ups, steer a response, answer questions, manage context, and customize projects.
+- [Using Litespeed](docs/usage.md): queue follow-ups, steer a response, answer questions, manage context, and customize projects.
 - [Providers](docs/providers.md) · [CLI and scripting](docs/cli.md) · [Terminal controls](docs/tui.md)
 - [Permissions](docs/permissions.md) · [Undo/redo, recovery, and local data](docs/local-data.md)
 - [Project profiles and skills](docs/profiles.md) · [MCP connections](docs/mcp.md) · [Hooks and plugins](docs/design-hooks-plugins.md)
-- [Context management and harness comparison](docs/context-management.md)
+- [Context management and harness comparison](docs/context-management.md) · [Concurrent tasks](docs/concurrency.md)
 - [Agent memory](docs/memory.md) · [History search](docs/search.md) · [Research tasks](docs/delegation.md)
 - [Feature coverage and known gaps](docs/coverage.md) · [Development and tests](docs/development.md)
 
@@ -62,4 +66,4 @@ Approved commands run with your local user’s capabilities; permissions are not
 
 ## License
 
-Speedrail is licensed under [Apache-2.0](LICENSE). Bundled themes and fonts retain their original licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).
+Litespeed is licensed under [Apache-2.0](LICENSE). Bundled themes and fonts retain their original licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

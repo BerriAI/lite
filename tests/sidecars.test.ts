@@ -16,7 +16,7 @@ const until = async (check: () => boolean | Promise<boolean>) => { const deadlin
 
 describe('Sidecars unit: spawn, protocol, failure posture', () => {
   let directory: string, sidecars: Sidecars;
-  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-sidecars-'))); sidecars = new Sidecars(); });
+  beforeEach(async () => { directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-sidecars-'))); sidecars = new Sidecars(); });
   afterEach(async () => { sidecars.stopAll(); await rm(directory, { recursive: true, force: true }); });
 
   it('spawns lazily and round-trips pass, modify, and block through JSON-RPC', async () => {

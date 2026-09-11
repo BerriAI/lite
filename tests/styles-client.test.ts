@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The output style picker (5.7): lives in the same surface as the model/
-// planner picker, lists default + builtins + workspace .speedrail/styles names, and
+// planner picker, lists default + builtins + workspace .litespeed/styles names, and
 // reports changes through the same onSelection path that PATCHes the session.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';

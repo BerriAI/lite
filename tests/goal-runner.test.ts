@@ -23,7 +23,7 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
   const create = async (extra: Record<string, unknown> = {}) => { const result = await api('/sessions', { permissionMode: 'auto', ...extra }); expect(result.status).toBe(201); return result.body; };
   const run = async (id: string, content = 'Work the goal') => { runner.start(id, content); await runner.whenIdle(); };
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-goal-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-goal-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);

@@ -4,13 +4,13 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail, Settings } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });
 const permission = (page: Page) => page.getByRole('region', { name: 'Permission requested', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[], baseline: Settings;
 
 test.beforeEach(async ({ page, request }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-permissions-browser-'))); sessions = [];
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-permissions-browser-'))); sessions = [];
   await writeFile(join(workspace, 'notes.txt'), 'Rule fixture file.\n');
   baseline = await (await request.get('/api/settings')).json();
 });
@@ -83,10 +83,10 @@ test('a command with shell control operators is not auto-allowed by a wildcard r
   await expect(readFile(join(workspace, 'rule-escape.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-test('project rules from .speedrail/permissions.json outrank app rules and deny without prompting', async ({ page, request }) => {
+test('project rules from .litespeed/permissions.json outrank app rules and deny without prompting', async ({ page, request }) => {
   expect((await rules(request, [{ tool: 'bash', decision: 'allow', patterns: ['touch *'] }])).ok()).toBe(true);
-  await mkdir(join(workspace, '.speedrail'), { recursive: true });
-  await writeFile(join(workspace, '.speedrail', 'permissions.json'), JSON.stringify({ version: 1, rules: [{ tool: 'bash', decision: 'deny', patterns: ['touch **'] }] }));
+  await mkdir(join(workspace, '.litespeed'), { recursive: true });
+  await writeFile(join(workspace, '.litespeed', 'permissions.json'), JSON.stringify({ version: 1, rules: [{ tool: 'bash', decision: 'deny', patterns: ['touch **'] }] }));
   const session = await create(request, { permissionMode: 'auto' }); await open(page, session);
   await send(page, session, 'RULES_BROWSER RUN_COMMAND[touch project-denied.txt]');
   const result = await done(request, session);
@@ -118,8 +118,8 @@ test('a pattern-free deny removes the tool from the advertised list for the turn
 });
 
 test('an invalid project rules file is ignored with a visible notice and the turn still runs', async ({ page, request }) => {
-  await mkdir(join(workspace, '.speedrail'), { recursive: true });
-  await writeFile(join(workspace, '.speedrail', 'permissions.json'), '{ not valid json');
+  await mkdir(join(workspace, '.litespeed'), { recursive: true });
+  await writeFile(join(workspace, '.litespeed', 'permissions.json'), '{ not valid json');
   const session = await create(request); await open(page, session);
   await send(page, session, 'RULES_BROWSER RUN_COMMAND[echo invalid-rules-still-runs]');
   await expect(permission(page)).toBeVisible();

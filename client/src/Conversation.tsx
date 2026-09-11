@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ArrowDown, Check, ChevronRight, Clock3, File, GitFork, Shield, Terminal, X } from 'lucide-react';
 import type { Message, PermissionRequest, SessionDetail, ToolCall, Usage } from '../../shared/types';
-import { CopyButton, Logo, SpeedRail } from './ui';
+import { CopyButton, Logo, LiteSpeed } from './ui';
 
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -27,7 +27,7 @@ function CopyCode({ children }: { children: React.ReactNode }) {
 const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Research task', sidekick: 'Sidekick', delegate: 'Worker', verify: 'Driver verification', takeover: 'Driver takeover', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
 function ToolCard({ tool }: { tool: ToolCall }) {
   const working = tool.status === 'running' || tool.status === 'pending';
-  const title = tool.args?.path || tool.args?.command || tool.args?.pattern || tool.args?.url;
+  const title = tool.waitingForWorkspace || tool.args?.path || tool.args?.command || tool.args?.pattern || tool.args?.url;
   // Sidecar interception is VISIBLE by design (design note 4.5): the summary
   // row is tagged with the interceptor's name, and the expanded body shows the
   // unmodified original arguments above the (modified) executed ones.
@@ -66,7 +66,7 @@ export function Conversation({ detail, connection, onDecide, onAllowAll, onFork,
     {!detail.messages.length && <div className="session-empty"><Logo /><h2>{readOnly ? 'No transcript yet.' : 'A fresh start.'}</h2><p>{readOnly ? 'Research messages will appear here when available. This view cannot start a run.' : 'Give your agent a task. It will work in this session’s workspace.'}</p></div>}
     {!readOnly && detail.questions?.map(renderQuestion)}
     {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} onAllowAll={onAllowAll} busy={busy} />)}
-    {running && !last?.content && !last?.reasoning && !hasWork && !detail.permissions.length && !detail.questions?.length && <div className="run-status" role="status"><SpeedRail compact active /><span>{detail.session.status === 'waiting' ? detail.questions?.length ? 'Waiting for your answer' : 'Waiting for your approval' : detail.session.mode === 'plan' ? 'Exploring and planning' : last?.activity || 'Working'}<span className="animated-ellipsis">…</span></span></div>}
+    {running && !last?.content && !last?.reasoning && !hasWork && !detail.permissions.length && !detail.questions?.length && <div className="run-status" role="status"><LiteSpeed compact active /><span>{detail.session.status === 'waiting' ? detail.questions?.length ? 'Waiting for your answer' : 'Waiting for your approval' : detail.session.mode === 'plan' ? 'Exploring and planning' : last?.activity || 'Working'}<span className="animated-ellipsis">…</span></span></div>}
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" aria-label="Jump to latest" title="Jump to latest" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={16} /></button>}</div>;
 }
@@ -120,7 +120,7 @@ function MessageView({ driver, workerNoun, message, running, grouped, tail, live
   if (message.role === 'system' && !steering) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : inline ? 'Assignment from driver' : 'Your message'}>
-    {assistant && !grouped && <div className="message-byline"><Logo small /><span>Speedrail</span></div>}
+    {assistant && !grouped && <div className="message-byline"><Logo small /><span>Litespeed</span></div>}
     <div className="message-body">{assistant && driver && (message.content || !message.toolCalls?.some(tool => tool.name === 'delegate' || tool.name === 'sidekick')) && <div className="driver-identity">Driver</div>}{steering && <span className="steering-label">Steering</span>}
       {message.content && (inline && !assistant ? <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={message.content} /></div></details> : <div className="markdown"><Markdown content={message.content} /></div>)}
       {assistant && <WorkLog workerNoun={workerNoun} expanded={expanded} onExpand={onExpand} messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}

@@ -33,7 +33,7 @@ const catalog: ProfileCatalog = {
 const choice: ProfileChoice = { profileId: 'review', skillIds: ['testing'] };
 function profile(value: ProfileChoice = choice): ProfileDetail {
   return { active: value.profileId || value.skillIds.length ? { profileId: value.profileId, name: value.profileId ? 'Review code' : undefined, skillIds: value.skillIds, revision: 'pinned-v1', tools: value.profileId ? ['read_file', 'grep'] : null } : null,
-    pinned: value.profileId || value.skillIds.length ? { instructions: value.profileId ? 'Review the implementation carefully.' : '', skills: value.skillIds.map(id => ({ id, name: catalog.skills.find(skill => skill.id === id)?.name || id, description: '', body: `Instructions for ${id}`, path: `.speedrail/skills/${id}/SKILL.md`, hash: id })), sources: [] } : null,
+    pinned: value.profileId || value.skillIds.length ? { instructions: value.profileId ? 'Review the implementation carefully.' : '', skills: value.skillIds.map(id => ({ id, name: catalog.skills.find(skill => skill.id === id)?.name || id, description: '', body: `Instructions for ${id}`, path: `.litespeed/skills/${id}/SKILL.md`, hash: id })), sources: [] } : null,
     source: { status: value.profileId || value.skillIds.length ? 'current' : 'inactive' }, diagnostics: [] };
 }
 function session(id: string, patch: Partial<Session> = {}): Session { return { id, title: `Session ${id}`, workspace: '/workspace', providerId: 'fixture', model: 'model', mode: 'plan', permissionMode: 'ask', status: 'idle', archived: false, createdAt: 1, updatedAt: 1, configRevision: 3, ...patch }; }
@@ -123,7 +123,7 @@ describe('explicit profile picker', () => {
     expect(panel.onApply).toHaveBeenCalledExactlyOnceWith({ profileId: 'review', skillIds: [], catalogRevision: 'catalog-v1' }, { providerId: 'fixture', model: 'alternate', mode: 'build' });
   });
   it('keeps missing pinned instructions and diagnostics visible and clears without a catalog revision', async () => {
-    const api = server(); api.catalog = { revision: 'invalid', profiles: [], skills: [], diagnostics: [{ path: '.speedrail/profiles.json', code: 'invalid', message: 'Invalid manifest <script>never()</script>' }] };
+    const api = server(); api.catalog = { revision: 'invalid', profiles: [], skills: [], diagnostics: [{ path: '.litespeed/profiles.json', code: 'invalid', message: 'Invalid manifest <script>never()</script>' }] };
     api.profile = { ...profile(), source: { status: 'missing' } };
     api.intercept = path => { if (path === '/profiles/preview') return Promise.reject(new Error('Source unavailable')); };
     const panel = await picker({ sessionId: 'a', initialChoice: choice });
@@ -162,7 +162,7 @@ describe('explicit profile picker', () => {
 
 describe('session profile integration', () => {
   it('preserves existing selections and composer attachments, captures revision, refreshes authoritative queue', async () => {
-    const api = server(); localStorage.setItem('speedrail:draft:v1:a', JSON.stringify({ text: 'Keep this draft', attachments: [{ name: 'notes.txt', content: 'Important context' }] }));
+    const api = server(); localStorage.setItem('litespeed:draft:v1:a', JSON.stringify({ text: 'Keep this draft', attachments: [{ name: 'notes.txt', content: 'Important context' }] }));
     await mount(); await click('[aria-label="Project profiles"]'); await choose('review'); await click('[aria-label="Test carefully"]'); await press('Use profile');
     const write = api.calls.find(call => call.path === '/sessions/a/profile' && call.method === 'POST')!;
     expect(write.body).toEqual({ expectedConfigRevision: 3, choice: { profileId: 'review', skillIds: ['testing'], catalogRevision: 'catalog-v1' } });
@@ -235,7 +235,7 @@ describe('session profile integration', () => {
     const item = detail('a', { status: 'waiting' });
     item.questions = [{ id: 'question-a', sessionId: 'a', turnId: 'turn-a', messageId: 'assistant-a', toolCallId: 'ask-a', question: 'Which database?', options: [{ id: 'sqlite', label: 'SQLite' }, { id: 'postgres', label: 'PostgreSQL' }], createdAt: 1 }];
     const api = server([item]);
-    localStorage.setItem('speedrail:draft:v1:a', JSON.stringify({ text: 'Keep my next prompt', attachments: [{ name: 'draft.txt', content: 'keep' }] }));
+    localStorage.setItem('litespeed:draft:v1:a', JSON.stringify({ text: 'Keep my next prompt', attachments: [{ name: 'draft.txt', content: 'keep' }] }));
     await mount(); await click('.question-option input[value="sqlite"]'); await click('[aria-label="Project profiles"]');
     expect(document.querySelector('[aria-label="Profile"]')).toBeNull();
     expect(el<HTMLInputElement>('.question-option input[value="sqlite"]').checked).toBe(true);

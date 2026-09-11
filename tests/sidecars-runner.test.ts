@@ -31,7 +31,7 @@ describe('sidecar extensions Runner/API integration', () => {
   const notices = (id: string) => store.messages(id).filter(m => m.role === 'system').map(m => m.content);
   const setSidecars = (sidecars: SidecarConfig[]) => store.saveSettings({ sidecars });
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-sidecars-runner-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-sidecars-runner-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);

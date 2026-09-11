@@ -7,7 +7,7 @@ export interface SseFrame { id?: number; data: string }
 
 /** Incremental server-sent-events parser. Feed raw chunks in any split; frames
  * come out exactly once, in order. Only `id:` and `data:` fields matter to
- * Speedrail's journal; multiple data lines join with newlines per the SSE spec. */
+ * Litespeed's journal; multiple data lines join with newlines per the SSE spec. */
 export class SseParser {
   private buffer = '';
   push(chunk: string): SseFrame[] {

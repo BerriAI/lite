@@ -11,14 +11,15 @@ const { ownDataDirectory } = await import('./ownership.js');
 
 if (existsSync('.env')) process.loadEnvFile('.env');
 const { createApp } = await import('./app.js');
-const { Store } = await import('./store.js');
+const { Store, assertNoLegacyStore } = await import('./store.js');
 const { McpManager } = await import('./mcp.js');
 const { CodexAuth } = await import('./auth.js');
 const { configureCodexAuth } = await import('./providers.js');
 const { attachTerminals } = await import('./terminal.js');
-const port = Number(process.env.SPEEDRAIL_PORT || 3210);
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('SPEEDRAIL_PORT must be a valid port number.');
-const releaseOwnership = ownDataDirectory(resolve(process.env.SPEEDRAIL_DATA_DIR || '.speedrail'));
+const port = Number(process.env.LITESPEED_PORT || 3210);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('LITESPEED_PORT must be a valid port number.');
+assertNoLegacyStore(resolve(process.env.LITESPEED_DATA_DIR || '.litespeed'));
+const releaseOwnership = ownDataDirectory(resolve(process.env.LITESPEED_DATA_DIR || '.litespeed'));
 process.once('exit', releaseOwnership);
 const store = new Store();
 const mcp = new McpManager(() => store.settings().mcpServers);
@@ -54,7 +55,7 @@ if (production) {
 }
 
 const server = app.listen(port,'127.0.0.1', () => {
-  console.log(`\n  ≋ Speedrail\n  Your ideas, up to speed.\n\n  http://localhost:${port}\n  Workspace: ${store.settings().workspace}\n  Press Ctrl+C to stop.\n`);
+  console.log(`\n  ≋ Litespeed\n  Your ideas, up to speed.\n\n  http://localhost:${port}\n  Workspace: ${store.settings().workspace}\n  Press Ctrl+C to stop.\n`);
 });
 const terminals = attachTerminals(server,store,()=>restarting);
 server.on('error',error => { console.error(error.message); process.exitCode=1; void close(); });
@@ -71,7 +72,7 @@ async function close(restartRoot?: string) {
   store.close();releaseOwnership();clearTimeout(timeout);
   if (restartRoot && !failed) {
     const fd = openSync(resolve(store.directory, 'tui-server.log'), 'a', 0o600);
-    const replacement = spawn(resolve(restartRoot, 'runtime/node'), [resolve(restartRoot, 'dist/server/index.js')], { cwd: restartRoot, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, SPEEDRAIL_DATA_DIR: store.directory, SPEEDRAIL_PORT: String(port) } });
+    const replacement = spawn(resolve(restartRoot, 'runtime/node'), [resolve(restartRoot, 'dist/server/index.js')], { cwd: restartRoot, detached: true, stdio: ['ignore', fd, fd], env: { ...process.env, LITESPEED_DATA_DIR: store.directory, LITESPEED_PORT: String(port) } });
     closeSync(fd);
     await new Promise<void>((done,reject)=>{replacement.once('spawn',()=>done());replacement.once('error',reject);});
     replacement.unref();

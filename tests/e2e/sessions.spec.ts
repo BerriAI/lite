@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Message, Session, SessionDetail } from '../../shared/types';
 
-const reply = 'Hello from Speedrail.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
+const reply = 'Hello from Litespeed.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
 const reasoning = 'Checking the request and preparing a clear response.';
 const toolReply = 'The file operation is complete. Check the activity card for its result.';
 
@@ -22,12 +22,12 @@ async function history(request: APIRequestContext, id: string): Promise<SessionD
 
 async function open(page: Page, session: Session) {
   await page.goto(`/#session/${session.id}`);
-  await expect(page.getByRole('textbox', { name: 'Message Speedrail' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Litespeed' })).toBeVisible();
   await expect(page.getByText('Connecting to live updates…', { exact: true })).toHaveCount(0);
 }
 
 async function send(page: Page, text: string) {
-  await page.getByRole('textbox', { name: 'Message Speedrail' }).fill(text);
+  await page.getByRole('textbox', { name: 'Message Litespeed' }).fill(text);
   const response = page.waitForResponse(r => /\/api\/sessions\/[^/]+\/messages$/.test(r.url()) && r.request().method() === 'POST');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   expect((await response).status()).toBe(202);
@@ -51,7 +51,7 @@ async function expectExactReply(page: Page, request: APIRequestContext, id: stri
   const assistant = page.getByRole('article', { name: 'Assistant message' });
   await expect(assistant).toHaveCount(1);
   await expect(assistant.locator('.message-body > .markdown > p')).toHaveText([
-    'Hello from Speedrail.', 'Your workspace is ready. Here is a small example:',
+    'Hello from Litespeed.', 'Your workspace is ready. Here is a small example:',
   ]);
   await expect(assistant.locator('.message-body > .markdown pre code')).toHaveText('const answer = 42;');
   await expect(assistant.locator('.message-body > .markdown')).toHaveCount(1);
@@ -66,14 +66,14 @@ test('reloads a genuinely partial stream and finishes with exactly-once text and
   page.on('pageerror', error => browserErrors.push(error.message));
   await open(page, session);
   await send(page, 'slow response for reload coverage');
-  await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Speedrail.');
+  await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Litespeed.');
   const before = await history(request, session.id);
   expect(before.session.status).toBe('running');
   const partial = before.messages.find(m => m.role === 'assistant')!.content;
   expect(partial.length).toBeGreaterThan(0);
   expect(partial.length).toBeLessThan(reply.length);
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Message Speedrail' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Litespeed' })).toBeVisible();
   await completed(page, request, session.id, 1);
   await expectExactReply(page, request, session.id);
   await page.reload();
@@ -89,7 +89,7 @@ test('keeps two concurrent session streams isolated when switching between them'
     await open(page, first);
     await open(other, second);
     await send(page, 'slow response for session alpha');
-    await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Speedrail.');
+    await expect(page.getByRole('article', { name: 'Assistant message' })).toContainText('Hello from Litespeed.');
     await send(other, 'create fixture for session beta');
     await expect(other.getByRole('region', { name: 'Permission requested' })).toBeVisible();
     expect((await history(request, first.id)).session.status).toBe('running');
@@ -99,7 +99,7 @@ test('keeps two concurrent session streams isolated when switching between them'
     await expect(page).toHaveURL(new RegExp(`#session/${second.id}$`));
     await expect(page.getByRole('article', { name: 'Your message' })).toHaveText('create fixture for session beta');
     await expect(page.getByRole('region', { name: 'Permission requested' })).toBeVisible();
-    await expect(page.getByRole('article', { name: 'Assistant message' })).not.toContainText('Hello from Speedrail.');
+    await expect(page.getByRole('article', { name: 'Assistant message' })).not.toContainText('Hello from Litespeed.');
     await other.getByRole('button', { name: 'Deny', exact: true }).click();
     await completed(page, request, second.id, 1);
     await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText(toolReply);
@@ -152,7 +152,7 @@ test('forks at a completed message and continues without copying subsequent pare
   await expect(page.locator('.conversation-content')).not.toContainText('This later parent turn must not be forked');
   await page.reload();
   await expect(page.getByRole('article', { name: 'Your message' })).toHaveCount(2);
-  await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('Hello from Speedrail.');
+  await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('Hello from Litespeed.');
 });
 
 test('exports through the browser and imports untrusted tool history without executing it', async ({ page, request }) => {
@@ -164,7 +164,7 @@ test('exports through the browser and imports untrusted tool history without exe
   await page.getByRole('button', { name: 'Session actions', exact: true }).click();
   await page.getByRole('button', { name: 'Export session', exact: true }).click();
   const download = await downloaded;
-  expect(download.suggestedFilename()).toMatch(/^speedrail-.*\.json$/);
+  expect(download.suggestedFilename()).toMatch(/^litespeed-.*\.json$/);
   const stream = await download.createReadStream();
   expect(stream).not.toBeNull();
   const chunks: Buffer[] = [];
@@ -188,7 +188,7 @@ test('exports through the browser and imports untrusted tool history without exe
   const imported: Session = await (await importedResponse).json();
   await expect(page).toHaveURL(new RegExp(`#session/${imported.id}$`));
   await expect(page.getByRole('article', { name: 'Assistant message' })).toHaveCount(2);
-  await expect(page.getByRole('article', { name: 'Assistant message' }).first()).toContainText('Hello from Speedrail.');
+  await expect(page.getByRole('article', { name: 'Assistant message' }).first()).toContainText('Hello from Litespeed.');
   await expect(page.getByRole('button', { name: 'Stop generation' })).toHaveCount(0);
   const detail = await history(request, imported.id);
   const configuredWorkspace = (await (await request.get('/api/settings')).json()).workspace;
@@ -221,7 +221,7 @@ test('remembers approvals across reload and later runs, isolates sessions, and r
   expect((await history(request, session.id)).messages.flatMap(m => m.toolCalls ?? []).map(t => t.status)).toEqual(['completed']);
 
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Message Speedrail' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Litespeed' })).toBeVisible();
   await send(page, 'create fixture in a later run');
   await completed(page, request, session.id, 2);
   await expect(page.getByRole('region', { name: 'Permission requested' })).toHaveCount(0);
@@ -246,7 +246,7 @@ test('remembers approvals across reload and later runs, isolates sessions, and r
   expect(await grants(session.id)).toEqual([]);
   expect((await history(request, session.id)).session.permissionMode).toBe('ask');
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Message Speedrail' })).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'Message Litespeed' })).toBeVisible();
   await send(page, 'create fixture after resetting remembered approval');
   await expect(page.getByRole('region', { name: 'Permission requested' })).toBeVisible();
   await page.getByRole('button', { name: 'Deny', exact: true }).click();

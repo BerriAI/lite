@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RunEvent, SessionDetail } from '../shared/types.js';
-import type { SpeedrailClient } from '../tui/client.js';
+import type { LitespeedClient } from '../tui/client.js';
 import { parseOptions } from '../tui/options.js';
 import { backoffDelay, BACKOFF_CAP_MS, COALESCE_MS, SessionSync } from '../tui/sync.js';
 
@@ -11,7 +11,7 @@ function detailFixture(): SessionDetail {
   };
 }
 
-/** A SpeedrailClient stand-in whose event stream is fed by the test. */
+/** A LitespeedClient stand-in whose event stream is fed by the test. */
 function fakeClient(detail: SessionDetail, streams: RunEvent[][]) {
   let connection = 0;
   const snapshots: number[] = [];
@@ -26,7 +26,7 @@ function fakeClient(detail: SessionDetail, streams: RunEvent[][]) {
       }
     }),
   };
-  return { client: client as unknown as SpeedrailClient, snapshots };
+  return { client: client as unknown as LitespeedClient, snapshots };
 }
 
 describe('tui options', () => {
@@ -35,7 +35,7 @@ describe('tui options', () => {
     expect(options).toEqual({ url: 'http://127.0.0.1:3211', workspace: '/w', sessionId: undefined, model: undefined, providerId: undefined, mode: 'plan', permissionMode: 'auto' });
   });
   it('falls back to environment and cwd', () => {
-    const options = parseOptions([], { SPEEDRAIL_PORT: '4000' }, '/cwd');
+    const options = parseOptions([], { LITESPEED_PORT: '4000' }, '/cwd');
     expect(options.url).toBe('http://localhost:4000');
     expect(options.workspace).toBe('/cwd');
     expect(options.mode).toBeUndefined();
@@ -96,7 +96,7 @@ describe('tui session sync', () => {
   it('reports a fatal error when the snapshot fetch fails', async () => {
     vi.useFakeTimers();
     try {
-      const client = { api: vi.fn(async () => { throw new Error('HTTP 404'); }), events: vi.fn() } as unknown as SpeedrailClient;
+      const client = { api: vi.fn(async () => { throw new Error('HTTP 404'); }), events: vi.fn() } as unknown as LitespeedClient;
       const sync = new SessionSync(client, 'missing');
       sync.start();
       await vi.advanceTimersByTimeAsync(COALESCE_MS + 5);

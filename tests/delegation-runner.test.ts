@@ -28,7 +28,7 @@ describe('foreground bounded researcher Runner/API integration',()=>{
   const create=async(extra:Record<string,unknown>={})=>{const result=await api('/sessions',{permissionMode:'auto',...extra});expect(result.status).toBe(201);return result.body;};
   const run=async(id:string)=>{runner.start(id,'ROOT research');await runner.whenIdle();};
   beforeEach(async()=>{
-    directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-delegation-runner-')));store=new Store(join(directory,'state'));calls=[];
+    directory=await realpath(await mkdtemp(join(tmpdir(),'litespeed-delegation-runner-')));store=new Store(join(directory,'state'));calls=[];
     await writeFile(join(directory,'research.txt'),'Verified workspace evidence');await writeFile(join(directory,'AGENTS.md'),'Accepted guidance');
     respond=(body,res)=>{if(child(body)){if(body.messages.at(-1)?.role==='tool')text(res,'Child final evidence');else tools(res,[{name:'read_file',args:{path:'research.txt'}}]);}else if(body.messages.at(-1)?.role==='tool')text(res);else task(res);};
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
@@ -59,9 +59,9 @@ describe('foreground bounded researcher Runner/API integration',()=>{
   });
 
   it('accepted provider, model, project guidance and skills survive source and settings replacement before child launch',async()=>{
-    await mkdir(join(directory,'.speedrail','skills','inspect'),{recursive:true});await writeFile(join(directory,'.speedrail','skills','inspect','SKILL.md'),'Pinned skill body');await writeFile(join(directory,'.speedrail','profiles.json'),JSON.stringify({version:1,profiles:[],skills:[{id:'inspect',name:'Inspect',description:'Inspect project'}]}));
+    await mkdir(join(directory,'.litespeed','skills','inspect'),{recursive:true});await writeFile(join(directory,'.litespeed','skills','inspect','SKILL.md'),'Pinned skill body');await writeFile(join(directory,'.litespeed','profiles.json'),JSON.stringify({version:1,profiles:[],skills:[{id:'inspect',name:'Inspect',description:'Inspect project'}]}));
     const catalog=(await api('/profiles')).body;const s=await create({permissionMode:'ask',profile:{profileId:null,skillIds:['inspect'],catalogRevision:catalog.revision}});runner.start(s.id,'ROOT pin');await until(()=>runner.permissions(s.id).length===1);
-    store.saveSettings({providers:[{id:'test',name:'Replacement',kind:'openai',baseUrl:'http://127.0.0.1:1',apiKey:'fake-new-key'}]});await writeFile(join(directory,'AGENTS.md'),'Replacement guidance');await rm(join(directory,'.speedrail','skills','inspect','SKILL.md'));runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');await runner.whenIdle();
+    store.saveSettings({providers:[{id:'test',name:'Replacement',kind:'openai',baseUrl:'http://127.0.0.1:1',apiKey:'fake-new-key'}]});await writeFile(join(directory,'AGENTS.md'),'Replacement guidance');await rm(join(directory,'.litespeed','skills','inspect','SKILL.md'));runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');await runner.whenIdle();
     expect(calls).toHaveLength(4);for(const body of calls){expect(JSON.stringify(body.messages)).not.toContain('fake-accepted-key');expect(JSON.stringify(body.messages)).not.toContain('Replacement guidance');expect(body.messages[0].role).toBe('system');expect(body.messages[0].content).toContain('Accepted guidance');expect(body.messages[0].content).toContain('Pinned skill body');}expect(runner.delegations.list(s.id)[0].status).toBe('completed');
   });
 

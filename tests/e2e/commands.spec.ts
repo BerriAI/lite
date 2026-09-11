@@ -4,14 +4,14 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });
 let workspace: string, sessions: Session[], browserErrors: string[];
 
 test.beforeEach(async ({ page }) => {
   browserErrors = []; page.on('pageerror', error => browserErrors.push(error.message));
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-commands-browser-'))); sessions = [];
-  await mkdir(join(workspace, '.speedrail', 'commands'), { recursive: true });
-  await writeFile(join(workspace, '.speedrail', 'commands', 'inspect.md'), '# Inspect a target\nInspect $1 carefully. Full request: $ARGUMENTS');
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-commands-browser-'))); sessions = [];
+  await mkdir(join(workspace, '.litespeed', 'commands'), { recursive: true });
+  await writeFile(join(workspace, '.litespeed', 'commands', 'inspect.md'), '# Inspect a target\nInspect $1 carefully. Full request: $ARGUMENTS');
 });
 test.afterEach(async ({ request }) => {
   for (const session of sessions) {
@@ -73,5 +73,5 @@ test('built-in slash commands complete with Tab and execute locally without a pr
   await composer(page).fill('/plan');await page.getByRole('button',{name:'Send message',exact:true}).click();
   await expect(page.getByRole('combobox',{name:'Agent mode'})).toHaveValue('plan');
   expect((await detail(request,session)).messages).toHaveLength(0);
-  await expect(page.getByRole('button',{name:'Speedrail home',exact:true})).toHaveText('');
+  await expect(page.getByRole('button',{name:'Litespeed home',exact:true})).toHaveText('');
 });

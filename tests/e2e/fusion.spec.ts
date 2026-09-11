@@ -6,7 +6,7 @@ import type { Session, SessionDetail } from '../../shared/types';
 
 for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Expert Fusion', 'expert-fusion', 'Expert']] as const) {
   test(`${name}: configure roles, delegate, verify, inspect usage and transcript, undo, and switch to planning`, async ({ page, request }) => {
-    const workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-fusion-browser-')));
+    const workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-fusion-browser-')));
     await writeFile(join(workspace, 'package.json'), JSON.stringify({ scripts: { test: 'node check.cjs' } }));
     await writeFile(join(workspace, 'check.cjs'), 'const fs=require("node:fs");if(fs.readFileSync("answer.txt","utf8")!=="42\\n")process.exit(1);console.log("Answer verified");');
     let session: Session | undefined;
@@ -34,7 +34,7 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await page.getByRole('button', { name: 'Done', exact: true }).click();
       await page.reload();
       expect((await detail()).session).toMatchObject({ architecture: { kind }, planner: { providerId: 'fixture', model: 'budget-model' } });
-      await page.getByRole('textbox', { name: 'Message Speedrail', exact: true }).fill(`FUSION_BROWSER ${session!.id} implement and verify`);
+      await page.getByRole('textbox', { name: 'Message Litespeed', exact: true }).fill(`FUSION_BROWSER ${session!.id} implement and verify`);
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('npm test passed');
       await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toHaveCount(0);
@@ -57,7 +57,7 @@ for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Ex
       await expect(readFile(join(workspace, 'answer.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
       await page.getByRole('combobox', { name: 'Agent mode', exact: true }).selectOption('plan');
       await expect(page.locator('.model-trigger')).toContainText('budget-model');
-      await page.getByRole('textbox', { name: 'Message Speedrail', exact: true }).fill(`FUSION_BROWSER ${session!.id} plan only`);
+      await page.getByRole('textbox', { name: 'Message Litespeed', exact: true }).fill(`FUSION_BROWSER ${session!.id} plan only`);
       await page.getByRole('button', { name: 'Send message', exact: true }).click();
       await expect(page.getByRole('article', { name: 'Assistant message' }).last()).toContainText('Planning only');
       expect((await detail()).delegations).toHaveLength(0);

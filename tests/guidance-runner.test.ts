@@ -15,11 +15,11 @@ const tools = (res: ServerResponse, calls: { name: string; args?: Record<string,
 describe('storm breaker, no-progress guidance and mid-turn steering', () => {
   let directory: string, store: Store, server: Server, provider: Server, url: string, runner: ReturnType<typeof createApp>['runner'];
   let calls: any[], respond: (body: any, res: ServerResponse) => void;
-  const api = async (path: string, data?: unknown, method?: string, surface?: string) => { const response = await fetch(url + '/api' + path, { method: method ?? (data === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', ...(surface ? { 'X-Speedrail-Client': surface } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
+  const api = async (path: string, data?: unknown, method?: string, surface?: string) => { const response = await fetch(url + '/api' + path, { method: method ?? (data === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', ...(surface ? { 'X-Litespeed-Client': surface } : {}) }, body: data === undefined ? undefined : JSON.stringify(data) }); return { status: response.status, body: await response.json() }; };
   const create = async (extra: Record<string, unknown> = {}) => { const result = await api('/sessions', { permissionMode: 'auto', ...extra }); expect(result.status).toBe(201); return result.body; };
   const run = async (id: string, content = 'Do the task') => { runner.start(id, content); await runner.whenIdle(); };
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-guidance-'))); store = new Store(join(directory, 'state')); calls = [];
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-guidance-'))); store = new Store(join(directory, 'state')); calls = [];
     respond = (_body, res) => text(res);
     provider = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const part of req) chunks.push(part); const body = JSON.parse(Buffer.concat(chunks).toString()); calls.push(body); respond(body, res); });
     const baseUrl = await listen(provider);
@@ -35,7 +35,7 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
       await runner.whenIdle();
       expect(store.messages(session.id).findLast(message => message.role === 'user')?.clientSurface).toBe(surface);
       const request = calls.at(-1), runtime = request.messages.find((message: any) => String(message.content).includes('<session-context'))?.content;
-      expect(runtime).toContain(surface === 'web' ? 'Speedrail web UI' : surface === 'terminal' ? 'Speedrail terminal UI' : 'Speedrail command-line run');
+      expect(runtime).toContain(surface === 'web' ? 'Litespeed web UI' : surface === 'terminal' ? 'Litespeed terminal UI' : 'Litespeed command-line run');
       expect(runtime).toContain(session.workspace);
       if (surface === 'web') { expect(runtime).toContain('Save settings'); expect(runtime).toContain('New session'); }
     }
@@ -50,7 +50,7 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     const queued = await api(`/sessions/${session.id}/queue`, { content: 'Queued from the browser' }, 'POST', 'web');
     expect(queued.body.items[0].clientSurface).toBe('web');
     runner.resumeQueue(session.id); await runner.whenIdle();
-    expect(JSON.stringify(calls.at(-1).messages)).toContain('Interface: Speedrail web UI');
+    expect(JSON.stringify(calls.at(-1).messages)).toContain('Interface: Litespeed web UI');
     expect((await api(`/sessions/${session.id}/messages`, { content: 'Unspecified client', clientSurface: 'web' }, 'POST', 'untrusted-interface-text')).status).toBe(202);
     await runner.whenIdle();
     expect(store.messages(session.id).findLast(message => message.role === 'user')?.clientSurface).toBe('api');

@@ -19,7 +19,7 @@ describe('long-running context and gateway session continuity', () => {
   let directory: string, store: Store, server: Server, runner: ReturnType<typeof createApp>['runner'];
   let calls: { sessionId: string | undefined; body: any }[], respond: (body: any, res: ServerResponse) => void;
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-continuation-')));
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-continuation-')));
     store = new Store(join(directory, 'state')); calls = [];
     server = createServer(async (req, res) => {
       const chunks: Buffer[] = []; for await (const part of req) chunks.push(part);

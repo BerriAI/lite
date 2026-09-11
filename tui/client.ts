@@ -1,5 +1,5 @@
 /** HTTP + SSE client for the terminal UI. The base URL is validated by the
- * launcher; everything here assumes a reachable Speedrail server and surfaces
+ * launcher; everything here assumes a reachable Litespeed server and surfaces
  * failures as thrown errors with an optional HTTP status. */
 import type { RunEvent } from '../shared/types.js';
 import { SseParser } from './protocol.js';
@@ -8,18 +8,18 @@ export class ApiError extends Error {
   constructor(message: string, readonly status?: number) { super(message); }
 }
 
-export class SpeedrailClient {
+export class LitespeedClient {
   constructor(readonly base: string) {}
   async api<T>(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
     const response = await fetch(`${this.base}/api${path}`, {
       method: method ?? (body === undefined ? 'GET' : 'POST'),
-      headers: { 'Content-Type': 'application/json', 'X-Speedrail-Client': 'terminal' },
+      headers: { 'Content-Type': 'application/json', 'X-Litespeed-Client': 'terminal' },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: signal ?? AbortSignal.timeout(30000),
     });
     let data: Record<string, unknown>;
     try { data = await response.json() as Record<string, unknown>; }
-    catch { throw new ApiError(`The Speedrail server returned an invalid response (HTTP ${response.status}).`, response.status); }
+    catch { throw new ApiError(`The Litespeed server returned an invalid response (HTTP ${response.status}).`, response.status); }
     if (!response.ok) throw new ApiError(typeof data.error === 'string' && data.error ? data.error : `HTTP ${response.status}`, response.status);
     return data as T;
   }

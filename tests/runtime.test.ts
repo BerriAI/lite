@@ -6,9 +6,9 @@ import { fileURLToPath } from 'node:url';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 
-// Opt in after building: SPEEDRAIL_TEST_NODE=/absolute/path/to/node vitest run tests/runtime.test.ts
+// Opt in after building: LITESPEED_TEST_NODE=/absolute/path/to/node vitest run tests/runtime.test.ts
 // No credential-bearing environment is inherited by the built app or CLI.
-const runtime = process.env.SPEEDRAIL_TEST_NODE;
+const runtime = process.env.LITESPEED_TEST_NODE;
 const project = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const instances: ChildProcess[] = [];
 const servers: Server[] = [];
@@ -37,7 +37,7 @@ afterEach(async () => {
 
 describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () => {
   it('serves production and CLI and preserves exact turn undo/redo across restarts without provider replay', async () => {
-    temporary = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-runtime-')));
+    temporary = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-runtime-')));
     const installation = join(temporary, 'installation');
     const workspace = join(temporary, 'workspace');
     const data = join(temporary, 'data');
@@ -47,7 +47,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     await cp(join(project, 'bin'), join(installation, 'bin'), { recursive: true });
     await cp(join(project, 'package.json'), join(installation, 'package.json'));
     await symlink(join(project, 'node_modules'), join(installation, 'node_modules'));
-    const env = { ...environment(temporary), SPEEDRAIL_DATA_DIR: data, SPEEDRAIL_WORKSPACE: workspace };
+    const env = { ...environment(temporary), LITESPEED_DATA_DIR: data, LITESPEED_WORKSPACE: workspace };
     const version = await processResult(runtime!, ['--version'], temporary, env).finished;
     expect(version.code).toBe(0);
     expect(version.output.trim()).toMatch(/^v26\.4\.0$/);
@@ -113,8 +113,8 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       const reservation = createServer();
       const port = await listen(reservation);
       await close(reservation);
-      const args = cli ? [join(installation, 'bin/speedrail.mjs'), 'serve', '--port', String(port), '--workspace', workspace] : [join(installation, 'dist/server/index.js')];
-      const app = processResult(runtime!, args, workspace, { ...env, SPEEDRAIL_PORT: String(port) });
+      const args = cli ? [join(installation, 'bin/litespeed.mjs'), 'serve', '--port', String(port), '--workspace', workspace] : [join(installation, 'dist/server/index.js')];
+      const app = processResult(runtime!, args, workspace, { ...env, LITESPEED_PORT: String(port) });
       const base = `http://127.0.0.1:${port}`;
       for (let attempt = 0; attempt < 100; attempt++) {
         if (app.child.exitCode !== null || app.child.signalCode !== null) throw new Error(`Built app exited before health: ${app.output()}`);
@@ -130,7 +130,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       expect(response.ok, JSON.stringify(result)).toBe(true);
       return result;
     };
-    expect(await api('/health')).toEqual({ ok: true, name: 'speedrail', version: '0.1.0' });
+    expect(await api('/health')).toEqual({ ok: true, name: 'litespeed', version: '0.1.0' });
     expect(await (await fetch(app.base + '/')).text()).toContain('<div id="root">');
     const initial = await api('/settings');
     expect(initial.providers).toEqual([]);
@@ -218,7 +218,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(await api(`${sessionPath}/changes`)).toEqual(recorded);
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     expect(providerCalls).toHaveLength(2);
-    const cli = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'sessions', '--url', app.base], workspace, env).finished;
+    const cli = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'sessions', '--url', app.base], workspace, env).finished;
     expect(cli.code).toBe(0);
     expect(cli.output).toContain(session.id);
     // Exercise ask_user through the bundled production server, not source imports.
@@ -434,25 +434,25 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     // turns and history must use the pinned private snapshot after files vanish.
     const profileInstructions = 'RUNTIME_PROFILE_PRIVATE_BODY — review, never alter the fixture.';
     const skillBody = 'RUNTIME_SKILL_PRIVATE_BODY — preserve exact UTF-8\r\nno final newline';
-    await mkdir(join(workspace, '.speedrail', 'skills', 'testing'), { recursive: true });
-    await writeFile(join(workspace, '.speedrail', 'skills', 'testing', 'SKILL.md'), skillBody);
-    await writeFile(join(workspace, '.speedrail', 'profiles.json'), JSON.stringify({ version: 1,
+    await mkdir(join(workspace, '.litespeed', 'skills', 'testing'), { recursive: true });
+    await writeFile(join(workspace, '.litespeed', 'skills', 'testing', 'SKILL.md'), skillBody);
+    await writeFile(join(workspace, '.litespeed', 'profiles.json'), JSON.stringify({ version: 1,
       profiles: [{ id: 'review', name: 'Runtime Review', instructions: profileInstructions, tools: ['read_file', 'grep'], defaultModel: { providerId: 'runtime', model: 'runtime-model' }, defaultMode: 'plan', skills: ['testing'] }],
       skills: [{ id: 'testing', name: 'Runtime Testing', description: 'Verify the pinned fixture.' }],
     }));
-    const catalogCli = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'profiles', '--json', '--url', app.base], workspace, env).finished;
+    const catalogCli = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'profiles', '--json', '--url', app.base], workspace, env).finished;
     expect(catalogCli.code, catalogCli.output).toBe(0);
     const profileCatalog = JSON.parse(catalogCli.output);
     expect(profileCatalog).toMatchObject({ workspace, profiles: [{ id: 'review', skills: ['testing'] }], skills: [{ id: 'testing' }], diagnostics: [] });
     expect(catalogCli.output).not.toContain('PRIVATE_BODY');
     expect(providerCalls).toHaveLength(7); expect(catalogCalls).toBe(1);
-    const profileCli = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', 'Inspect the runtime profile and attempt the forbidden write.', '--profile', 'review', '--skills', 'testing', '--auto', '--url', app.base], workspace, env).finished;
+    const profileCli = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', 'Inspect the runtime profile and attempt the forbidden write.', '--profile', 'review', '--skills', 'testing', '--auto', '--url', app.base], workspace, env).finished;
     expect(profileCli.code, profileCli.output).toBe(0);
     const profileId = profileCli.output.match(/Session: ([\w-]+)/)?.[1]; expect(profileId).toBeTruthy();
     const profilePath = `/sessions/${profileId}`;
     const profileCompleted = await api(profilePath), profilePinned = await api(`${profilePath}/profile`);
     expect(profileCompleted.session).toMatchObject({ mode: 'plan', permissionMode: 'auto', providerId: 'runtime', model: 'runtime-model', profile: { profileId: 'review', skillIds: ['testing'], revision: profileCatalog.revision, tools: ['read_file', 'grep'] } });
-    expect(profilePinned.pinned).toMatchObject({ instructions: profileInstructions, skills: [{ id: 'testing', body: skillBody, path: '.speedrail/skills/testing/SKILL.md' }] });
+    expect(profilePinned.pinned).toMatchObject({ instructions: profileInstructions, skills: [{ id: 'testing', body: skillBody, path: '.litespeed/skills/testing/SKILL.md' }] });
     expect(profilePinned.source.status).toBe('current');
     expect(profileCompleted.messages.flatMap((message: { toolCalls?: unknown[] }) => message.toolCalls ?? [])).toMatchObject([{ name: 'write_file', status: 'denied' }]);
     expect(profileCompleted.permissions).toEqual([]); expect(profileCompleted.questions).toEqual([]);
@@ -464,7 +464,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     }
     expect(JSON.stringify(profileCompleted)).not.toContain('PRIVATE_BODY'); expect(profileCli.output).not.toContain('PRIVATE_BODY');
     await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-    await rm(join(workspace, '.speedrail'), { recursive: true });
+    await rm(join(workspace, '.litespeed'), { recursive: true });
     app.child.kill('SIGTERM'); expect((await app.finished).code).toBe(0);
     app = await start(true);
     const profileRestarted = await api(profilePath), missingProfile = await api(`${profilePath}/profile`);
@@ -473,7 +473,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(providerCalls).toHaveLength(9); expect(catalogCalls).toBe(1);
     // Removing Plan does not expand the pinned profile allowlist, even in Auto.
     await api(profilePath, { mode: 'build', expectedConfigRevision: profileRestarted.session.configRevision }, 'PATCH');
-    const continuedProfile = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', 'Continue the runtime profile from pinned instructions.', '--session', profileId!, '--url', app.base], workspace, env).finished;
+    const continuedProfile = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', 'Continue the runtime profile from pinned instructions.', '--session', profileId!, '--url', app.base], workspace, env).finished;
     expect(continuedProfile.code, continuedProfile.output).toBe(0);
     expect(providerCalls).toHaveLength(11);
     for (const request of providerCalls.slice(9)) {
@@ -546,7 +546,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(providerCalls).toHaveLength(12); expect(catalogCalls).toBe(1);
     expect(await readFile(join(workspace, 'runtime.txt'))).toEqual(fixtureBytes);
     await expect(readFile(join(workspace, 'profile-forbidden.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(readFile(join(workspace, '.speedrail', 'profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'profiles.json'))).rejects.toMatchObject({ code: 'ENOENT' });
     // Exercise the built MCP manager with an isolated stdio process, not a
     // source import. Its protocol input is bounded and every external action
     // is logged outside the workspace so history cannot manufacture evidence.
@@ -563,7 +563,7 @@ const [log,catalog,notification,endpoint]=process.argv.slice(2);
 const record=event=>appendFileSync(log,JSON.stringify({event,endpoint})+'\\n');
 const send=value=>process.stdout.write(JSON.stringify(value)+'\\n');
 const reply=(id,result)=>send({jsonrpc:'2.0',id,result});
-if(process.version!==${JSON.stringify(version.output.trim())}||process.env.OPENAI_API_KEY||process.env.ANTHROPIC_API_KEY||process.env.SPEEDRAIL_DATA_DIR)process.exit(3);
+if(process.version!==${JSON.stringify(version.output.trim())}||process.env.OPENAI_API_KEY||process.env.ANTHROPIC_API_KEY||process.env.LITESPEED_DATA_DIR)process.exit(3);
 record('spawn');
 watchFile(notification,{interval:10},(now,old)=>{if(now.mtimeMs!==old.mtimeMs){record('changed');send({jsonrpc:'2.0',method:'notifications/tools/list_changed'});}});
 createInterface({input:process.stdin}).on('line',line=>{
@@ -601,7 +601,7 @@ process.stdin.on('end',()=>process.exit(0));
     const coldRefresh = await fetch(`${app.base}/api/mcp/runtime/refresh`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedRevision: coldMcp.servers[0].revision, expectedConfigRevision: coldMcp.configRevision }) });
     expect(coldRefresh.status).toBe(409);
     await coldRefresh.json();
-    const coldProbe = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP cold probe'], workspace, env).finished;
+    const coldProbe = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP cold probe'], workspace, env).finished;
     expect(coldProbe.code, coldProbe.output).toBe(0);
     expect(providerCalls).toHaveLength(13);
     expect(providerCalls.at(-1)?.tools?.some(tool => tool.function.name.startsWith('mcp_'))).toBe(false);
@@ -637,7 +637,7 @@ process.stdin.on('end',()=>process.exit(0));
     expect(await api(`${mcpPath}/history/redo`, { checkpointId: mcpCheckpoint })).toEqual(mcpCompleted.history);
     expect((await api(mcpPath)).messages).toEqual(mcpCompleted.messages);
     expect(await mcpRecords()).toEqual(mcpActionsBeforeRestart); expect(providerCalls).toHaveLength(15);
-    const restartProbe = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP restart probe'], workspace, env).finished;
+    const restartProbe = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', '--url', app.base, '--auto', '--json', 'runtime MCP restart probe'], workspace, env).finished;
     expect(restartProbe.code, restartProbe.output).toBe(0);
     expect(providerCalls).toHaveLength(16);
     expect(providerCalls.at(-1)?.tools?.some(tool => tool.function.name.startsWith('mcp_'))).toBe(false);
@@ -691,14 +691,14 @@ process.stdin.on('end',()=>process.exit(0));
     // noninteractive Ask denies without creating a child; explicit Plan+Auto
     // launches one bounded researcher whose only action is reading exact bytes.
     const mcpBeforeResearch = await mcpRecords();
-    const deniedResearch = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', '--url', app.base, '--plan', '--json', 'runtime delegation denied noninteractive'], workspace, env).finished;
+    const deniedResearch = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', '--url', app.base, '--plan', '--json', 'runtime delegation denied noninteractive'], workspace, env).finished;
     expect(deniedResearch.code, deniedResearch.output).toBe(0);
     expect(deniedResearch.output).toContain('Denied task: interactive approval required');
     expect(providerCalls).toHaveLength(24);
     const afterDenied = (await api('/sessions')).sessions;
     const deniedSession = afterDenied.find((value: { title: string }) => value.title === 'runtime delegation denied noninteractive');
     expect(deniedSession).toBeTruthy(); expect((await api(`/sessions/${deniedSession.id}`)).delegations).toEqual([]);
-    const research = await processResult(runtime!, [join(installation, 'bin/speedrail.mjs'), 'run', '--url', app.base, '--plan', '--auto', '--json', 'runtime delegation CLI read'], workspace, env).finished;
+    const research = await processResult(runtime!, [join(installation, 'bin/litespeed.mjs'), 'run', '--url', app.base, '--plan', '--auto', '--json', 'runtime delegation CLI read'], workspace, env).finished;
     expect(research.code, research.output).toBe(0); expect(research.output).toContain('Runtime delegation parent complete.');
     expect(providerCalls).toHaveLength(28);
     const researchSession = (await api('/sessions')).sessions.find((value: { title: string }) => value.title === 'runtime delegation CLI read');

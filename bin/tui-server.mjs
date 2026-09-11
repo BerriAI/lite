@@ -1,3 +1,4 @@
+import { LEGACY_NAMES } from './legacy.mjs';
 import { spawn } from 'node:child_process';
 import { existsSync, openSync, closeSync, mkdirSync } from 'node:fs';
 import { mkdir, rm, stat } from 'node:fs/promises';
@@ -6,10 +7,10 @@ import { join, resolve } from 'node:path';
 const delay = milliseconds => new Promise(done => setTimeout(done, milliseconds));
 async function healthy(base) {
   const response = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(1500) });
-  if (!response.ok) throw new Error(`Speedrail returned HTTP ${response.status}.`);
+  if (!response.ok) throw new Error(`Litespeed returned HTTP ${response.status}.`);
   const value = await response.json();
-  if (value.ok !== true || typeof value.version !== 'string') throw new Error('This address is not a Speedrail server.');
-  if (value.name !== 'speedrail') throw new Error('An older agent server is already running at this address. Stop it, migrate saved data if needed, and run speedrail again.');
+  if (value.ok !== true || typeof value.version !== 'string') throw new Error('This address is not a Litespeed server.');
+  if (value.name !== 'litespeed') throw new Error('An older agent server is already running at this address. Stop it, migrate saved data if needed, and run litespeed again.');
 }
 
 /** An explicit --url is always an attachment. HTTP errors never mean “start a
@@ -20,9 +21,9 @@ export async function ensureTuiServer({ base, root, workspace, explicit, env = p
     if (explicit || !['ECONNREFUSED', 'ConnectionRefused'].includes(error?.cause?.code)) throw error;
   }
   const address = new URL(base);
-  if (!['localhost', '127.0.0.1'].includes(address.hostname) || address.pathname !== '/' || address.protocol !== 'http:') throw new Error('Start the server with speedrail serve, then attach with --url.');
-  const directory = resolve(root, env.SPEEDRAIL_DATA_DIR || '.speedrail');
-  if (!existsSync(join(directory, 'speedrail.db')) && existsSync(join(root, '.lite', 'lite.db'))) throw new Error('Saved data from the previous agent was found. Stop its server and run npm run migrate in the Speedrail checkout.');
+  if (!['localhost', '127.0.0.1'].includes(address.hostname) || address.pathname !== '/' || address.protocol !== 'http:') throw new Error('Start the server with litespeed serve, then attach with --url.');
+  const directory = resolve(root, env.LITESPEED_DATA_DIR || '.litespeed');
+  if (!existsSync(join(directory, 'litespeed.db')) && LEGACY_NAMES.some(name => existsSync(join(root, `.${name}`, `${name}.db`)) || existsSync(join(directory, `${name}.db`)))) throw new Error('Saved data from the previous agent was found. Stop its server and run npm run migrate in the Litespeed checkout.');
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const lock = join(directory, 'tui-start.lock');
   let acquired = false;
@@ -36,23 +37,23 @@ export async function ensureTuiServer({ base, root, workspace, explicit, env = p
       await delay(100);
     }
   }
-  if (!acquired) throw new Error('Another Speedrail server startup is in progress. Try again shortly.');
+  if (!acquired) throw new Error('Another Litespeed server startup is in progress. Try again shortly.');
   try {
     try { await healthy(base); return; } catch (error) { if (!['ECONNREFUSED', 'ConnectionRefused'].includes(error?.cause?.code)) throw error; }
     const log = join(directory, 'tui-server.log'), fd = openSync(log, 'a', 0o600);
     const entry = existsSync(join(root, 'dist/server/index.js')) ? [join(root, 'dist/server/index.js')] : ['--import', 'tsx', join(root, 'server/index.ts')];
-    const server = spawn(process.execPath, entry, { cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...env, SPEEDRAIL_PORT: address.port || '80', SPEEDRAIL_WORKSPACE: workspace } });
+    const server = spawn(process.execPath, entry, { cwd: root, detached: true, stdio: ['ignore', fd, fd], env: { ...env, LITESPEED_PORT: address.port || '80', LITESPEED_WORKSPACE: workspace } });
     closeSync(fd);
     let failed;
     server.on('error', error => { failed = error; });
     server.unref();
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
-      if (failed || server.exitCode !== null) { server.kill('SIGTERM'); throw new Error(`Could not start Speedrail. Check ${log}.`); }
+      if (failed || server.exitCode !== null) { server.kill('SIGTERM'); throw new Error(`Could not start Litespeed. Check ${log}.`); }
       try { await healthy(base); return { pid: server.pid, log }; } catch { /* Wait for the owned process to listen. */ }
       await delay(100);
     }
     server.kill('SIGTERM');
-    throw new Error(`Speedrail did not become ready. Check ${log}.`);
+    throw new Error(`Litespeed did not become ready. Check ${log}.`);
   } finally { await rm(lock, { recursive: true, force: true }); }
 }

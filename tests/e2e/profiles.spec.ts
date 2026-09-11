@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import type { Session, SessionDetail, Settings } from '../../shared/types';
 
-const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Speedrail', exact: true });
+const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });
 const dialog = (page: Page) => page.getByRole('dialog', { name: 'Settings', exact: true });
 let workspace: string, settings: Settings, sessions: Session[];
 const manifest = () => ({ version: 1, profiles: [
@@ -12,10 +12,10 @@ const manifest = () => ({ version: 1, profiles: [
   { id: 'builder', name: 'Focused builder', description: 'Implement small tested changes.', instructions: 'PROFILE_BUILDER_PINNED: Make a small complete change.', tools: ['read_file', 'write_file', 'edit_file', 'bash', 'todo_read', 'todo_write'], defaultModel: { providerId: 'fixture', model: 'test-fast' }, defaultMode: 'build' },
 ], skills: [{ id: 'review', name: 'Review checklist', description: 'A deliberate verification checklist.' }] });
 test.beforeEach(async ({ request }) => {
-  workspace = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-profile-browser-'))); sessions = [];
-  await mkdir(join(workspace, '.speedrail', 'skills', 'review'), { recursive: true });
-  await writeFile(join(workspace, '.speedrail', 'profiles.json'), JSON.stringify(manifest()));
-  await writeFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'SKILL_REVIEW_PINNED: Verify edge cases and do not invent test results.');
+  workspace = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-profile-browser-'))); sessions = [];
+  await mkdir(join(workspace, '.litespeed', 'skills', 'review'), { recursive: true });
+  await writeFile(join(workspace, '.litespeed', 'profiles.json'), JSON.stringify(manifest()));
+  await writeFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'SKILL_REVIEW_PINNED: Verify edge cases and do not invent test results.');
   await writeFile(join(workspace, 'README.md'), '# Profile fixture\n');
   settings = await (await request.get('/api/settings')).json();
   expect((await request.patch('/api/settings', { data: { workspace } })).ok()).toBe(true);
@@ -98,7 +98,7 @@ test('excluded tools cannot execute even when the provider emits them in automat
 test('edited and deleted source files never silently change the active pinned instructions', async ({ page, request }) => {
   const session = await create(request); await open(page, session); await use(page, 'Careful inspector', true);
   const pinned = (await detail(request, session.id)).session.profile;
-  await writeFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'SKILL_REVIEW_CHANGED: This is a different instruction.');
+  await writeFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'SKILL_REVIEW_CHANGED: This is a different instruction.');
   let panel = await picker(page); await expect(panel).toContainText(/changed|reload/i);
   await panel.getByRole('button', { name: 'Close dialog', exact: true }).click();
   let prompt = 'PROFILE_BROWSER keep accepted snapshot'; await send(page, request, session, prompt);
@@ -106,7 +106,7 @@ test('edited and deleted source files never silently change the active pinned in
   expect((await detail(request, session.id)).session.profile).toEqual(pinned);
   panel = await picker(page); await panel.getByRole('button', { name: 'Reload profile', exact: true }).click(); await expect(panel).toHaveCount(0);
   const reloaded = (await detail(request, session.id)).session.profile; expect(reloaded?.revision).not.toBe(pinned?.revision);
-  await rm(join(workspace, '.speedrail', 'profiles.json'));
+  await rm(join(workspace, '.litespeed', 'profiles.json'));
   prompt = 'PROFILE_BROWSER keep snapshot after source deletion'; await send(page, request, session, prompt);
   [call] = await profileCalls(request, prompt); expect(systemText(call)).toContain('SKILL_REVIEW_CHANGED');
   expect((await detail(request, session.id)).session.profile).toEqual(reloaded);
@@ -140,7 +140,7 @@ test('a stale profile dialog cannot overwrite a newer selection from another cli
 test('forks retain the pinned configuration without source reads while imports remain unprofiled', async ({ page, request }) => {
   const session = await create(request); await open(page, session); await use(page, 'Careful inspector', true); await send(page, request, session, 'PROFILE_BROWSER seed fork');
   const pinned = (await detail(request, session.id)).session.profile;
-  await rm(join(workspace, '.speedrail', 'profiles.json')); await rm(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'));
+  await rm(join(workspace, '.litespeed', 'profiles.json')); await rm(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'));
   const response = await request.post(`/api/sessions/${session.id}/fork`, { data: {} }); expect(response.status()).toBe(201); const fork: Session = await response.json(); sessions.push(fork);
   expect(fork.profile).toEqual(pinned); await open(page, fork); await send(page, request, fork, 'PROFILE_BROWSER fork without source');
   const [call] = await profileCalls(request, 'PROFILE_BROWSER fork without source'); expect(systemText(call)).toContain('SKILL_REVIEW_PINNED');
@@ -166,7 +166,7 @@ test('compaction archives copy the pinned configuration and undo does not reconf
 
 test('invalid project configuration is visible and cannot replace an active profile', async ({ page, request }) => {
   const session = await create(request); await open(page, session); await use(page); const pinned = (await detail(request, session.id)).session.profile;
-  await writeFile(join(workspace, '.speedrail', 'profiles.json'), '{"version":1,"profiles":[{"id":"bad","name":"Unsafe","tools":["task"]}],"skills":[]}');
+  await writeFile(join(workspace, '.litespeed', 'profiles.json'), '{"version":1,"profiles":[{"id":"bad","name":"Unsafe","tools":["task"]}],"skills":[]}');
   const panel = await picker(page); await expect(panel).toContainText(/invalid|unsupported|not allowed|strict version 1 schema/i);
   expect((await detail(request, session.id)).session.profile).toEqual(pinned); await expect(panel.getByRole('button', { name: 'Use default', exact: true })).toBeEnabled();
 });
@@ -239,17 +239,17 @@ test('profiles use the Settings layout and can be created, edited, and deliberat
   await expect(panel.getByLabel('Profile instructions', { exact: true })).toBeHidden();
   await panel.getByRole('button', { name: 'Project profiles', exact: true }).click();
   await expect(panel.getByLabel('Profile instructions', { exact: true })).toHaveValue('PROFILE_RELEASE_PINNED: Check compatibility and document verification.');
-  await page.screenshot({ path: '/tmp/speedrail-profile-editor-desktop.png', animations: 'disabled' });
+  await page.screenshot({ path: '/tmp/litespeed-profile-editor-desktop.png', animations: 'disabled' });
   await panel.getByRole('button', { name: 'Save profile', exact: true }).click();
   await expect(panel.getByRole('status')).toContainText('Profile saved');
   expect((await detail(request, session.id)).session.profile).toBeUndefined();
-  const manifestOnDisk = JSON.parse(await readFile(join(workspace, '.speedrail/profiles.json'), 'utf8'));
+  const manifestOnDisk = JSON.parse(await readFile(join(workspace, '.litespeed/profiles.json'), 'utf8'));
   expect(manifestOnDisk.profiles).toHaveLength(3); expect(manifestOnDisk.skills).toHaveLength(1);
-  await page.screenshot({ path: '/tmp/speedrail-profiles-desktop.png', animations: 'disabled' });
+  await page.screenshot({ path: '/tmp/litespeed-profiles-desktop.png', animations: 'disabled' });
   await panel.getByRole('button', { name: 'Edit profile', exact: true }).click();
   await panel.getByLabel('Profile instructions', { exact: true }).fill('PROFILE_RELEASE_EDITED: Check compatibility and verify examples.');
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: '/tmp/speedrail-profile-editor-mobile.png', animations: 'disabled' });
+  await page.screenshot({ path: '/tmp/litespeed-profile-editor-mobile.png', animations: 'disabled' });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await panel.getByRole('button', { name: 'Save profile', exact: true }).click();
   await panel.getByRole('button', { name: 'Use profile', exact: true }).click();

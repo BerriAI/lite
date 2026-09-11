@@ -10,8 +10,8 @@ import { chromium } from '@playwright/test';
 
 const root=resolve(import.meta.dirname,'..'), artifacts=join(root,'test-results-tui','interactions');
 await mkdir(artifacts,{recursive:true});
-const config=await mkdtemp(join(tmpdir(),'speedrail-tui-setup-'));
-const server=spawn(process.execPath,['--import','tsx','scripts/e2e-server.ts'],{cwd:root,env:{...process.env,SPEEDRAIL_E2E_PORT:'0',SPEEDRAIL_E2E_NO_VITE:'1',SPEEDRAIL_E2E_ONBOARDING:'1'},stdio:['ignore','pipe','pipe']});
+const config=await mkdtemp(join(tmpdir(),'litespeed-tui-setup-'));
+const server=spawn(process.execPath,['--import','tsx','scripts/e2e-server.ts'],{cwd:root,env:{...process.env,LITESPEED_E2E_PORT:'0',LITESPEED_E2E_NO_VITE:'1',LITESPEED_E2E_ONBOARDING:'1'},stdio:['ignore','pipe','pipe']});
 let log='',terminal,emulator,browser;
 server.stdout.on('data',chunk=>log+=chunk);server.stderr.on('data',chunk=>log+=chunk);
 const screen=()=>emulator?Array.from({length:emulator.rows},(_,row)=>emulator.buffer.active.getLine(emulator.buffer.active.viewportY+row)?.translateToString(true,0,emulator.cols)??'').join('\n'):'';
@@ -46,7 +46,7 @@ try{
   const settings=await api('/settings');browser=await chromium.launch({channel:'chrome',headless:true});
   async function launch(session,cols=100,rows=38){
     await stopTerminal();emulator=new xterm.Terminal({cols,rows,allowProposedApi:true});
-    terminal=pty.spawn(process.execPath,['bin/speedrail.mjs','tui','--url',base,'--session',session.id,'--workspace',settings.workspace],{cwd:root,cols,rows,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',SPEEDRAIL_DISABLE_PROJECT_CONFIG:'1',SPEEDRAIL_CONFIG_DIR:config,XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
+    terminal=pty.spawn(process.execPath,['bin/litespeed.mjs','tui','--url',base,'--session',session.id,'--workspace',settings.workspace],{cwd:root,cols,rows,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',LITESPEED_DISABLE_PROJECT_CONFIG:'1',LITESPEED_CONFIG_DIR:config,XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
     const display=emulator;terminal.onData(chunk=>display.write(chunk));await waitFor(()=>screen().includes('Ctrl+P Commands'),'ready');
     await new Promise(done=>setTimeout(done,100));
   }
@@ -57,7 +57,7 @@ try{
   terminal.write('\x15/setup\r');
   await waitFor(()=>screen().includes('Connect your LiteLLM gateway · 1 of 3'),'gateway setup');await save('00-setup-gateway');
   terminal.write('\r');await waitFor(()=>screen().includes('Gateway base URL')&&screen().includes('Enter save'),'gateway URL');terminal.write('\r');await waitFor(()=>screen().includes('LiteLLM API key'),'gateway key');terminal.write('fixture-key');await waitFor(()=>screen().includes('•••'),'masked key');assert(!screen().includes('fixture-key'));terminal.write('\r');
-  await waitFor(()=>screen().includes('Set up Speedrail · 2 of 3'),'first-run setup');await save('01-setup-architecture');
+  await waitFor(()=>screen().includes('Set up Litespeed · 2 of 3'),'first-run setup');await save('01-setup-architecture');
   terminal.write('\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('Worker: Choose a model'),'team setup');
   terminal.write('\x1b[H\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('Enter a model ID'),'model chooser');terminal.write('test-fast');await waitFor(()=>screen().includes('› test-fast'),'model result');terminal.write('\r');
   await waitFor(()=>screen().includes('Worker: test-fast'),'worker selected');await save('02-setup-models');

@@ -16,10 +16,10 @@ describe('independent profile acceptance and visibility audit', () => {
   let directory: string, store: Store, server: Server, providerServer: Server, url: string, runner: ReturnType<typeof createApp>['runner'], selected: ProfileChoice;
   let calls: unknown[];
   beforeEach(async () => {
-    directory = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-profile-audit-'))); calls = [];
-    await mkdir(join(directory, '.speedrail/skills/check'), { recursive: true });
-    await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'review', name: 'Review', tools: ['read_file'], instructions: 'PRIVATE_PINNED_PROFILE', defaultModel: { providerId: 'primary', model: 'review-model' } }], skills: [{ id: 'check', name: 'Check' }] }));
-    await writeFile(join(directory, '.speedrail/skills/check/SKILL.md'), 'PRIVATE_PINNED_SKILL');
+    directory = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-profile-audit-'))); calls = [];
+    await mkdir(join(directory, '.litespeed/skills/check'), { recursive: true });
+    await writeFile(join(directory, '.litespeed/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'review', name: 'Review', tools: ['read_file'], instructions: 'PRIVATE_PINNED_PROFILE', defaultModel: { providerId: 'primary', model: 'review-model' } }], skills: [{ id: 'check', name: 'Check' }] }));
+    await writeFile(join(directory, '.litespeed/skills/check/SKILL.md'), 'PRIVATE_PINNED_SKILL');
     providerServer = createServer(async (req, res) => { const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(chunk); calls.push(JSON.parse(Buffer.concat(chunks).toString())); res.writeHead(200, { 'Content-Type': 'text/event-stream' }); res.end('data: {"choices":[{"delta":{"content":"Done"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'); });
     const baseUrl = await listen(providerServer); store = new Store(join(directory, 'data')); store.saveSettings({ workspace: directory, providers: [{ id: 'primary', name: 'Primary', kind: 'openai', baseUrl }, { id: 'secondary', name: 'Secondary', kind: 'openai', baseUrl }], defaultProvider: 'primary', defaultModel: 'model' });
     const app = createApp({ store }); runner = app.runner; server = createServer(app.app); url = await listen(server);
@@ -65,7 +65,7 @@ describe('independent profile acceptance and visibility audit', () => {
   });
 
   it.each([{ providerId: '', model: '' }, { providerId: '' }, { model: '' }])('rejects explicitly empty profile provider/model overrides %j', async pair => {
-    await writeFile(join(directory, '.speedrail/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'writer', name: 'Writer', tools: ['read_file'] }], skills: [] }));
+    await writeFile(join(directory, '.litespeed/profiles.json'), JSON.stringify({ version: 1, profiles: [{ id: 'writer', name: 'Writer', tools: ['read_file'] }], skills: [] }));
     const choice = { profileId: 'writer', skillIds: [], catalogRevision: (await profiles.readProfileCatalog(directory)).revision };
     expect((await api('/sessions', { profile: choice, ...pair })).status).toBe(400); expect(store.sessions()).toEqual([]);
   });
@@ -95,7 +95,7 @@ describe('independent profile acceptance and visibility audit', () => {
     const resolve = profiles.resolveProfileChoice;
     vi.spyOn(profiles, 'resolveProfileChoice').mockImplementation((workspace, choice, signal) => new Promise((done, reject) => { release = () => { void resolve(workspace, choice, signal).then(done, reject); }; }));
     const pending = api(`/sessions/${session.id}/profile`, { expectedConfigRevision: 0, choice: selected }); await until(() => Boolean(release));
-    await writeFile(join(directory, '.speedrail/skills/check/SKILL.md'), 'CHANGED_PINNED_SKILL'); release();
+    await writeFile(join(directory, '.litespeed/skills/check/SKILL.md'), 'CHANGED_PINNED_SKILL'); release();
     expect((await pending).status).toBe(409); expect(store.session(session.id)).toEqual(session); expect(store.profileSnapshot(session.id)).toBeNull(); expect(calls).toEqual([]);
   });
 });

@@ -115,7 +115,7 @@ function matchLabel(count: number | null, word: string): string {
   return ` (${count} ${count === 1 ? word : plural})`;
 }
 
-/** Map one Speedrail tool call onto its presentation row. */
+/** Map one Litespeed tool call onto its presentation row. */
 export function toolRow(call: ToolCall): ToolRowModel {
   const running = call.status === 'running' || call.status === 'pending';
   const failed = call.status === 'error';

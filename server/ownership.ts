@@ -13,7 +13,7 @@ export function ownDataDirectory(directory: string): () => void {
     owner.exec('PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE; CREATE TABLE IF NOT EXISTS owner (id INTEGER PRIMARY KEY); COMMIT;');
   } catch (error) {
     owner.close();
-    if ((error as {errcode?: number}).errcode === 5) throw new Error('Another Speedrail server is using this data directory. Use the running server, or stop it before starting another.');
+    if ((error as {errcode?: number}).errcode === 5) throw new Error('Another Litespeed server is using this data directory. Use the running server, or stop it before starting another.');
     throw error;
   }
   let closed = false;

@@ -6,7 +6,7 @@ import { CodexAuth } from '../server/auth.js';
 const services: CodexAuth[] = [], directories: string[] = [];
 afterEach(() => { for (const service of services.splice(0)) service.close(); for (const dir of directories.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 function service(fetcher: typeof fetch) {
-  const dir = mkdtempSync(join(tmpdir(), 'speedrail-auth-test-')); directories.push(dir);
+  const dir = mkdtempSync(join(tmpdir(), 'litespeed-auth-test-')); directories.push(dir);
   const auth = new CodexAuth(dir, { fetch: fetcher }); services.push(auth);
   return { auth, dir };
 }
@@ -82,7 +82,7 @@ describe('user-initiated subscription login', () => {
     expect(url.origin).toBe('https://auth.openai.com'); expect(url.pathname).toBe('/oauth/authorize');
     expect(url.searchParams.get('scope')).toBe('openid profile email offline_access');
     expect(url.searchParams.get('code_challenge_method')).toBe('S256');
-    expect(url.searchParams.get('originator')).toBe('speedrail');
+    expect(url.searchParams.get('originator')).toBe('litespeed');
     const bad = await fetch('http://127.0.0.1:1455/auth/callback?code=code&state=wrong');
     expect(bad.status).toBe(400); expect(requests).toHaveLength(0);
     const good = await fetch(`http://127.0.0.1:1455/auth/callback?code=code&state=${url.searchParams.get('state')}`);

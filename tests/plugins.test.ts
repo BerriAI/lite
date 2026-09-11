@@ -12,7 +12,7 @@ const sha256 = (value: string) => createHash('sha256').update(value, 'utf8').dig
 describe('plugin packages: plan, apply, uninstall', () => {
   let dir: string, workspace: string, pkg: string, store: Store;
   beforeEach(async () => {
-    dir = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-plugins-')));
+    dir = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-plugins-')));
     workspace = join(dir, 'workspace'); pkg = join(dir, 'pkg');
     await mkdir(workspace); await mkdir(pkg);
     store = new Store(join(dir, 'state'));
@@ -21,7 +21,7 @@ describe('plugin packages: plan, apply, uninstall', () => {
   afterEach(async () => { store.close(); await rm(dir, { recursive: true, force: true }); });
 
   async function writeManifest(manifest: unknown, root = pkg) {
-    await writeFile(join(root, 'speedrail-plugin.json'), JSON.stringify(manifest));
+    await writeFile(join(root, 'litespeed-plugin.json'), JSON.stringify(manifest));
   }
   async function fullPackage() {
     await mkdir(join(pkg, 'skills'), { recursive: true });
@@ -43,8 +43,8 @@ describe('plugin packages: plan, apply, uninstall', () => {
     expect(plan.warnings).toEqual([]);
     expect(plan.unmapped).toBeUndefined();
     expect(plan.actions.map(action => [action.kind, action.name, action.target, action.conflict])).toEqual([
-      ['skill', 'review', '.speedrail/skills/review/SKILL.md', undefined],
-      ['command', 'deploy', '.speedrail/commands/deploy.md', undefined],
+      ['skill', 'review', '.litespeed/skills/review/SKILL.md', undefined],
+      ['command', 'deploy', '.litespeed/commands/deploy.md', undefined],
       ['mcp', 'docs', 'mcpServers.docs', undefined],
       ['hook', 'PreToolUse', expect.stringMatching(/^hooks#[a-f0-9]{16}$/), undefined],
     ]);
@@ -63,14 +63,14 @@ describe('plugin packages: plan, apply, uninstall', () => {
 
   it.each([
     { name: 'missing manifest', setup: async () => {}, message: /No plugin manifest found/ },
-    { name: 'invalid JSON', setup: async () => writeFile(join(pkg, 'speedrail-plugin.json'), '{nope'), message: /not valid JSON/ },
-    { name: 'bad name', setup: async () => writeManifest({ name: 'Bad Name', version: '1' }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'unknown key', setup: async () => writeManifest({ name: 'x', version: '1', extra: true }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'duplicate skill ids', setup: async () => writeManifest({ name: 'x', version: '1', skills: [{ id: 'a', path: 'a.md' }, { id: 'a', path: 'b.md' }] }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'mcp with both command and url', setup: async () => writeManifest({ name: 'x', version: '1', mcpServers: { s: { command: 'c', url: 'https://example.com' } } }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'mcp choosing its own enabled', setup: async () => writeManifest({ name: 'x', version: '1', mcpServers: { s: { command: 'c', enabled: true } } }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'oversized version', setup: async () => writeManifest({ name: 'x', version: 'v'.repeat(40) }), message: /Invalid speedrail-plugin\.json/ },
-    { name: 'credential-name skill id', setup: async () => writeManifest({ name: 'x', version: '1', skills: [{ id: 'private-key', path: 'a.md' }] }), message: /Invalid speedrail-plugin\.json/ },
+    { name: 'invalid JSON', setup: async () => writeFile(join(pkg, 'litespeed-plugin.json'), '{nope'), message: /not valid JSON/ },
+    { name: 'bad name', setup: async () => writeManifest({ name: 'Bad Name', version: '1' }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'unknown key', setup: async () => writeManifest({ name: 'x', version: '1', extra: true }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'duplicate skill ids', setup: async () => writeManifest({ name: 'x', version: '1', skills: [{ id: 'a', path: 'a.md' }, { id: 'a', path: 'b.md' }] }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'mcp with both command and url', setup: async () => writeManifest({ name: 'x', version: '1', mcpServers: { s: { command: 'c', url: 'https://example.com' } } }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'mcp choosing its own enabled', setup: async () => writeManifest({ name: 'x', version: '1', mcpServers: { s: { command: 'c', enabled: true } } }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'oversized version', setup: async () => writeManifest({ name: 'x', version: 'v'.repeat(40) }), message: /Invalid litespeed-plugin\.json/ },
+    { name: 'credential-name skill id', setup: async () => writeManifest({ name: 'x', version: '1', skills: [{ id: 'private-key', path: 'a.md' }] }), message: /Invalid litespeed-plugin\.json/ },
   ])('rejects invalid manifests: $name', async ({ setup, message }) => {
     await setup();
     await expect(planInstall(pkg, workspace, store)).rejects.toThrow(message);
@@ -108,8 +108,8 @@ describe('plugin packages: plan, apply, uninstall', () => {
 
   it('marks foreign existing files and settings keys as exists-conflicts with warnings', async () => {
     await fullPackage();
-    await mkdir(join(workspace, '.speedrail', 'skills', 'review'), { recursive: true });
-    await writeFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'USER OWNED SKILL');
+    await mkdir(join(workspace, '.litespeed', 'skills', 'review'), { recursive: true });
+    await writeFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'USER OWNED SKILL');
     store.saveSettings({ mcpServers: { docs: { url: 'https://user-configured.example/mcp' } }, hooks: [{ event: 'PreToolUse', command: 'echo pre', matcher: 'bash' }] });
     const plan = await planInstall(pkg, workspace, store);
     const byKind = Object.fromEntries(plan.actions.map(action => [action.kind, action.conflict]));
@@ -123,27 +123,27 @@ describe('plugin packages: plan, apply, uninstall', () => {
     await fullPackage();
     const plan = await planInstall(pkg, workspace, store);
     const result = await applyInstall(plan, workspace, store);
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY\n');
-    expect(await readFile(join(workspace, '.speedrail', 'commands', 'deploy.md'), 'utf8')).toBe('# Deploy\nRun the deploy checklist.\n');
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY\n');
+    expect(await readFile(join(workspace, '.litespeed', 'commands', 'deploy.md'), 'utf8')).toBe('# Deploy\nRun the deploy checklist.\n');
     const settings = store.settings();
     expect(settings.mcpServers.docs).toEqual({ command: 'docs-server', args: ['--stdio'], env: { DOCS_TOKEN: 'value' }, enabled: false });
     expect(settings.hooks).toEqual([{ event: 'PreToolUse', command: 'echo pre', matcher: 'bash' }]);
     const entry = settings.plugins?.toolkit;
     expect(entry).toMatchObject({ version: '1.2.0', workspace });
     expect(entry?.items).toHaveLength(4);
-    expect(entry?.items.find(item => item.kind === 'skill')).toEqual({ kind: 'skill', target: '.speedrail/skills/review/SKILL.md', hash: sha256('REVIEW SKILL BODY\n') });
+    expect(entry?.items.find(item => item.kind === 'skill')).toEqual({ kind: 'skill', target: '.litespeed/skills/review/SKILL.md', hash: sha256('REVIEW SKILL BODY\n') });
     for (const item of entry?.items ?? []) expect(item.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.entry).toEqual(entry);
   });
 
   it('skips exists-conflicted actions at apply: the foreign file and settings key survive untouched', async () => {
     await fullPackage();
-    await mkdir(join(workspace, '.speedrail', 'skills', 'review'), { recursive: true });
-    await writeFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'USER OWNED SKILL');
+    await mkdir(join(workspace, '.litespeed', 'skills', 'review'), { recursive: true });
+    await writeFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'USER OWNED SKILL');
     store.saveSettings({ mcpServers: { docs: { url: 'https://user-configured.example/mcp' } } });
     const plan = await planInstall(pkg, workspace, store);
     await applyInstall(plan, workspace, store);
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('USER OWNED SKILL');
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('USER OWNED SKILL');
     expect(store.settings().mcpServers.docs).toEqual({ url: 'https://user-configured.example/mcp' });
     // Provenance records only what actually landed.
     expect(store.settings().plugins?.toolkit?.items.map(item => item.kind).sort()).toEqual(['command', 'hook']);
@@ -163,7 +163,7 @@ describe('plugin packages: plan, apply, uninstall', () => {
     const plan = await planInstall(pkg, workspace, store);
     expect(plan.actions.map(action => action.conflict)).toEqual(['same-plugin-update', 'same-plugin-update', 'same-plugin-update', 'same-plugin-update']);
     await applyInstall(plan, workspace, store);
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY v2\n');
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY v2\n');
     const settings = store.settings();
     expect(settings.hooks).toHaveLength(1);
     expect(settings.plugins?.toolkit?.version).toBe('1.3.0');
@@ -175,14 +175,14 @@ describe('plugin packages: plan, apply, uninstall', () => {
     await writeFile(join(pkg, 'skills', 'later', 'SKILL.md'), 'LATER SKILL');
     await writeManifest({ name: 'partial', version: '1', skills: [{ id: 'later', path: 'skills/later/SKILL.md' }], commands: [{ name: 'one', path: 'one.md' }] });
     const plan = await planInstall(pkg, workspace, store);
-    expect(plan.actions.map(action => action.target)).toEqual(['.speedrail/skills/later/SKILL.md', '.speedrail/commands/one.md']);
+    expect(plan.actions.map(action => action.target)).toEqual(['.litespeed/skills/later/SKILL.md', '.litespeed/commands/one.md']);
     // Skill lands first; make the commands directory unwritable so the SECOND write fails.
-    await mkdir(join(workspace, '.speedrail', 'commands'), { recursive: true });
-    await chmod(join(workspace, '.speedrail', 'commands'), 0o500);
+    await mkdir(join(workspace, '.litespeed', 'commands'), { recursive: true });
+    await chmod(join(workspace, '.litespeed', 'commands'), 0o500);
     try { await expect(applyInstall(plan, workspace, store)).rejects.toThrow(); }
-    finally { await chmod(join(workspace, '.speedrail', 'commands'), 0o700); }
+    finally { await chmod(join(workspace, '.litespeed', 'commands'), 0o700); }
     // The already-written skill was rolled back and nothing was persisted.
-    await expect(readFile(join(workspace, '.speedrail', 'skills', 'later', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'skills', 'later', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     expect(store.settings().plugins?.partial).toBeUndefined();
   });
 
@@ -193,10 +193,10 @@ describe('plugin packages: plan, apply, uninstall', () => {
     const plan = await planInstall(pkg, workspace, store);
     // A read-only owned command file makes the SECOND write fail after the
     // skill (first action) was already updated on disk.
-    await chmod(join(workspace, '.speedrail', 'commands', 'deploy.md'), 0o400);
+    await chmod(join(workspace, '.litespeed', 'commands', 'deploy.md'), 0o400);
     try { await expect(applyInstall(plan, workspace, store)).rejects.toThrow(); }
-    finally { await chmod(join(workspace, '.speedrail', 'commands', 'deploy.md'), 0o600); }
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY\n');
+    finally { await chmod(join(workspace, '.litespeed', 'commands', 'deploy.md'), 0o600); }
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'), 'utf8')).toBe('REVIEW SKILL BODY\n');
     expect(store.settings().plugins?.toolkit?.version).toBe('1.2.0');
   });
 
@@ -206,8 +206,8 @@ describe('plugin packages: plan, apply, uninstall', () => {
     const result = await uninstall('toolkit', workspace, store);
     expect(result.removed.map(item => item.kind).sort()).toEqual(['command', 'hook', 'mcp', 'skill']);
     expect(result.warnings).toEqual([]);
-    await expect(readFile(join(workspace, '.speedrail', 'skills', 'review', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(readFile(join(workspace, '.speedrail', 'commands', 'deploy.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'skills', 'review', 'SKILL.md'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(readFile(join(workspace, '.litespeed', 'commands', 'deploy.md'))).rejects.toMatchObject({ code: 'ENOENT' });
     const settings = store.settings();
     expect(settings.mcpServers.docs).toBeUndefined();
     expect(settings.hooks).toEqual([]);
@@ -217,11 +217,11 @@ describe('plugin packages: plan, apply, uninstall', () => {
   it('uninstall leaves a user-modified file with a warning, never deleting it', async () => {
     await fullPackage();
     await applyInstall(await planInstall(pkg, workspace, store), workspace, store);
-    await writeFile(join(workspace, '.speedrail', 'commands', 'deploy.md'), 'USER EDITED THIS');
+    await writeFile(join(workspace, '.litespeed', 'commands', 'deploy.md'), 'USER EDITED THIS');
     const result = await uninstall('toolkit', workspace, store);
-    expect(result.warnings.join(' ')).toContain('.speedrail/commands/deploy.md was modified after installation; it was left in place');
-    expect(result.removed.map(item => item.target)).not.toContain('.speedrail/commands/deploy.md');
-    expect(await readFile(join(workspace, '.speedrail', 'commands', 'deploy.md'), 'utf8')).toBe('USER EDITED THIS');
+    expect(result.warnings.join(' ')).toContain('.litespeed/commands/deploy.md was modified after installation; it was left in place');
+    expect(result.removed.map(item => item.target)).not.toContain('.litespeed/commands/deploy.md');
+    expect(await readFile(join(workspace, '.litespeed', 'commands', 'deploy.md'), 'utf8')).toBe('USER EDITED THIS');
     expect(store.settings().plugins?.toolkit).toBeUndefined(); // Registry entry still removed.
   });
 
@@ -249,10 +249,10 @@ describe('plugin packages: plan, apply, uninstall', () => {
   it('uninstall leaves foreign files sharing the skills directory intact', async () => {
     await fullPackage();
     await applyInstall(await planInstall(pkg, workspace, store), workspace, store);
-    await writeFile(join(workspace, '.speedrail', 'skills', 'review', 'NOTES.md'), 'user notes');
+    await writeFile(join(workspace, '.litespeed', 'skills', 'review', 'NOTES.md'), 'user notes');
     await uninstall('toolkit', workspace, store);
     // SKILL.md removed, but the user's extra file (and thus the directory) survives.
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'review', 'NOTES.md'), 'utf8')).toBe('user notes');
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'review', 'NOTES.md'), 'utf8')).toBe('user notes');
   });
 
   it('uninstall of an unknown plugin is a 404', async () => {
@@ -275,11 +275,11 @@ describe('plugin packages: plan, apply, uninstall', () => {
     expect(plan.unmapped).toEqual(['agents', 'author', 'homepage', 'mcpServers']);
     expect(plan.actions.map(action => [action.kind, action.name])).toEqual([['skill', 'lint'], ['command', 'ship']]);
     await applyInstall(plan, workspace, store);
-    expect(await readFile(join(workspace, '.speedrail', 'commands', 'ship.md'), 'utf8')).toBe('# Ship it\n');
-    expect(await readFile(join(workspace, '.speedrail', 'skills', 'lint', 'SKILL.md'), 'utf8')).toBe('LINT SKILL\n');
+    expect(await readFile(join(workspace, '.litespeed', 'commands', 'ship.md'), 'utf8')).toBe('# Ship it\n');
+    expect(await readFile(join(workspace, '.litespeed', 'skills', 'lint', 'SKILL.md'), 'utf8')).toBe('LINT SKILL\n');
   });
 
-  it('prefers speedrail-plugin.json when both manifests exist', async () => {
+  it('prefers litespeed-plugin.json when both manifests exist', async () => {
     await fullPackage();
     await mkdir(join(pkg, '.claude-plugin'), { recursive: true });
     await writeFile(join(pkg, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'other-name' }));

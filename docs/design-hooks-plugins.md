@@ -4,7 +4,7 @@ Status: implemented (4.3, 4.4, 4.5).
 
 ## 4.3 Lifecycle hooks
 
-Shell-command hooks around the agent loop, configured in two places: app Settings (`Settings.hooks`) and project `.speedrail/hooks.json` — project hooks run **only for a workspace the user has marked trusted** (one-time per-workspace prompt persisted in settings; the trust decision names the workspace path).
+Shell-command hooks around the agent loop, configured in two places: app Settings (`Settings.hooks`) and project `.litespeed/hooks.json` — project hooks run **only for a workspace the user has marked trusted** (one-time per-workspace prompt persisted in settings; the trust decision names the workspace path).
 
 Events (v1): `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`. Each hook: `{event, command, matcher?}` where matcher is a tool-name pattern for the tool events (same matcher syntax as permission-rule tools: exact names only, v1). Contract mirrors the convention other harnesses use so existing hooks port: JSON payload on stdin (`{event, sessionId, workspace, tool?, args?, output?}`), 10s timeout, and the **exit code is the verdict** for gating events: 0 = allow, 2 = block (PreToolUse only; the tool result becomes the hook's stderr, honestly attributed: "Blocked by PreToolUse hook"), anything else = warn (surfaced in the session as a system notice, never blocks). Hook stdout is captured, bounded (8 KiB), and attached to the transcript as an auditable notice when nonempty.
 
@@ -12,13 +12,13 @@ Ordering with existing layers: permission rules and approval decide first; PreTo
 
 ## 4.4 Plugin packages (install-time trust)
 
-Packages are local directories with `speedrail-plugin.json` (`{name, version, description, skills?, commands?, mcpServers?, hooks?}`) whose entries are relative paths/config fragments. Clone a Git package first; the CLI does not install directly from URLs.
+Packages are local directories with `litespeed-plugin.json` (`{name, version, description, skills?, commands?, mcpServers?, hooks?}`) whose entries are relative paths/config fragments. Clone a Git package first; the CLI does not install directly from URLs.
 
 ```sh
-speedrail plugin plan /path/to/package
-speedrail plugin install /path/to/package
-speedrail plugin list
-speedrail plugin remove package-name
+litespeed plugin plan /path/to/package
+litespeed plugin install /path/to/package
+litespeed plugin list
+litespeed plugin remove package-name
 ```
 
 `plan` previews the exact files, MCP servers, hooks, and conflicts without changing anything. `install` plans and applies immediately; running it is the explicit install action. Existing conflicting items are skipped. Per-item hashes record provenance, so uninstall removes the installed content and leaves subsequently modified files with a warning. MCP servers land **disabled**; connect them explicitly in Settings. Hooks use the existing workspace-trust policy. Compatible manifests (`.claude-plugin/plugin.json`) are read where the shapes map.

@@ -5,7 +5,7 @@ import { architectureWorker, selectArchitecture, type ArchitectureKind, type Mod
 import { SETUP_ARCHITECTURES, modelGuidance } from '../../shared/setup';
 import type { Selection } from './Composer';
 import { api, errorMessage, query } from './api';
-import { Modal, SpeedRail } from './ui';
+import { Modal, LiteSpeed } from './ui';
 
 const arrangements = SETUP_ARCHITECTURES;
 type View = 'single' | ArchitectureKind;
@@ -71,7 +71,7 @@ export function ModelField({ simple = false, hint, label, value, settings, selec
     {open && <div id={`${id}-menu`} className="model-select-menu" onKeyDown={event => moveOption(event)}>
       {settings.providers.length > 1 && <label className="model-provider">Provider<select aria-label={`${label} provider`} value={providerId} onChange={event => { setProviderId(event.target.value); setSearch(''); }}>{settings.providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>}
       <div className="model-search"><Search size={15} /><input autoFocus aria-label={`Search ${label.toLowerCase()} models`} placeholder="Search models or enter an ID…" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && search.trim()) { event.preventDefault(); choose(filtered.length === 1 ? filtered[0].id : search.trim()); } }} /></div>
-      {loading && <SpeedRail active compact />}
+      {loading && <LiteSpeed active compact />}
       {error && <p className="field-hint error-text">{error} You can enter a model ID above.</p>}
       <div className="model-options" role="listbox" aria-labelledby={`${id}-label`}>
         {filtered.map(model => <button type="button" role="option" aria-selected={model.id === value?.model && providerId === value.providerId} key={model.id} onClick={() => choose(model.id)}><span><strong>{model.name}</strong>{model.name !== model.id && <small>{model.id}</small>}</span>{model.id === value?.model && providerId === value.providerId && <Check size={14} />}</button>)}

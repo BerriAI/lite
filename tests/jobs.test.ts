@@ -10,7 +10,7 @@ const until = async (check: () => boolean) => { const end = Date.now() + 5000; w
 
 describe('Jobs background shell registry', () => {
   let dir: string, jobs: Jobs;
-  beforeEach(async () => { dir = await realpath(await mkdtemp(join(tmpdir(), 'speedrail-jobs-'))); jobs = new Jobs(); });
+  beforeEach(async () => { dir = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-jobs-'))); jobs = new Jobs(); });
   afterEach(async () => { jobs.killAll(); await rm(dir, { recursive: true, force: true }); });
 
   it('starts a job, captures output, and records the exit status', async () => {

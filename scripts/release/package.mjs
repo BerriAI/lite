@@ -9,14 +9,14 @@ const version = pkg.version, platform = `${process.platform}-${process.arch}`;
 if (!['darwin-arm64', 'darwin-x64'].includes(platform)) throw new Error('Build each package on its target Mac architecture.');
 const nodeVersion = '26.8.1';
 const output = resolve(process.argv[2] || join(source, 'release-artifacts'));
-const temporary = await mkdtemp(join(tmpdir(), 'speedrail-package-')), root = join(temporary, 'speedrail');
+const temporary = await mkdtemp(join(tmpdir(), 'litespeed-package-')), root = join(temporary, 'litespeed');
 const run = (command, args, cwd = source) => execFileSync(command, args, { cwd, stdio: 'inherit' });
 try {
   await mkdir(root); await mkdir(output, { recursive: true });
   for (const file of ['bin', 'tui', 'shared', 'dist', 'package.json', 'package-lock.json', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
     try { await cp(join(source, file), join(root, file), { recursive: true }); } catch (error) { if (file !== 'NOTICE' || error.code !== 'ENOENT') throw error; }
   }
-  await mkdir(join(root, 'scripts')); await cp(join(source, 'scripts/prepare-terminal.mjs'), join(root, 'scripts/prepare-terminal.mjs'));
+  await mkdir(join(root, 'scripts')); for (const file of ['prepare-terminal.mjs', 'migrate-state.mjs']) await cp(join(source, 'scripts', file), join(root, 'scripts', file));
   run('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], root);
   const distribution = `node-v${nodeVersion}-${platform}`;
   for (const file of [`${distribution}.tar.gz`, 'SHASUMS256.txt']) run('/usr/bin/curl', ['--fail', '--silent', '--show-error', '--location', '--retry', '2', '--max-time', '300', `https://nodejs.org/dist/v${nodeVersion}/${file}`, '-o', join(temporary, file)]);
@@ -41,10 +41,10 @@ try {
     }
   }
   await visit(join(root, 'node_modules'));
-  await writeFile(join(root, 'THIRD_PARTY_NOTICES.txt'), `Speedrail bundles Node.js and Bun with their third-party components.\nNode notices: runtime/NODE-LICENSE. Bun notices and relinking instructions: runtime/BUN-LICENSE.md. Dependency licenses are retained in node_modules.\n\n${dependencies.sort().join('\n')}\n`);
-  run(join(root, 'runtime/node'), [join(root, 'bin/speedrail.mjs'), '--version'], root);
-  const file = `speedrail-${version}-${platform}.tar.gz`, path = join(output, file);
-  run('/usr/bin/tar', ['-czf', path, '-C', temporary, 'speedrail']);
+  await writeFile(join(root, 'THIRD_PARTY_NOTICES.txt'), `Litespeed bundles Node.js and Bun with their third-party components.\nNode notices: runtime/NODE-LICENSE. Bun notices and relinking instructions: runtime/BUN-LICENSE.md. Dependency licenses are retained in node_modules.\n\n${dependencies.sort().join('\n')}\n`);
+  run(join(root, 'runtime/node'), [join(root, 'bin/litespeed.mjs'), '--version'], root);
+  const file = `litespeed-${version}-${platform}.tar.gz`, path = join(output, file);
+  run('/usr/bin/tar', ['-czf', path, '-C', temporary, 'litespeed']);
   const asset = { file, sha256: createHash('sha256').update(await readFile(path)).digest('hex'), size: (await stat(path)).size };
   await writeFile(join(output, `manifest-${platform}.json`), JSON.stringify({ schema: 1, version, assets: { [platform]: asset } }, null, 2) + '\n');
   console.log(`Packaged ${file} (${Math.round(asset.size / 1024 ** 2)} MiB)`);

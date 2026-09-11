@@ -21,6 +21,7 @@ let base;
 const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills', '--days']);
 const booleanOptions = new Set(['--plan', '--build', '--auto', '--json', '--reindex']);
 const supported = {
+  migrate: new Set([]),
   update: new Set(['--url', '--json']),
   serve: new Set(['--port', '--workspace']),
   run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
@@ -36,15 +37,15 @@ const option = (name, fallback) => options.get(name) ?? fallback;
 
 function parse() {
   if (command === 'help') return;
-  if (!supported[command]) throw new Error(`Unknown command: ${command}. Use speedrail --help.`);
+  if (!supported[command]) throw new Error(`Unknown command: ${command}. Use litespeed --help.`);
   const args = raw[0] === command ? raw.slice(1) : raw;
   let positionalOnly = false;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === '--' && !positionalOnly) { positionalOnly = true; continue; }
     if (!arg.startsWith('-') || positionalOnly) { positional.push(arg); continue; }
-    if (!valueOptions.has(arg) && !booleanOptions.has(arg)) throw new Error(`Unknown option: ${arg}. Use speedrail --help.`);
-    if (!supported[command].has(arg)) throw new Error(`${arg} is not supported by speedrail ${command}.`);
+    if (!valueOptions.has(arg) && !booleanOptions.has(arg)) throw new Error(`Unknown option: ${arg}. Use litespeed --help.`);
+    if (!supported[command].has(arg)) throw new Error(`${arg} is not supported by litespeed ${command}.`);
     if (options.has(arg)) throw new Error(`Duplicate option: ${arg}.`);
     if (valueOptions.has(arg)) {
       const value = args[++i];
@@ -52,19 +53,20 @@ function parse() {
       options.set(arg, value);
     } else options.set(arg, true);
   }
-  if (command === 'run' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: speedrail run "your prompt" [--model ID]');
-  if (command === 'export' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: speedrail export <session-id>');
+  if (command === 'migrate' && positional.length !== 1) throw new Error('Usage: litespeed migrate /path/to/old/checkout');
+  if (command === 'run' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: litespeed run "your prompt" [--model ID]');
+  if (command === 'export' && (positional.length !== 1 || !positional[0].trim())) throw new Error('Usage: litespeed export <session-id>');
   if (command === 'plugin') {
-    const usage = 'Usage: speedrail plugin plan <dir> | install <dir> | list | remove <name>';
+    const usage = 'Usage: litespeed plugin plan <dir> | install <dir> | list | remove <name>';
     if (!pluginSubcommands.has(positional[0])) throw new Error(usage);
     const wantsArgument = positional[0] !== 'list';
     if (positional.length !== (wantsArgument ? 2 : 1) || (wantsArgument && !positional[1].trim())) throw new Error(usage);
   }
-  if (!['run', 'export', 'plugin'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use speedrail --help.`);
+  if (!['run', 'export', 'plugin', 'migrate'].includes(command) && positional.length) throw new Error(`Unexpected argument: ${positional[0]}. Use litespeed --help.`);
   if (command === 'usage' && options.has('--days') && (!/^\d+$/.test(option('--days')) || Number(option('--days')) < 1 || Number(option('--days')) > 90)) throw new Error('--days must be an integer between 1 and 90.');
   if (command === 'run' && options.has('--session')) {
     const override = ['--model', '--provider', '--profile', '--skills', '--plan', '--build', '--auto'].find(name => options.has(name));
-    if (override) throw new Error(`${override} cannot be combined with --session. Change the existing session settings in Speedrail, or start a new session.`);
+    if (override) throw new Error(`${override} cannot be combined with --session. Change the existing session settings in Litespeed, or start a new session.`);
   }
   if (options.has('--plan') && options.has('--build')) throw new Error('--plan and --build cannot be combined.');
   if (options.has('--profile') && !validProfileId(option('--profile'))) throw new Error('--profile requires a lowercase ID of 1–64 letters, digits, or hyphens, starting with a letter or digit.');
@@ -74,9 +76,9 @@ function parse() {
     if (['--provider', '--model'].some(name => options.has(name) && !option(name).trim())) throw new Error('Profile provider/model overrides must both be nonblank.');
   }
   if (options.has('--workspace') && !option('--workspace').trim()) throw new Error('--workspace requires a nonblank path.');
-  const port = option('--port', process.env.SPEEDRAIL_PORT || '3210');
+  const port = option('--port', process.env.LITESPEED_PORT || '3210');
   if (command === 'serve' && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535)) throw new Error('--port must be an integer between 1 and 65535.');
-  base = option('--url', process.env.SPEEDRAIL_URL || `http://localhost:${process.env.SPEEDRAIL_PORT || 3210}`);
+  base = option('--url', process.env.LITESPEED_URL || `http://localhost:${process.env.LITESPEED_PORT || 3210}`);
   if (command !== 'serve') {
     let url; try { url = new URL(base); } catch { throw new Error('--url must be a valid HTTP or HTTPS URL.'); }
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('--url must be an HTTP or HTTPS URL without credentials, a query, or a fragment.');
@@ -95,11 +97,11 @@ function terminalText(value, multiline = false) {
 
 async function api(path, body, signal, method) {
   const response = await fetch(`${base}/api${path}`, {
-    method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', 'X-Speedrail-Client': 'cli' },
+    method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { 'Content-Type': 'application/json', 'X-Litespeed-Client': 'cli' },
     body: body === undefined ? undefined : JSON.stringify(body), signal: signal ?? AbortSignal.timeout(30000),
   });
   let data;
-  try { data = await response.json(); } catch { throw new Error(`The Speedrail server returned an invalid response (HTTP ${response.status}).`); }
+  try { data = await response.json(); } catch { throw new Error(`The Litespeed server returned an invalid response (HTTP ${response.status}).`); }
   if (!response.ok) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), { status: response.status });
   return data;
 }
@@ -118,10 +120,10 @@ async function profileCatalog(workspace) {
   const catalog = await api(`/profiles?workspace=${encodeURIComponent(workspace)}`);
   if (!catalog || typeof catalog.workspace !== 'string' || !catalog.workspace.trim() || typeof catalog.revision !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.revision) ||
       !Array.isArray(catalog.profiles) || catalog.profiles.length > 32 || !Array.isArray(catalog.skills) || catalog.skills.length > 64 || !Array.isArray(catalog.diagnostics))
-    throw new Error('The Speedrail server returned an invalid profile catalog. Update the server and retry.');
+    throw new Error('The Litespeed server returned an invalid profile catalog. Update the server and retry.');
   for (const entries of [catalog.profiles, catalog.skills]) {
     if (entries.some(entry => !entry || !validProfileId(entry.id) || typeof entry.name !== 'string' || !entry.name.trim() || entry.name.length > 200) || new Set(entries.map(entry => entry.id)).size !== entries.length)
-      throw new Error('The Speedrail server returned invalid or duplicate profile/skill IDs. Update the server and retry.');
+      throw new Error('The Litespeed server returned invalid or duplicate profile/skill IDs. Update the server and retry.');
   }
   const text = (value, limit) => typeof value === 'string' && value.length <= limit;
   if (catalog.profiles.some(profile => !Array.isArray(profile.tools) || profile.tools.some(tool => !text(tool, 64)) ||
@@ -131,7 +133,7 @@ async function profileCatalog(workspace) {
         (profile.skills !== undefined && (!Array.isArray(profile.skills) || profile.skills.length > 64 || profile.skills.some(id => !validProfileId(id)) || new Set(profile.skills).size !== profile.skills.length))) ||
       catalog.skills.some(skill => !text(skill.description, 2000)) ||
       catalog.diagnostics.length > 65 || catalog.diagnostics.some(item => !item || !text(item.path, 4096) || !text(item.code, 100) || !text(item.message, 2000)))
-    throw new Error('The Speedrail server returned an invalid profile catalog. Update the server and retry.');
+    throw new Error('The Litespeed server returned an invalid profile catalog. Update the server and retry.');
   return catalog;
 }
 function catalogDiagnostics(catalog) {
@@ -163,8 +165,8 @@ async function newRunSession() {
     permissionMode: options.has('--auto') ? 'auto' : 'ask' };
   if (explicitChoice) {
     const catalog = await profileCatalog(input.workspace);
-    if (profileId !== null && !catalog.profiles.some(profile => profile.id === profileId)) throw new Error(`Unknown project profile: ${profileId}. Use speedrail profiles to inspect this workspace.`);
-    for (const id of skillIds) if (!catalog.skills.some(skill => skill.id === id)) throw new Error(`Unknown project skill: ${id}. Use speedrail profiles to inspect this workspace.`);
+    if (profileId !== null && !catalog.profiles.some(profile => profile.id === profileId)) throw new Error(`Unknown project profile: ${profileId}. Use litespeed profiles to inspect this workspace.`);
+    for (const id of skillIds) if (!catalog.skills.some(skill => skill.id === id)) throw new Error(`Unknown project skill: ${id}. Use litespeed profiles to inspect this workspace.`);
     catalogDiagnostics(catalog);
     input.workspace = catalog.workspace;
     input.profile = { profileId, skillIds, catalogRevision: catalog.revision };
@@ -189,7 +191,7 @@ async function runPrompt(prompt) {
     interrupted = true; process.exitCode = code;
     if (message) process.stderr.write(`\n${message}\n`);
     controller.abort(); dismissInput();
-    cancellation = api(`${path}/cancel`, {}, AbortSignal.timeout(5000)).catch(() => { process.stderr.write('\nCould not confirm cancellation. Check the session in Speedrail.\n'); });
+    cancellation = api(`${path}/cancel`, {}, AbortSignal.timeout(5000)).catch(() => { process.stderr.write('\nCould not confirm cancellation. Check the session in Litespeed.\n'); });
   };
   const interrupt = signal => cancelRun(signal === 'SIGTERM' ? 143 : 130);
   // Read input in a separate task: the SSE reader must continue consuming resolutions/done.
@@ -198,7 +200,7 @@ async function runPrompt(prompt) {
     const input = { kind, id, controller: new AbortController(), rl: createInterface({ input: process.stdin, output: process.stderr }) };
     activeInput = input;
     input.rl.once('close', () => {
-      if (activeInput === input && !input.controller.signal.aborted) cancelRun(1, 'Input closed before an answer was submitted. The run was cancelled; use Speedrail or an interactive terminal to continue.');
+      if (activeInput === input && !input.controller.signal.aborted) cancelRun(1, 'Input closed before an answer was submitted. The run was cancelled; use Litespeed or an interactive terminal to continue.');
     });
     input.rl.once('SIGINT', () => interrupt('SIGINT'));
     const task = (async () => {
@@ -206,7 +208,7 @@ async function runPrompt(prompt) {
       catch (error) {
         if (!input.controller.signal.aborted && !interrupted) {
           if (error.status === 409) process.stderr.write('\nThis request was already resolved elsewhere. Waiting for the current run.\n');
-          else cancelRun(1, `Could not submit the answer: ${terminalText(error.message)}. The run was cancelled; check the session in Speedrail.`);
+          else cancelRun(1, `Could not submit the answer: ${terminalText(error.message)}. The run was cancelled; check the session in Litespeed.`);
         }
       } finally {
         if (activeInput === input) dismissInput();
@@ -222,7 +224,7 @@ async function runPrompt(prompt) {
     if (!stream.ok) throw new Error('Could not connect to session stream.');
     const accepted = await api(`${path}/messages`, { content: prompt }, controller.signal); started = true;
     if (typeof accepted?.messageId !== 'string' || !accepted.messageId.trim()) {
-      throw new Error('The Speedrail server did not return an accepted message ID. Update the server and check the session in Speedrail before retrying.');
+      throw new Error('The Litespeed server did not return an accepted message ID. Update the server and check the session in Litespeed before retrying.');
     }
     let buffer = '', matched = false;
     const decoder = new TextDecoder();
@@ -263,7 +265,7 @@ async function runPrompt(prompt) {
         if (event.type === 'question' && !seenQuestions.has(event.data.id)) {
           const question = event.data; seenQuestions.add(question.id);
           if (!process.stdin.isTTY) {
-            cancelRun(1, 'This run needs your answer. Non-interactive input cannot answer questions, even with --auto. The run was cancelled; use the Speedrail app or rerun in an interactive terminal.');
+            cancelRun(1, 'This run needs your answer. Non-interactive input cannot answer questions, even with --auto. The run was cancelled; use the Litespeed app or rerun in an interactive terminal.');
             return;
           }
           promptInput('question', question.id, async (rl, signal) => {
@@ -295,7 +297,7 @@ async function runPrompt(prompt) {
         }
       }
     }
-    throw new Error('The session stream closed before completion. Check the session in Speedrail before retrying.');
+    throw new Error('The session stream closed before completion. Check the session in Litespeed before retrying.');
   } catch (error) {
     if (!interrupted) throw error;
   } finally {
@@ -331,7 +333,7 @@ async function pluginCommand(subcommand, argument) {
       console.log(`Installed ${terminalText(data.plugin.name)}@${terminalText(data.plugin.version)}: ${landed.length} item${landed.length === 1 ? '' : 's'} landed.`);
       if (landed.some(action => action.kind === 'mcp')) console.log('MCP servers were installed DISABLED; connect them explicitly in Settings.');
       if (landed.some(action => action.kind === 'hook')) console.log('Hooks were added to Settings; project workspaces still require explicit trust.');
-    } else console.log('Dry run only. Use speedrail plugin install to apply.');
+    } else console.log('Dry run only. Use litespeed plugin install to apply.');
   } else if (subcommand === 'list') {
     const data = await api('/plugins');
     if (options.has('--json')) { console.log(JSON.stringify(data)); return; }
@@ -372,7 +374,7 @@ async function doctorCommand() {
   const data = await api('/doctor');
   if (options.has('--json') && !options.has('--reindex')) { console.log(JSON.stringify(data)); }
   else if (!options.has('--json')) {
-    console.log(`Speedrail ${terminalText(data.version)}  node ${terminalText(data.node)}  ${terminalText(data.platform)}`);
+    console.log(`Litespeed ${terminalText(data.version)}  node ${terminalText(data.node)}  ${terminalText(data.platform)}`);
     const database = data.database;
     console.log(`Database: ${terminalText(database.path)}${database.exists ? '' : '  (missing)'}`);
     console.log(`  size ${Number(database.sizeBytes).toLocaleString('en-US')} bytes  sessions ${database.sessions}  messages ${database.messages}  integrity ${terminalText(database.integrity)}`);
@@ -396,31 +398,32 @@ async function doctorCommand() {
 try {
   parse();
   if (command === 'help') console.log(`
-≋ Speedrail — your ideas, up to speed.
+≋ Litespeed — your ideas, up to speed.
 
-  speedrail [options]            Open terminal chat in the current directory
-  speedrail serve                Start the local web server
-  speedrail run "your prompt"    Run a coding task on a running server
-  speedrail tui                  Alias for speedrail
-  speedrail sessions            List recent sessions
-  speedrail models              List available models
-  speedrail profiles            List project profiles, skills, and diagnostics
-  speedrail export <session>    Export a session as JSON
-  speedrail plugin plan <dir>       Dry-run: what a local plugin package would install
-  speedrail plugin install <dir>    Install a local plugin package (plan + apply)
-  speedrail plugin list             List installed plugins
-  speedrail plugin remove <name>    Uninstall exactly the plugin's recorded items
-  speedrail usage               Provider-reported token usage by day and model
-  speedrail update              Install the latest macOS package and restart when idle
-  speedrail --version           Show the installed version
-  speedrail doctor              Redacted diagnostics report (add --reindex to
+  litespeed [options]            Open terminal chat in the current directory
+  litespeed serve                Start the local web server
+  litespeed run "your prompt"    Run a coding task on a running server
+  litespeed tui                  Alias for litespeed
+  litespeed sessions            List recent sessions
+  litespeed models              List available models
+  litespeed profiles            List project profiles, skills, and diagnostics
+  litespeed export <session>    Export a session as JSON
+  litespeed plugin plan <dir>       Dry-run: what a local plugin package would install
+  litespeed plugin install <dir>    Install a local plugin package (plan + apply)
+  litespeed plugin list             List installed plugins
+  litespeed plugin remove <name>    Uninstall exactly the plugin's recorded items
+  litespeed usage               Provider-reported token usage by day and model
+  litespeed migrate <checkout>   Carry over sessions and settings from the previous name
+  litespeed update              Install the latest macOS package and restart when idle
+  litespeed --version           Show the installed version
+  litespeed doctor              Redacted diagnostics report (add --reindex to
                            rebuild the derived search index)
 
 Server: --port 3210, --workspace PATH
-Client: --url URL (or SPEEDRAIL_URL)
+Client: --url URL (or LITESPEED_URL)
 Run:    --model ID, --provider ID, --session ID, --plan, --build, --auto, --json
         --profile ID, --skills ID,ID (or none)
-Speedrail:   --workspace PATH, --model ID, --provider ID, --session ID, --plan, --build, --auto
+Litespeed:   --workspace PATH, --model ID, --provider ID, --session ID, --plan, --build, --auto
         The terminal starts its local server automatically when needed.
 Models: --provider ID
 Profiles: --workspace PATH (default current directory), --json
@@ -433,7 +436,7 @@ Plugin:  --workspace PATH (default current directory), --json
 
 --session continues existing settings; model, provider, profile, skills,
 mode, and permission flags cannot override it. --json emits newline-delimited
-run events, or a single catalog object for speedrail profiles.
+run events, or a single catalog object for litespeed profiles.
 A selected profile supplies model/provider and mode defaults. Override its
 model with BOTH --provider and --model; --build overrides a Plan default.
 --plan and --build conflict. Unprofiled runs keep the existing Build default.
@@ -441,14 +444,19 @@ Skills default to NONE. Recommendations never activate automatically.
 Profile selection uses the server's canonical catalog for the current directory.
 Tools ask for approval by default. --auto explicitly allows shell
 commands and edits; it is not a sandbox. Keys stay server-side.
-Questions require your answer in an interactive terminal or the Speedrail app.
+Questions require your answer in an interactive terminal or the Litespeed app.
 Non-interactive runs cancel unanswered questions, including with --auto.
 `);
+  else if (command === 'migrate') {
+    const child = spawn(process.execPath, [resolve(root, 'scripts/migrate-state.mjs'), '--root', resolve(positional[0]), '--destination', resolve(process.env.LITESPEED_DATA_DIR || resolve(positional[0], '.litespeed'))], { stdio: 'inherit', env: process.env });
+    child.on('error', error => { console.error(terminalText(error.message)); process.exitCode = 1; });
+    child.on('exit', code => { process.exitCode = code ?? 1; });
+  }
   else if (command === 'update') {
     const installation = await installed(root);
-    if (!installation) throw new Error('This is a source checkout. Update it with Git and rebuild, or use the macOS package from https://github.com/BerriAI/speedrail/releases.');
-    if (!options.has('--json')) console.log('Checking for a Speedrail update…');
-    const updates = updateService({ root, version, directory: resolve(process.env.SPEEDRAIL_DATA_DIR || resolve(installation.home, '../speedrail-data')) });
+    if (!installation) throw new Error('This is a source checkout. Update it with Git and rebuild, or use the macOS package from https://github.com/BerriAI/litespeed/releases.');
+    if (!options.has('--json')) console.log('Checking for a Litespeed update…');
+    const updates = updateService({ root, version, directory: resolve(process.env.LITESPEED_DATA_DIR || resolve(installation.home, '../litespeed-data')) });
     const result = await updates.install();
     let restarted = false;
     {
@@ -458,45 +466,45 @@ Non-interactive runs cancel unanswered questions, including with --auto.
       } catch (error) { if (!options.has('--json') && !['ECONNREFUSED', 'ConnectionRefused'].includes(error.cause?.code)) console.log(terminalText(error.message)); }
     }
     if (options.has('--json')) console.log(JSON.stringify({ ...result, restarted }));
-    else console.log(restarted ? `Speedrail ${result.installedVersion} is installed. The local server is restarting. Reopen terminal clients to use the new version.` : result.restartRequired ? `Installed Speedrail ${result.installedVersion}. ${restarted ? 'The local server is restarting. Reopen terminal clients to use the new version.' : 'Run speedrail update again after active work finishes to restart the server, or open speedrail if it is stopped.'}` : `Speedrail ${version} is up to date.`);
+    else console.log(restarted ? `Litespeed ${result.installedVersion} is installed. The local server is restarting. Reopen terminal clients to use the new version.` : result.restartRequired ? `Installed Litespeed ${result.installedVersion}. ${restarted ? 'The local server is restarting. Reopen terminal clients to use the new version.' : 'Run litespeed update again after active work finishes to restart the server, or open litespeed if it is stopped.'}` : `Litespeed ${version} is up to date.`);
   }
   else if (command === 'serve') {
     const entry = existsSync(resolve(root, 'dist/server/index.js')) ? ['dist/server/index.js'] : ['--import', 'tsx', 'server/index.ts'];
     const child = spawn(process.execPath, entry.map(value => value.startsWith('dist/') || value.startsWith('server/') ? resolve(root, value) : value), {
-      cwd: root, stdio: 'inherit', env: { ...process.env, SPEEDRAIL_WORKSPACE: option('--workspace', process.cwd()), SPEEDRAIL_PORT: option('--port', process.env.SPEEDRAIL_PORT || '3210') },
+      cwd: root, stdio: 'inherit', env: { ...process.env, LITESPEED_WORKSPACE: option('--workspace', process.cwd()), LITESPEED_PORT: option('--port', process.env.LITESPEED_PORT || '3210') },
     });
-    child.on('error', error => { console.error(`Speedrail: ${terminalText(error.message)}`); process.exitCode = 1; });
+    child.on('error', error => { console.error(`Litespeed: ${terminalText(error.message)}`); process.exitCode = 1; });
     child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });
     process.on('SIGINT', () => child.kill('SIGINT')); process.on('SIGTERM', () => child.kill('SIGTERM'));
   } else if (command === 'tui') {
-    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('speedrail needs an interactive terminal. Use speedrail run for scripted work.');
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('litespeed needs an interactive terminal. Use litespeed run for scripted work.');
     const forwarded = ['--url', base, '--workspace', option('--workspace', process.cwd())];
     for (const name of ['--session', '--model', '--provider']) if (options.has(name)) forwarded.push(name, option(name));
     for (const name of ['--plan', '--build', '--auto']) if (options.has(name)) forwarded.push(name);
     if (options.has('--session') && ['--model', '--provider', '--plan', '--build', '--auto'].some(name => options.has(name))) throw new Error('An existing session keeps its configuration. Use the TUI Models or Settings menu to change it.');
     const runtime = resolve(root, 'node_modules', '.bin', process.platform === 'win32' ? 'bun.exe' : 'bun');
-    if (!existsSync(runtime)) throw new Error('The TUI needs the bundled Bun runtime. Run npm install in the Speedrail directory.');
+    if (!existsSync(runtime)) throw new Error('The TUI needs the bundled Bun runtime. Run npm install in the Litespeed directory.');
     const entry = [resolve(root, 'tui/main.tsx')];
     // cwd stays at the package root so the entry resolves; the caller's
     // directory travels as --workspace.
-    const started = await ensureTuiServer({ base, root, workspace: option('--workspace', process.cwd()), explicit: options.has('--url') || Boolean(process.env.SPEEDRAIL_URL) });
-    if (started) process.stderr.write(`Started Speedrail at ${base}. The server stays available after you exit. Stop it with: kill ${started.pid}\n`);
+    const started = await ensureTuiServer({ base, root, workspace: option('--workspace', process.cwd()), explicit: options.has('--url') || Boolean(process.env.LITESPEED_URL) });
+    if (started) process.stderr.write(`Started Litespeed at ${base}. The server stays available after you exit. Stop it with: kill ${started.pid}\n`);
     let restartSession;
     let child = spawn(runtime, [...entry, ...forwarded], { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], env: process.env });
-    child.on('message', message => { if (message?.type === 'speedrail-restart' && typeof message.sessionId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(message.sessionId)) restartSession = message.sessionId; });
-    child.on('error', error => { console.error(`Speedrail: ${terminalText(error.message)}`); process.exitCode = 1; });
+    child.on('message', message => { if (message?.type === 'litespeed-restart' && typeof message.sessionId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(message.sessionId)) restartSession = message.sessionId; });
+    child.on('error', error => { console.error(`Litespeed: ${terminalText(error.message)}`); process.exitCode = 1; });
     child.on('exit', async (code, signal) => {
       if (code === 75 && restartSession) {
         try {
           const installation = await installed(root);
-          if (!installation) throw new Error('The server updated. Reopen Speedrail to reload the terminal client.');
+          if (!installation) throw new Error('The server updated. Reopen Litespeed to reload the terminal client.');
           const next = resolve(installation.home, 'current');
           const deadline = Date.now() + 20000;
           while (Date.now() < deadline) {
             try { const health = await api('/health'); if (health.version === JSON.parse(readFileSync(resolve(next, 'package.json'), 'utf8')).version) break; } catch {}
             await new Promise(done => setTimeout(done, 300));
           }
-          child = spawn(resolve(next, 'runtime/node'), [resolve(next, 'bin/speedrail.mjs'), 'tui', '--url', base, '--session', restartSession], { stdio: 'inherit', env: process.env });
+          child = spawn(resolve(next, 'runtime/node'), [resolve(next, 'bin/litespeed.mjs'), 'tui', '--url', base, '--session', restartSession], { stdio: 'inherit', env: process.env });
           child.on('exit', code => { process.exitCode = code ?? 1; });
           child.on('error', error => { console.error(terminalText(error.message)); process.exitCode = 1; });
         } catch (error) { console.error(terminalText(error.message)); process.exitCode = 1; }
@@ -517,6 +525,6 @@ Non-interactive runs cancel unanswered questions, including with --auto.
   else if (command === 'usage') await usageCommand();
   else if (command === 'doctor') await doctorCommand();
 } catch (error) {
-  console.error(`Speedrail: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with speedrail serve first.' : terminalText(error.message)}`);
+  console.error(`Litespeed: ${error.cause?.code === 'ECONNREFUSED' ? 'Start the local server with litespeed serve first.' : terminalText(error.message)}`);
   process.exitCode = process.exitCode || 1;
 }

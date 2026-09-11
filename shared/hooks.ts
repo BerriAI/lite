@@ -1,6 +1,6 @@
 // Lifecycle hooks (design note 4.3): user-configured shell commands around the
 // agent loop. Configured in app Settings (Settings.hooks) and, for TRUSTED
-// workspaces only, in the project's .speedrail/hooks.json. The contract mirrors the
+// workspaces only, in the project's .litespeed/hooks.json. The contract mirrors the
 // convention other harnesses use so existing hooks port: JSON payload on
 // stdin, 10s timeout, and the exit code is the verdict for gating events —
 // 0 = allow, 2 = block (PreToolUse only), anything else = warn notice.

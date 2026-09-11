@@ -10,7 +10,7 @@ The everyday macOS workflow is exercised end to end. The runtime and input probl
 
 ### A second backend could interrupt the first backend's saved work
 
-`Store` performs restart recovery during construction; `History` marks open checkpoints interrupted. Previously, the server did both before trying to bind its port. Starting `speedrail serve` or `npm start` while a backend was already running could therefore change saved state even when the second server eventually failed to bind. Starting on another port could leave both writers alive.
+`Store` performs restart recovery during construction; `History` marks open checkpoints interrupted. Previously, the server did both before trying to bind its port. Starting `litespeed serve` or `npm start` while a backend was already running could therefore change saved state even when the second server eventually failed to bind. Starting on another port could leave both writers alive.
 
 A disposable reproduction changed a synthetic turn from `running` / checkpoint `open` to `idle` / checkpoint `interrupted` merely by opening a second store and history manager. The built-server reproduction on separate ports showed the primary session becoming idle and requiring recovery.
 
@@ -59,7 +59,7 @@ These are substantive launch concerns. Missing IDE integration, cosmetic spacing
 - `npm run check`: typecheck, full unit/integration suite, and production build passed; 1,661 tests passed, one opt-in runtime test skipped.
 - Full Chrome suite: all 138 tests passed. Covers permissions, rejected actions, cancellation, queue/steering, recovery, profiles, MCP lifecycle, browser storage, responsive setup, multiple workers, and session isolation.
 - Real PTY interaction suite passed: built-in autocomplete, gateway failure/retry with a masked key, recommended Sidekick setup, saved models, Allow all, live tool output, two workers, two experts, Sidekick handoff, narrow/wide views, and typing with 240 historical messages (about 62 ms in the measured sample).
-- Production terminal startup suite passed: bare `speedrail` on PATH, automatic backend startup, caller workspace, suspend/foreground, clean exit, and the backend remaining available.
+- Production terminal startup suite passed: bare `litespeed` on PATH, automatic backend startup, caller workspace, suspend/foreground, clean exit, and the backend remaining available.
 - Disposable built-backend probes verified exclusive ownership and reproduced the export/import limitation. They used synthetic conversations and a local mock streaming provider, not user credentials or live user state.
 - `npm audit`: no high, critical, or moderate advisories; one low-severity development dependency advisory for esbuild's Windows development-server path. No dependency was automatically upgraded as part of the UI request.
 - Read-through covered request boundaries, secrets, redirects, retries, unfinished streams, external paths, permissions and remembered grants, hooks/plugins/MCP, parallel worker integration, workspace ownership, transaction/recovery boundaries, queues, client reconciliation, and installation/migration paths. Passing tests and this review are evidence, not a guarantee that no defects remain.

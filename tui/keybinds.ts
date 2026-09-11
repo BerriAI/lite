@@ -1,6 +1,6 @@
 /** Default keybinding table for the terminal client: one leader plus every
  * bindable action, each mapping to a command name. Users override entries in
- * speedrail-tui.json(c) under `keybinds`; an override fully replaces that action's
+ * litespeed-tui.json(c) under `keybinds`; an override fully replaces that action's
  * chord list. `false` or "none" disables an action. */
 
 export interface KeyStroke {
@@ -261,8 +261,8 @@ export const COMMAND_MAP: Record<string, string> = {
   theme_mode_lock: 'theme.mode.lock',
   sidebar_toggle: 'session.sidebar.toggle',
   scrollbar_toggle: 'session.toggle.scrollbar',
-  status_view: 'speedrail.status',
-  debug_view: 'speedrail.debug',
+  status_view: 'litespeed.status',
+  debug_view: 'litespeed.debug',
   session_export: 'session.export',
   session_copy: 'session.copy',
   session_move: 'session.move',
