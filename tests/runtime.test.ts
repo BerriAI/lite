@@ -172,7 +172,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(providerCalls).toHaveLength(2);
     const completed = await api(sessionPath);
     // A mutation turn with no checks gets the host receipts notice appended.
-    expect(completed.messages.at(-1).content).toBe('Runtime complete.\n\nChanges haven’t been checked: No verification commands were recorded after these changes.');
+    expect(completed.messages.at(-1).content).toBe('Runtime complete.');
     expect(completed.history).toMatchObject({ hasCheckpoints: true, canUndo: true, canRedo: false });
     expect(completed.history.undoId).toEqual(expect.any(String));
     expect(completed.history.pendingRecovery).toBeUndefined();

@@ -32,6 +32,7 @@ import { Brand } from './brand.js';
 import { needsSetup } from '../shared/setup.js';
 import { Onboarding } from './onboarding.js';
 import { workerLabels } from '../shared/worker-presentation.js';
+import { architectureInfo } from '../shared/architectures.js';
 import { ModelSettings } from './models.js';
 import { GoalPanel, PlanPanel, HistoryPanel } from './sessionPanels.js';
 import { SettingsPanel } from './settings.js';
@@ -274,10 +275,15 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   const activeWorkers = detail?.delegations?.filter(task => task.status === 'running') ?? [];
   const actor = activeWorkers.length > 1 ? `${activeWorkers.length} ${activeWorkers.every(task => task.role === 'expert') ? 'experts' : 'workers'}` : activeWorkers.length ? workerLabels(detail!).get(`${activeWorkers[0].parentMessageId}:${activeWorkers[0].toolCallId}`) || 'Research' : 'Driver';
   const model = detail ? effectiveModel(detail.session) : null;
+  const modelSuffix = detail?.session.mode === 'build' && detail.session.architecture ? ` + ${architectureInfo(detail.session.architecture.kind).roles[0].id}` : detail?.session.mode === 'plan' && detail.session.planner ? ' · planner' : '';
+  const modelWidth = Math.max(18, Math.floor((width - (busy ? 36 : 12)) / 2) - 4);
+  const modelName = terminalText(model?.model.split('/').at(-1) || 'Choose model');
+  const modelSpace = Math.max(1, modelWidth - modelSuffix.length);
+  const modelLabel = (modelName.length > modelSpace ? `${modelName.slice(0, modelSpace - 1)}…` : modelName) + modelSuffix;
   const taskWidth = width >= 112 ? 30 : 0;
   return <TranscriptSettingsProvider value={settings}><box width="100%" height="100%" flexDirection="column" backgroundColor={toHex(theme.background)}>
     {detail ? <>
-      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{model?.model.slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>{` ${actor} `}</text><InterruptHint pressed={escPressed} /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
+      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{modelLabel}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>{` ${actor} `}</text><InterruptHint pressed={escPressed} /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
       {!taskWidth && <TaskProgress detail={detail} controller={controller} compact />}
       <box flexDirection="row" flexGrow={1} minHeight={1}>
         <Transcript controller={controller} detail={detail} width={width - taskWidth} active={!panel} onInspect={inspect} onUsage={showUsage} />

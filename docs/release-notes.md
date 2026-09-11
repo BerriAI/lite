@@ -4,8 +4,10 @@ Long tasks keep going, and a failing check no longer makes a completed Sidekick 
 
 - `/goal` has no turn limit by default in either UI. A positive turn limit is optional; existing saved limits are preserved.
 - Slow shell commands continue as jobs after the foreground wait instead of being killed. Actual process exits, including background completion, determine check results. Numeric `tail` filters cannot mask failed test pipelines.
-- A Sidekick, worker, or expert that finishes with unresolved checks shows **Completed · Needs review**. Agent failures still show the actual error.
-- Removed the confusing “earlier attempts” warning. Unresolved checks have one **Checks need attention** row with the affected commands, including when viewing older sessions.
+- A finished Sidekick, worker, or expert stays **Completed** when it encounters a failing test. The command shows its actual error, and the agent explains unfinished work. Agent failures still show their actual error.
+- Removed automatic verification footers and “Needs review” badges from both UIs, including old footers in saved conversations.
+- Token usage shows cache hit percentage, with per-model details. Missing cache reports stay unavailable.
+- The terminal model selector and combined token total show the companion role too, such as `gpt-6-astra + sidekick`. The selector keeps that role visible on narrow terminals.
 - Compaction retries empty or reasoning-only summaries, can fall back from a worker to its driver model, and can retry later in the same turn. Original history and Undo are retained; running command receipts settle before archiving.
 - Guided terminal setup starts with the architecture, then connects the gateway and explains model roles. Gateways without API keys work too.
 - `/new`, `/clear`, and `/reset` start a fresh terminal conversation while keeping the previous session and draft.

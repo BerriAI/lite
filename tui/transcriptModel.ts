@@ -5,6 +5,7 @@ import { shuntLabel } from '../shared/shunt.js';
  * rules, icons, labels, and spacing algorithm are all unit-testable without a
  * terminal. */
 import type { Todo, ToolCall } from '../shared/types.js';
+import { executionFailed } from '../shared/receipts.js';
 
 // ---------------------------------------------------------------------------
 // Formatting primitives
@@ -118,13 +119,13 @@ function matchLabel(count: number | null, word: string): string {
 
 /** Map one Litespeed tool call onto its presentation row. */
 export function toolRow(call: ToolCall): ToolRowModel {
-  const running = call.status === 'running' || call.status === 'pending';
-  const failed = call.status === 'error';
+  const running = call.status === 'running' || call.status === 'pending' || call.execution?.status === 'running';
+  const failed = call.status === 'error' || executionFailed(call.execution);
   const denied = call.status === 'denied';
-  const completed = call.status === 'completed';
+  const completed = call.status === 'completed' && !running && !failed;
   const base: Omit<ToolRowModel, 'icon' | 'text' | 'pending'> = {
     call, shape: 'inline', running, failed, denied, completed, separate: false,
-    error: failed ? (call.output || 'Tool failed.') : undefined,
+    error: failed ? (executionFailed(call.execution) ? `Command ${call.execution?.exitCode !== undefined ? `exited with code ${call.execution.exitCode}` : call.execution?.status}.` : call.output || 'Tool failed.') : undefined,
   };
   if(call.shunt||call.routing||call.name==='bulk_read'||call.name==='code_write')return {...base,icon:'↳',text:shuntLabel(call),pending:shuntLabel(call)};
   const args = call.args ?? {};

@@ -1,4 +1,4 @@
-import { usagePhase } from '../../shared/usage';
+import { cacheHitLabel, usagePhase } from '../../shared/usage';
 import { shuntLabel } from '../../shared/shunt';
 import { conversationBlocks } from './conversation-blocks';
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
@@ -8,7 +8,8 @@ import remarkGfm from 'remark-gfm';
 import { ArrowDown, Check, ChevronRight, Clock3, File, GitFork, Shield, Terminal, X } from 'lucide-react';
 import type { Message, PermissionRequest, SessionDetail, ToolCall, Usage } from '../../shared/types';
 import { CopyButton, Logo, LiteSpeed } from './ui';
-import { verificationNotice, verificationSummary, withoutVerificationNotice } from '../../shared/verification';
+import { withoutVerificationNotice } from '../../shared/verification';
+import { executionFailed } from '../../shared/receipts';
 
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -29,7 +30,8 @@ function CopyCode({ children }: { children: React.ReactNode }) {
 }
 const toolLabels: Record<string, string> = { bulk_read:'Shunt reader',code_write:'Shunt writer', read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Research task', sidekick: 'Sidekick', delegate: 'Worker', verify: 'Driver verification', takeover: 'Driver takeover', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
 function ToolCard({ tool }: { tool: ToolCall }) {
-  const working = tool.status === 'running' || tool.status === 'pending';
+  const working = tool.status === 'running' || tool.status === 'pending' || tool.execution?.status === 'running';
+  const failed = tool.status === 'error' || executionFailed(tool.execution);
   if(tool.shunt||tool.routing||tool.name==='bulk_read'||tool.name==='code_write')return <section className={`shunt-operation${tool.status==='error'||tool.status==='denied'?' failed':''}`} aria-label={tool.shunt?.kind==='writer'||tool.name==='code_write'?'Shunt writer':'Shunt reader'}>
     <div className="shunt-operation-heading">{working?<span className="working-dot"/>:tool.status==='completed'?<Check size={13}/>:<X size={13}/>}<span>{shuntLabel(tool)}</span></div>
     {typeof tool.args.question==='string'&&<p className="shunt-question">{String(tool.args.question)}</p>}
@@ -40,7 +42,7 @@ function ToolCard({ tool }: { tool: ToolCall }) {
   // Sidecar interception is VISIBLE by design (design note 4.5): the summary
   // row is tagged with the interceptor's name, and the expanded body shows the
   // unmodified original arguments above the (modified) executed ones.
-  return <details className={`tool-card ${working ? 'working' : ''} ${tool.status === 'error' ? 'failed' : ''}`}><summary><span className="tool-status">{working ? <span className="working-dot" /> : tool.status === 'completed' ? <Check size={13} /> : <X size={13} />}</span><span className="tool-name">{toolLabels[tool.name] || tool.name}</span><span className="tool-summary">{typeof title === 'string' ? title : ''}</span>{tool.intercepted && <span className="tool-intercepted-tag" title={tool.intercepted.reason}>modified by {tool.intercepted.by}</span>}<ChevronRight size={13} className="disclosure-chevron" /></summary><div className="tool-body">{tool.intercepted && <><div className="tool-section-title">Original arguments</div><pre>{JSON.stringify(tool.intercepted.originalArgs, null, 2)}</pre></>}<div className="tool-section-title">Arguments</div><pre>{JSON.stringify(tool.args, null, 2)}</pre>{tool.output !== undefined && <><div className="tool-section-title">{tool.status === 'error' ? 'Error' : 'Result'}<CopyButton text={tool.output} /></div><pre>{tool.output || '(No output)'}</pre></>}</div></details>;
+  return <details className={`tool-card ${working ? 'working' : ''} ${failed ? 'failed' : ''}`}><summary><span className="tool-status">{working ? <span className="working-dot" /> : tool.status === 'completed' && !failed ? <Check size={13} /> : <X size={13} />}</span><span className="tool-name">{toolLabels[tool.name] || tool.name}</span><span className="tool-summary">{typeof title === 'string' ? title : ''}</span>{tool.execution?.exitCode !== undefined && tool.execution.exitCode !== 0 && <span>exit {tool.execution.exitCode}</span>}{tool.intercepted && <span className="tool-intercepted-tag" title={tool.intercepted.reason}>modified by {tool.intercepted.by}</span>}<ChevronRight size={13} className="disclosure-chevron" /></summary><div className="tool-body">{tool.intercepted && <><div className="tool-section-title">Original arguments</div><pre>{JSON.stringify(tool.intercepted.originalArgs, null, 2)}</pre></>}<div className="tool-section-title">Arguments</div><pre>{JSON.stringify(tool.args, null, 2)}</pre>{tool.output !== undefined && <><div className="tool-section-title">{failed ? 'Error' : 'Result'}<CopyButton text={tool.output} /></div><pre>{tool.output || '(No output)'}</pre></>}</div></details>;
 }
 function Approval({ request, onDecide, onAllowAll, busy }: { request: PermissionRequest; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onAllowAll?: () => void; busy: boolean }) {
   const forced = request.ruleMatch?.decision === 'ask';
@@ -78,19 +80,6 @@ export function Conversation({ detail, connection, onDecide, onAllowAll, onFork,
     {running && !last?.content && !last?.reasoning && !hasWork && !detail.permissions.length && !detail.questions?.length && <div className="run-status" role="status"><LiteSpeed compact active /><span>{detail.session.status === 'waiting' ? detail.questions?.length ? 'Waiting for your answer' : 'Waiting for your approval' : detail.session.mode === 'plan' ? 'Exploring and planning' : last?.activity || 'Working'}<span className="animated-ellipsis">…</span></span></div>}
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" aria-label="Jump to latest" title="Jump to latest" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={16} /></button>}</div>;
-}
-function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
-  const summary = verificationSummary(receipts);
-  if (!summary) return null;
-  const unresolved = receipts.unresolvedChecks ?? receipts.checksFailed;
-  const commands = unresolved.length ? unresolved : receipts.checksRun;
-  return <details className={`receipts-row${summary.attention ? ' needs-review' : ''}`}>
-    <summary><ChevronRight size={12} />{summary.title}</summary>
-    {summary.description && <p>{summary.description}</p>}
-    {receipts.filesChangedAfterLastCheck.length > 0 && <p>Edited after checks: {receipts.filesChangedAfterLastCheck.join(', ')}</p>}
-    {commands.map((command, index) => <pre key={index}>{command}</pre>)}
-    {receipts.filesChanged.length > 0 && <p>Files changed: {receipts.filesChanged.join(', ')}</p>}
-  </details>;
 }
 /** Show work live, then fold the completed block when prose continues. */
 function WorkLog({ workerNoun, messages, live, renderTask, workActivity, expanded, onExpand }: { expanded: boolean; onExpand: (open: boolean) => void; messages: Message[]; live: boolean; workerNoun: string; workActivity?: string|false; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode }) {
@@ -141,21 +130,20 @@ function MessageView({ driver, workerNoun, message, running, grouped, tail, live
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
 
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
-      {assistant && message.receipts && <ReceiptsRow receipts={message.receipts} />}
     </div>
-    {assistant && tail && !live && !inline && <div className="message-actions"><CopyButton text={content + (message.receipts ? verificationNotice(message.receipts) ?? '' : '')} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={steps.at(-1)?.turnUsage} />}</div>}
+    {assistant && tail && !live && !inline && <div className="message-actions"><CopyButton text={content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={steps.at(-1)?.turnUsage} />}</div>}
   </article>;
 }
 
 function UsageDetails({usage,family}:{usage:Usage;family?:Message['turnUsage']}) {
   const complete=!family||family.reportedRequests===family.requests;
   const reported=!family||family.reportedRequests>0;
-  const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number}>();
+  const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number;cached:number;cacheReports:number}>();
   for(const record of family?.breakdown??[]) {
     const key=JSON.stringify([record.providerId,record.model,record.role,record.phase]);
-    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${usagePhase(record.phase)}`}`,input:0,output:0,requests:0,reported:0};
-    row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;}rows.set(key,row);
+    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${usagePhase(record.phase)}`}`,input:0,output:0,requests:0,reported:0,cached:0,cacheReports:0};
+    row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;if(record.usage.cachedTokens!==undefined){row.cached+=record.usage.cachedTokens;row.cacheReports++;}}rows.set(key,row);
   }
-  const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;
-  return family?<details className="usage usage-details"><summary>{summary}</summary><div className="usage-breakdown">{[...rows].map(([key,row])=><div key={key}><strong>{row.label}</strong><span>{row.reported?`${row.input.toLocaleString()} in · ${row.output.toLocaleString()} out`:'Usage not reported'}{row.reported<row.requests?` · ${row.requests-row.reported} request(s) unreported`:''}</span></div>)}</div></details>:<span className="usage" title="Reported input and output tokens for this response">{summary}</span>;
+  const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{` · ${cacheHitLabel(usage,complete)}`}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;
+  return family?<details className="usage usage-details"><summary title="Cache hit = cached input tokens / total input tokens. Output tokens are excluded.">{summary}</summary><div className="usage-breakdown">{[...rows].map(([key,row])=><div key={key}><strong>{row.label}</strong><span>{row.reported?`${row.input.toLocaleString()} in · ${row.output.toLocaleString()} out`:'Usage not reported'}{` · ${cacheHitLabel({inputTokens:row.input,cachedTokens:row.cached},row.cacheReports===row.requests)}`}{row.reported<row.requests?` · ${row.requests-row.reported} request(s) unreported`:''}</span></div>)}</div></details>:<span className="usage" title="Cache hit = cached input tokens / total input tokens. Output tokens are excluded.">{summary}</span>;
 }

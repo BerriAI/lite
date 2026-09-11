@@ -57,18 +57,16 @@ async function send(page: Page, session: Session, text: string) {
   await page.getByRole('button', { name: 'Send message', exact: true }).click(); expect((await accepted).status()).toBe(202);
 }
 
-test('unchecked changes show one concise verification notice with expandable details', async ({ page, request }) => {
+test('file changes keep evidence without adding a generic check footer', async ({ page, request }) => {
   const session = await create(request); await open(page, session);
   await send(page, session, 'RECEIPTS_BROWSER please write the demo file');
   const result = await done(request, session);
   const final = result.messages.at(-1)!;
-  expect(final.content).toContain('Changes haven’t been checked: No verification commands were recorded after these changes.');
+  expect(final.content).toBe('The write is complete.');
   expect(final.receipts?.filesChanged).toEqual(['receipts-demo.txt']);
-  await expect(page.locator('.receipts-row summary')).toHaveText('Changes haven’t been checked');
+  await expect(page.locator('.receipts-row')).toHaveCount(0);
   await expect(page.locator('.assistant-message .markdown')).not.toContainText('Changes haven’t been checked');
   await expect(page.getByText('Files changed: receipts-demo.txt', { exact: true })).not.toBeVisible();
-  await page.locator('.receipts-row summary').click();
-  await expect(page.getByText('Files changed: receipts-demo.txt', { exact: true })).toBeVisible();
 });
 
 test('a session goal continues turns automatically and completes with a banner', async ({ page, request }) => {
@@ -96,7 +94,7 @@ test('a blocked goal stops continuing and the banner can be cleared', async ({ p
   await expect(page.locator('.goal-banner')).toHaveCount(0);
 });
 
-test('historical failed command dumps become a single expandable verification notice', async ({ page, request }) => {
+test('historical host check footers stay out of the conversation', async ({ page, request }) => {
   const session = await create(request);
   await request.post(`/api/sessions/${session.id}/messages`, { data: { content: 'Reply with hello' } });
   await done(request, session);
@@ -110,12 +108,20 @@ test('historical failed command dumps become a single expandable verification no
   });
   await open(page, session);
   await expect(page.locator('.assistant-message .message-body > .markdown')).toHaveText('The change is ready.');
-  const row = page.locator('.receipts-row');
-  await expect(row.locator('summary')).toHaveText('Checks need attention');
-  await expect(row.locator('pre').last()).not.toBeVisible();
-  await row.locator('summary').click();
-  await expect(row).not.toContainText('attempt');
-  await expect(row.locator('pre').last()).toBeVisible();
-  await expect(row.locator('pre').last()).toHaveText(commands[2]);
-  await page.screenshot({ path: 'test-results/verification-details.png', fullPage: true });
+  await expect(page.locator('.receipts-row')).toHaveCount(0);
+  await expect(page.locator('.conversation-content')).not.toContainText('check(s) still failing');
+  await expect(page.locator('.conversation-content')).not.toContainText('Checks need attention');
+});
+
+for(const width of [1280,390])test(`cache hit percentage uses input tokens and survives reload at ${width}px`,async({page,request})=>{
+  await page.setViewportSize({width,height:800});
+  const session=await create(request);await open(page,session);
+  await send(page,session,'CACHE_HIT_BROWSER report usage');await done(request,session);
+  for(let reload=0;reload<2;reload++){
+    if(reload)await page.reload();
+    const usage=page.locator('.usage').last();
+    await expect(usage).toContainText('60 tokens');await expect(usage.locator('summary')).toContainText('80% cache hit');
+    await usage.locator('summary').click();await expect(usage.locator('.usage-breakdown')).toContainText('80% cache hit');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
 });

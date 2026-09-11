@@ -98,7 +98,7 @@ test('the sidekick tool is advertised only when the architecture is selected', a
   expect((await done(request, fusion)).messages.at(-1)?.content).toContain('Sidekick tool is available');
 });
 
-test('an actual failing check leaves Sidekick completed with a review note across reloads', async ({page,request}) => {
+test('an actual failing command stays visible while Sidekick remains completed across reloads', async ({page,request}) => {
   await writeFile(join(workspace,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(1)"'}}));
   const session=await create(request,{permissionMode:'auto'});await open(page,session);await send(page,session,'FAILING_CHECK');
   await done(request,session);
@@ -108,8 +108,10 @@ test('an actual failing check leaves Sidekick completed with a review note acros
   for(let reload=0;reload<2;reload++){
     if(reload)await page.reload();
     await expandSteps(page);
-    await expect(sidekickCard(page).locator('.task-identity')).toContainText('Completed · Needs review');
-    await expect(sidekickCard(page)).toContainText('Check did not pass: npm test');
+    await expect(sidekickCard(page).locator('.task-identity')).toContainText('Completed');
+    await expect(sidekickCard(page)).not.toContainText('Needs review');
+    await expect(sidekickCard(page).locator('.tool-card.failed > summary')).toContainText('npm test');
+    await expect(sidekickCard(page).locator('.tool-card.failed > summary')).toContainText('exit 1');
     await expect(sidekickCard(page).locator('.error-text')).toHaveCount(0);
   }
 });

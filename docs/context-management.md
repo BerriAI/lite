@@ -73,7 +73,7 @@ A completed model response containing only reasoning is not a continuation summa
 
 Command verification uses host-recorded exit status, including background completion. A numeric `tail` only changes the displayed output; shell pipelines use `pipefail`, so a failed test cannot become successful because `tail` exited zero. A later successful rerun resolves an earlier failed attempt only when its command and working directory match. `npm test` and `npx vitest run` are treated as the same check only if the actual package test script is exactly `vitest run` without pre/post hooks. Different arguments, projects, unknown aliases, and compound shell scripts are not treated as equivalent. Earlier failures remain in the transcript even when a rerun resolves them.
 
-Completed workers can carry a separate verification note. A test failure or an unsuccessful edit does not turn a finished Sidekick into a failed model invocation. Unfinished agents still report their provider, cancellation, stall, or runtime error.
+The driver receives the recorded results to review. A test failure or an unsuccessful edit does not turn a finished Sidekick into a failed model invocation. Both clients show command results and the agent's response, without adding a separate heuristic verdict. Unfinished agents still report their provider, cancellation, stall, or runtime error.
 
 ## Optional Shunt
 

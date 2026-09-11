@@ -28,6 +28,7 @@ export function groupRuns(messages: Message[]) {
         inputTokens: usage.reduce((sum, item) => sum + item.inputTokens, 0),
         outputTokens: usage.reduce((sum, item) => sum + item.outputTokens, 0),
         durationMs: usage.reduce((sum, item) => sum + (item.durationMs ?? 0), 0),
+        ...(usage.length === run.length && usage.every(item => item.cachedTokens !== undefined) ? {cachedTokens:usage.reduce((sum,item)=>sum+item.cachedTokens!,0)} : {}),
         ...(usage.length === run.length && usage.every(item => item.cost !== undefined) ? {cost:usage.reduce((sum,item)=>sum+item.cost!,0)} : {}),
       };
     }

@@ -49,6 +49,7 @@ try{
  emulator=new xterm.Terminal({cols:120,rows:38,allowProposedApi:true});
  terminal=pty.spawn(process.execPath,['bin/litespeed.mjs','tui','--url',base,'--session',session.id],{cwd:root,cols:120,rows:38,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',LITESPEED_DISABLE_PROJECT_CONFIG:'1',XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
  terminal.onData(chunk=>emulator.write(chunk,record));await waitFor(()=>screen().includes('Ask Litespeed to do something…')&&screen().includes('Ctrl+P Commands'),'TUI composer starts');
+ if(!baseline)assert(screen().split('\n')[0].includes('test-model + sidekick'),'model selection names the companion architecture');
  terminal.write('TUI_FLOW_DRIVER inspect and update the note.\r');
  let approved=new Set(),captured=false,childRequest=false;
  await waitFor(async()=>{
@@ -66,6 +67,7 @@ try{
     if(!baseline){assert(screen().includes('Project inspection complete.'));assert(screen().includes('Sidekick · 1/3 done'));}
 
     terminal.resize(80,24);emulator.resize(80,24);await delay(250);await save('sidekick-narrow');if(!baseline){assert(screen().split('\n').slice(0,4).join('\n').includes('Update the project note'),'current task stays pinned on narrow terminals');assert(screen().split('\n').some(line=>line.includes('1 Allow once')&&line.includes('4 Allow all tools')),'approval choices fit on one row at 80 columns');}
+    if(!baseline)assert(screen().split('\n')[0].includes('+ sidekick'),'companion remains visible on narrow terminals');
     terminal.resize(120,38);emulator.resize(120,38);await delay(250);
    }
    approved.add(p.id);terminal.write('1');
@@ -94,11 +96,11 @@ try{
   assert(actor>=0&&lines[actor+1].includes('▸ 5 steps · completed'),'Sidekick identity stays above its collapsed steps');
   assert(lines.slice(actor+2).some(line=>/^\s*Driver\s*(?:│.*)?$/.test(line)),'Driver is labeled again after the handoff');
   assert(!lines[actor+1].includes('Sidekick'),'the activity row does not repeat the agent name');
-  const verification=lines.findIndex(line=>line.includes('Changes haven’t been checked'));
-  assert(verification>=0&&!screen().includes('No verification commands'),'verification details start collapsed');
-  const column=lines[verification].indexOf('Changes haven’t been checked')+2;
-  terminal.write(`\x1b[<0;${column};${verification+1}M\x1b[<0;${column};${verification+1}m`);
-  await waitFor(()=>screen().includes('No verification commands were recorded'),'verification opens inline');await save('verification-details');
+  assert(!screen().includes('Changes haven’t been checked')&&!screen().includes('Checks need attention'),'no generic verification footer');
+  assert(screen().includes('Cache unavailable'),'unknown cache usage is not presented as a zero hit rate');
+  assert(screen().includes('test-model + sidekick · 660 tokens'),'family usage names both driver and companion');
+  terminal.write('CACHE_HIT_BROWSER show reported cache usage\r');
+  await waitFor(()=>screen().includes('80% cache hit')&&screen().includes('idle'),'cache hit percentage appears beside tokens');await save('cache-hit');
 
  }
  await writeFile(join(artifacts,'frames.jsonl'),frames.map(frame=>JSON.stringify(frame)).join('\n'));

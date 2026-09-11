@@ -41,6 +41,8 @@ export interface CommandExecution {
   checkKey?: string;
 }
 
+export const executionFailed = (execution?: CommandExecution): boolean => Boolean(execution && execution.status !== 'running' && (execution.status !== 'exited' || execution.exitCode !== 0));
+
 /** Conservative verification heuristic. A bash command counts as a check when
  * it starts with — or contains, after a shell separator (;, &, |, (, or
  * whitespace) — one of these known checker invocations:

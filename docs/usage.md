@@ -10,7 +10,9 @@ Use **Steer** to change direction during a response. The note goes to the driver
 
 Session goals let Litespeed continue an objective across turns with no turn limit by default; you can set an optional limit. Stop pauses continuation. Completed responses report recorded file changes, checks, and provider usage; expand the steps and review changed files to inspect the evidence. [Undo/redo and recovery](local-data.md) explain which changes can be restored.
 
-**Completed · Needs review** means the Sidekick, worker, or expert finished its response but left an action or check unresolved. A failing test is evidence to investigate; it does not mean the model crashed. **Failed**, **Timed out**, and **Cancelled** describe an agent that did not finish, with the actual error or reason shown in its transcript.
+Test and command results appear on their tool calls. A failing test does not mark a finished Sidekick, worker, or expert as failed; the agent explains unresolved work in its response. **Failed**, **Timed out**, and **Cancelled** describe an agent that did not finish, with the actual error or reason shown in its transcript. There is no additional automatic check verdict under the answer.
+
+Token usage includes **cache hit percentage**: provider-reported cached input tokens divided by total input tokens, excluding output tokens. Expand usage for each model's breakdown. Missing, partial, or inconsistent cache reports show **Cache unavailable**, rather than an invented zero.
 
 Slow shell commands keep running after the foreground wait (ten seconds by default). The agent receives a job ID and can read output or stop it; the wait is not a deadline to kill a build. Foreground commands finish before the turn closes, and their file changes remain available for Undo. Explicit background jobs can outlive a driver turn; their file effects are not captured for Undo. Jobs have a thirty-minute lifetime cap and do not survive a backend restart. Workers stall after ten minutes without model or tool progress, with approval waits excluded.
 

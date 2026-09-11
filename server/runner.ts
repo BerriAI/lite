@@ -31,7 +31,7 @@ import type { PermissionRule, RuleMatch } from '../shared/permissions.js';
 import { Delegations } from './delegations.js';
 import type { DelegationSummary } from '../shared/delegation.js';
 import { boundedReview, streamCompletion, ProviderError, type ProviderMessage } from './providers.js';
-import { computeReceipts, receiptsNotice } from './receipts.js';
+import { computeReceipts } from './receipts.js';
 import { completeToolBoundary, planCompaction, pruneToolOutputs } from './context.js';
 import { assessContext, contextIdentity, modelCatalog, compactionLimits, recentContextChars, estimateRequest, hasMeaningfulSavings, resolveContextBudget, type BudgetRequest } from './budget.js';
 import { History } from './history.js';
@@ -761,26 +761,18 @@ export class Runner {
     this.persist(message); this.bus.emit(message.sessionId, 'message', message);
   }
   private setSession(id: string, patch: Partial<Session>) { this.bus.emit(id, 'session', this.store.updateSession(id, patch)); }
-  /** Seal-time evidence receipts on the turn's FINAL assistant message: an
-   * honest host account computed from tool receipts (never model claims), so
-   * silence cannot hide unverified work. A short notice is appended to the
-   * content only when files changed unverified (no checks, or edits after the
-   * last check); pure-read turns keep receipts data with no appended text.
-   * Children are skipped entirely — researchers cannot mutate, so their
-   * receipts would always be empty. Advisory: a failure here must never fail
-   * or block the sealed turn. */
+  /** Persist host evidence independently of the model's final answer. Receipt
+   * heuristics are internal bookkeeping, not an additional user-facing verdict.
+   * A failure here must never fail or block the sealed turn. */
   private sealReceipts(id: string, run: ActiveRun, message: Message) {
     if (run.child) return;
     try {
       message.receipts = computeReceipts(this.delegations.evidence(id), run.turnId);
-      const notice = receiptsNotice(message.receipts);
-      if (notice) message.content += notice;
       this.save(message);
     } catch { /* observation only */ }
   }
   /** Stop hook: fired only where a turn seals NORMALLY — the same sites as
-   * sealReceipts (after receipts, so a hook observing the final text sees the
-   * receipts notice too). Cancellation, failures, and step-limit exits do not
+   * sealReceipts (after evidence is persisted). Cancellation and failures do not
    * fire Stop: the design event marks a completed response, not any teardown.
    * Observational only (exit 2 warns like any nonzero exit); children never
    * reach here because fireHooks refuses child runs. */

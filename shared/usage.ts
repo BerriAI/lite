@@ -17,9 +17,15 @@ export function aggregateUsage(records: RequestUsage[]): TurnUsage {
     requests: records.length, reportedRequests: reported.length, breakdown: records,
     ...(records.length && reported.length === records.length && reported.every(usage => usage.cost !== undefined)
       ? { cost: reported.reduce((sum, usage) => sum + usage.cost!, 0) } : {}),
-    ...(reported.length && reported.every(usage => usage.cachedTokens !== undefined)
+    ...(reported.length === records.length && reported.length && reported.every(usage => usage.cachedTokens !== undefined)
       ? { cachedTokens: reported.reduce((sum, usage) => sum + usage.cachedTokens!, 0) } : {}),
   };
+}
+
+export function cacheHitLabel(usage: Pick<Usage,'inputTokens'|'cachedTokens'>, complete = true): string {
+  const {inputTokens,cachedTokens}=usage;
+  if(!complete || !Number.isFinite(inputTokens) || inputTokens<=0 || cachedTokens===undefined || !Number.isFinite(cachedTokens) || cachedTokens<0 || cachedTokens>inputTokens)return 'Cache unavailable';
+  return `${Number((100*cachedTokens/inputTokens).toFixed(1))}% cache hit`;
 }
 
 export function usagePhase(phase:RequestUsage['phase']):string {return phase==='shunt_read'?'Reader':phase==='shunt_write'?'Writer':phase;}

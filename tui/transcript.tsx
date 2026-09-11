@@ -22,7 +22,7 @@ import { useConfig, useTheme } from './context.js';
 import type { TerminalController } from './controller.js';
 import { Brand } from './brand.js';
 import { WorkerCard } from './workerCard.js';
-import { verificationSummary, withoutVerificationNotice } from '../shared/verification.js';
+import { withoutVerificationNotice } from '../shared/verification.js';
 
 /** Heavy left rail used by user messages, block tools, and error boxes. */
 export const RAIL_BORDER = {
@@ -353,23 +353,6 @@ function WorkLog({ steps, detail, actors, live, syntax, width, controller, embed
     : <DriverActivity key={section.id} entries={section.kind === 'driver' ? section.entries : [{ message: section.message, call: section.call }]} detail={detail} live={live && index === sections.length - 1} heading={!embedded && Boolean(detail.session.architecture) && (index > 0 || !firstHasHeading)} syntax={syntax} width={width} embedded={embedded} />)}</>;
 }
 
-function VerificationRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
-  const theme = useTheme(), [open, setOpen] = useState(false);
-  const summary = verificationSummary(receipts);
-  if (!summary) return null;
-  const unresolved = receipts.unresolvedChecks ?? receipts.checksFailed;
-  const commands = unresolved.length ? unresolved : receipts.checksRun;
-  return <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
-    <Button onPress={() => setOpen(!open)}><span fg={toHex(summary.attention ? theme.warning : theme.textMuted)}>{`${open ? '▾' : '▸'} ${summary.title}`}</span></Button>
-    {open && <box paddingLeft={2} flexDirection="column" flexShrink={0}>
-      {summary.description && <text fg={toHex(theme.textMuted)} wrapMode="word">{summary.description}</text>}
-      {receipts.filesChangedAfterLastCheck.length > 0 && <text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Edited after checks: ${receipts.filesChangedAfterLastCheck.join(', ')}`)}</text>}
-      {commands.map((command, index) => <text key={index} marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(command, true)}</text>)}
-      {receipts.filesChanged.length > 0 && <text marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Files changed: ${receipts.filesChanged.join(', ')}`)}</text>}
-    </box>}
-  </box>;
-}
-
 export const Transcript = memo(function Transcript({ detail, width, active = true, embedded = false, onInspect, onUsage, controller }: { detail: SessionDetail; width: number; controller?: TerminalController; active?: boolean; embedded?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
   const theme = useTheme(), config = useConfig(), syntax = useSyntax(theme), scroll = useRef<ScrollBoxRenderable>(null);
   const acceleration = useMemo(() => { const native = new MacOSScrollAccel(); return { tick: () => (config.scroll_acceleration.enabled ? native.tick() : 1) * config.scroll_speed, reset: () => native.reset() }; }, [config.scroll_speed, config.scroll_acceleration.enabled]);
@@ -402,7 +385,6 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
         {content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(content, true)} syntax={syntax.normal} />}
         <WorkLog steps={steps} detail={detail} actors={actors} live={live} syntax={syntax} width={width} controller={controller} embedded={embedded} />
         {message.error && <ErrorRow error={terminalText(message.error, true)} />}
-        {message.receipts && <VerificationRow receipts={message.receipts} />}
         {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
       </box>;
     })}

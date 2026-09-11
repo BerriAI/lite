@@ -21,7 +21,7 @@ describe('terminal conversation parity', () => {
   });
   it('uses historical routing, preserves unreported usage, and distinguishes worker costs', () => {
     const m = message('a', { context: { model: 'old-driver' } as Message['context'], turnUsage: { inputTokens: 12, outputTokens: 4, requests: 2, reportedRequests: 1, breakdown: [{ id: 'r', rootSessionId: 'root', sessionId: 'child', turnId: 't', role: 'expert', providerId: 'fixture', model: 'strong', phase: 'response', usage: { inputTokens: 12, outputTokens: 4 } }, { id: 'r2', rootSessionId: 'root', sessionId: 'root', turnId: 't', role: 'driver', providerId: 'fixture', model: 'old-driver', phase: 'response' }] } });
-    expect(usageLabel(m, m.turnUsage)).toBe('old-driver · 16 tokens reported');
+    expect(usageLabel(m, m.turnUsage)).toBe('old-driver · 16 tokens reported · Cache unavailable');
     expect(usageDetails(m, m.turnUsage)).toContain('expert · fixture/strong');
     expect(usageDetails(m, m.turnUsage)).toContain('Usage not reported');
     expect(usageDetails(m, m.turnUsage)).not.toContain('$0');
