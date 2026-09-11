@@ -1,15 +1,11 @@
-# Litespeed 0.1.4
+# Litespeed 0.1.5
 
-The terminal now shows Sidekick and worker activity in the main conversation, with readable approvals and a persistent task list.
+Agent handoffs are easier to follow in the terminal, and verification notes explain what needs attention without a command dump.
 
-- Sidekick, worker, and expert transcripts share the conversation's scroll area. Scroll back while work continues, then use Ctrl+G or Latest to return to live output.
-- Tasks stay visible on the right in wide terminals; narrow terminals show the current task below the header. Use `/todos` for the full list.
-- One Thinking indicator appears during reasoning. Completed reasoning appears before the response, with an option to expand it.
-- Live tool calls appear as they happen. Completed activity can collapse between responses, and task updates display checklists.
-- Approval prompts show the action, file, or command in plain text. Allow once, Allow this tool, Deny, and Allow all tools share a row and wrap only when needed. Full arguments and file diffs remain available in Details.
-- A successful test retry resolves an earlier failure even if its numeric `tail` output limit changes. Check pipelines preserve the test runner's exit status, and unresolved worker failures name the specific check or action.
-- Drivers can request corrections to completed work using `repairOf`. A rejected invocation ID no longer leaves a later successful assignment permanently blocked.
-- The release checks now replay a complete Sidekick turn in a real terminal, checking streamed ordering, scrolling, pinned tasks, and approval layout at wide and narrow sizes.
+- Sidekick has a muted heading above its steps, matching Driver. The name stays visible when its activity is collapsed, and Driver is labeled again when it resumes.
+- Parallel workers and experts keep their own numbered headings and independently expandable transcripts.
+- Verification notices in both UIs distinguish missing checks, later edits, and earlier attempts without recorded successful reruns. Expand the notice for commands and file details. Historical receipts use the same presentation; saved evidence is preserved.
+- Live tools, reasoning, task lists, approvals, and scrolling keep their existing behavior. Real terminal tests cover single Sidekick handoffs, two workers, two experts, and wide and narrow layouts.
 
 Update with `litespeed update`, then reopen the terminal UI. Saved sessions, settings, and keys are preserved.
 
