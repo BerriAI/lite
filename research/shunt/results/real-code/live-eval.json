@@ -1,0 +1,597 @@
+{
+  "driver": "claude-haiku-4-5-20251001",
+  "worker": "gemini/gemini-2.5-flash",
+  "temperature": 0.2,
+  "repeats": 2,
+  "transport": "Native gateway research bridge replacing Portal only; unmodified upstream scripts; isolated tool loop, not shipped Speedrail UI integration.",
+  "records": [
+    {
+      "label": "provider-implementation/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "provider-implementation",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "expected": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "durationMs": 6223,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 13762,
+        "outputTokens": 387,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 13762,
+        "outputTokens": 387,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 38697
+        }
+      ],
+      "final": "Now I'll analyze the file to extract the requested information:\n\n1. **requestTimeoutMs** (default timeout used by streamCompletion): Line 38 shows `const REQUEST_TIMEOUT_MS = 5 * 60_000;` which equals 300,000 ms. Line 440 uses this in `streamCompletion`.\n\n2. **maxRetries** (maximum automatic retry count): Line 55 shows `const MAX_RETRIES = 2;` and line 136 uses this in the retry logic.\n\n3. **anthropicMaxOutputTokens** (the configured max_tokens): Line 453 shows `max_tokens: 8192` in the Anthropic request body.\n\n4. **temperatureConfigurable** (whether CompletionOptions and streamCompletion support a temperature argument): Looking at the `CompletionOptions` interface (lines 13-18) and `streamCompletion` function (lines 438-484), there is no `temperature` parameter defined. The function accepts `provider`, `model`, `messages`, `tools`, `signal`, `system`, and `reasoningEffort`, but no temperature parameter.\n\n```json\n{\n  \"requestTimeoutMs\": 300000,\n  \"maxRetries\": 2,\n  \"anthropicMaxOutputTokens\": 8192,\n  \"temperatureConfigurable\": false\n}\n```"
+    },
+    {
+      "label": "provider-implementation/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "provider-implementation",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "expected": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "durationMs": 13395,
+      "driver": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 4947,
+        "outputTokens": 492,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 20825,
+        "outputTokens": 1092,
+        "cachedTokens": null
+      },
+      "total": {
+        "requests": 6,
+        "reportedRequests": 6,
+        "inputTokens": 25772,
+        "outputTokens": 1584,
+        "cachedTokens": null
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the values for requestTimeoutMs (default timeout for streamCompletion), maxRetries (maximum automatic retry count), anthropicMaxOutputTokens (configured max_tokens), and does streamCompletion support a temperature argument?",
+            "paths": [
+              "providers.ts"
+            ]
+          },
+          "resultBytes": 158
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "Does CompletionOptions interface support a temperature property or argument?",
+            "paths": [
+              "providers.ts"
+            ]
+          },
+          "resultBytes": 120
+        }
+      ],
+      "final": "Based on my inspection of providers.ts, here is the requested information in JSON format:\n\n```json\n{\n  \"requestTimeoutMs\": 300000,\n  \"maxRetries\": 2,\n  \"anthropicMaxOutputTokens\": 8192,\n  \"temperatureConfigurable\": false\n}\n```\n\n**Summary:**\n- **requestTimeoutMs**: 300000 (300 seconds / 5 minutes) - the default timeout used by streamCompletion\n- **maxRetries**: 2 - the maximum automatic retry count\n- **anthropicMaxOutputTokens**: 8192 - the configured max_tokens for Anthropic\n- **temperatureConfigurable**: false - neither CompletionOptions nor streamCompletion support a temperature argument in the actual implementation"
+    },
+    {
+      "label": "provider-and-file-tools/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "provider-and-file-tools",
+      "quality": false,
+      "jsonOnly": true,
+      "error": "Unexpected output target.",
+      "expected": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "durationMs": 5021,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 45963,
+        "outputTokens": 262,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 45963,
+        "outputTokens": 262,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 38697
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "tools.ts"
+          },
+          "resultBytes": 103586
+        }
+      ],
+      "final": ""
+    },
+    {
+      "label": "provider-and-file-tools/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "provider-and-file-tools",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "expected": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "durationMs": 18785,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 4142,
+        "outputTokens": 613,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 5,
+        "reportedRequests": 5,
+        "inputTokens": 187080,
+        "outputTokens": 420,
+        "cachedTokens": null
+      },
+      "total": {
+        "requests": 8,
+        "reportedRequests": 8,
+        "inputTokens": 191222,
+        "outputTokens": 1033,
+        "cachedTokens": null
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "tools.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the readByteLimit value for readFile?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 41
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the defaultReadLines value for read_file default limit?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 20
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the bashMaxTimeoutMs maximum timeout_ms tool-schema value?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 17
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the providerTimeoutMs streamCompletion default timeout value?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 101
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the providerRetries maximum automatic provider retries value?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 19
+        }
+      ],
+      "final": "Perfect! I've extracted all the requested configuration values. Here's the JSON response:\n\n```json\n{\n  \"readByteLimit\": 262144,\n  \"defaultReadLines\": 2000,\n  \"bashMaxTimeoutMs\": 120000,\n  \"providerTimeoutMs\": 300000,\n  \"providerRetries\": 2\n}\n```"
+    },
+    {
+      "label": "provider-implementation/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "provider-implementation",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "expected": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "durationMs": 6355,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 13758,
+        "outputTokens": 380,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 13758,
+        "outputTokens": 380,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 38697
+        }
+      ],
+      "final": "Now I'll analyze the file to extract the requested information:\n\n1. **requestTimeoutMs** (default timeout used by streamCompletion): Line 38 shows `const REQUEST_TIMEOUT_MS = 5 * 60_000;` which equals 300,000 ms. Line 440 uses this in `streamCompletion`.\n\n2. **maxRetries** (maximum automatic retry count): Line 55 shows `const MAX_RETRIES = 2;` which is used in the retry logic at line 136.\n\n3. **anthropicMaxOutputTokens** (the configured max_tokens): Line 453 shows `max_tokens: 8192` in the Anthropic request body.\n\n4. **temperatureConfigurable** (whether CompletionOptions and streamCompletion support a temperature argument): Looking at the `CompletionOptions` interface (lines 13-18), there is no `temperature` parameter. The `streamCompletion` function (line 438) also does not accept or use a temperature parameter. The function only supports `reasoningEffort` as a configurable parameter for model behavior.\n\n```json\n{\n  \"requestTimeoutMs\": 300000,\n  \"maxRetries\": 2,\n  \"anthropicMaxOutputTokens\": 8192,\n  \"temperatureConfigurable\": false\n}\n```"
+    },
+    {
+      "label": "provider-implementation/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "provider-implementation",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "expected": {
+        "requestTimeoutMs": 300000,
+        "maxRetries": 2,
+        "anthropicMaxOutputTokens": 8192,
+        "temperatureConfigurable": false
+      },
+      "durationMs": 10187,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3497,
+        "outputTokens": 391,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 10434,
+        "outputTokens": 854,
+        "cachedTokens": 10213
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 13931,
+        "outputTokens": 1245,
+        "cachedTokens": 10213
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the values for requestTimeoutMs (default timeout used by streamCompletion), maxRetries (maximum automatic retry count), anthropicMaxOutputTokens (the configured max_tokens), and does CompletionOptions or streamCompletion support a temperature argument?",
+            "paths": [
+              "providers.ts"
+            ]
+          },
+          "resultBytes": 184
+        }
+      ],
+      "final": "Based on the inspection of providers.ts, here is the requested information in JSON format:\n\n```json\n{\n  \"requestTimeoutMs\": 300000,\n  \"maxRetries\": 2,\n  \"anthropicMaxOutputTokens\": 8192,\n  \"temperatureConfigurable\": false\n}\n```\n\n**Summary:**\n- **requestTimeoutMs**: 300000 (5 minutes - the default timeout used by streamCompletion)\n- **maxRetries**: 2 (maximum automatic retry count)\n- **anthropicMaxOutputTokens**: 8192 (the configured max_tokens for Anthropic)\n- **temperatureConfigurable**: false (neither CompletionOptions nor streamCompletion support a temperature argument in the actual implementation)"
+    },
+    {
+      "label": "provider-and-file-tools/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "provider-and-file-tools",
+      "quality": false,
+      "jsonOnly": true,
+      "error": "Unexpected output target.",
+      "expected": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "durationMs": 4825,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 45959,
+        "outputTokens": 262,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 45959,
+        "outputTokens": 262,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 38697
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "tools.ts"
+          },
+          "resultBytes": 103586
+        }
+      ],
+      "final": ""
+    },
+    {
+      "label": "provider-and-file-tools/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "provider-and-file-tools",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "expected": {
+        "readByteLimit": 262144,
+        "defaultReadLines": 2000,
+        "bashMaxTimeoutMs": 120000,
+        "providerTimeoutMs": 300000,
+        "providerRetries": 2
+      },
+      "durationMs": 13380,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 4127,
+        "outputTokens": 617,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 5,
+        "reportedRequests": 5,
+        "inputTokens": 187078,
+        "outputTokens": 490,
+        "cachedTokens": null
+      },
+      "total": {
+        "requests": 8,
+        "reportedRequests": 8,
+        "inputTokens": 191205,
+        "outputTokens": 1107,
+        "cachedTokens": null
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "providers.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "tools.ts"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the readByteLimit value for readFile?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 41
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the defaultReadLines value for read_file default limit?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 20
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the bashMaxTimeoutMs maximum timeout_ms tool-schema value?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 17
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the providerTimeoutMs streamCompletion default timeout?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 46
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What is the providerRetries maximum automatic provider retries?",
+            "paths": [
+              "providers.ts",
+              "tools.ts"
+            ]
+          },
+          "resultBytes": 19
+        }
+      ],
+      "final": "Based on my inspection of providers.ts and tools.ts, here is the requested configuration data in JSON format:\n\n```json\n{\n  \"readByteLimit\": 262144,\n  \"defaultReadLines\": 2000,\n  \"bashMaxTimeoutMs\": 120000,\n  \"providerTimeoutMs\": 300000,\n  \"providerRetries\": 2\n}\n```"
+    }
+  ]
+}

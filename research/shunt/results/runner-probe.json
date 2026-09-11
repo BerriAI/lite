@@ -1,0 +1,58 @@
+{
+  "speedrailCommit": "be152dbac93e574d611c2312eb86b3e3927f30e7",
+  "results": [
+    {
+      "variant": "off",
+      "providerRequests": 2,
+      "callStatus": "completed",
+      "fullCorpusReachedModel": true,
+      "routingHintReachedModel": false,
+      "resultLines": 351,
+      "finalStatus": "idle",
+      "queue": {
+        "items": [],
+        "paused": false
+      }
+    },
+    {
+      "variant": "copied-hook-with-input-adapter",
+      "providerRequests": 2,
+      "callStatus": "completed",
+      "fullCorpusReachedModel": true,
+      "routingHintReachedModel": true,
+      "resultLines": 351,
+      "finalStatus": "idle",
+      "queue": {
+        "items": [],
+        "paused": false
+      }
+    },
+    {
+      "variant": "exit-2-adapter",
+      "providerRequests": 2,
+      "callStatus": "denied",
+      "fullCorpusReachedModel": false,
+      "routingHintReachedModel": true,
+      "resultLines": 1,
+      "finalStatus": "idle",
+      "queue": {
+        "items": [],
+        "paused": true,
+        "reason": "Response stopped or encountered an error. Review before resuming queued messages."
+      }
+    },
+    {
+      "variant": "targeted-read",
+      "providerRequests": 2,
+      "callStatus": "completed",
+      "fullCorpusReachedModel": false,
+      "routingHintReachedModel": false,
+      "resultLines": 6,
+      "finalStatus": "idle",
+      "queue": {
+        "items": [],
+        "paused": false
+      }
+    }
+  ]
+}

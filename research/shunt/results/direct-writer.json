@@ -1,0 +1,18 @@
+{
+  "quality": true,
+  "actual": {
+    "timeoutMs": 4500,
+    "retries": 7,
+    "region": "eu-west-4",
+    "strict": true
+  },
+  "expected": {
+    "timeoutMs": 4500,
+    "retries": 7,
+    "region": "eu-west-4",
+    "strict": true
+  },
+  "stdout": "",
+  "stderr": "Wrote 6 lines to generated.mjs\n[shunt: delegated to code-writer]\n",
+  "note": "Explicit script invocation tests the writer mechanism independently of driver routing."
+}

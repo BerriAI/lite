@@ -1,0 +1,1011 @@
+{
+  "driver": "claude-haiku-4-5-20251001",
+  "worker": "gemini/gemini-2.5-flash",
+  "temperature": 0.2,
+  "repeats": 2,
+  "transport": "Native gateway research bridge replacing Portal only; unmodified upstream scripts; isolated tool loop, not shipped Speedrail UI integration.",
+  "records": [
+    {
+      "label": "large-read/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "large-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 5143,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 20161,
+        "outputTokens": 160,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 20161,
+        "outputTokens": 160,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 71605
+        }
+      ],
+      "final": "Perfect! I found the required values in the settings.mjs file. Here is the JSON with the literal values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "large-read/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "large-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 5304,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3357,
+        "outputTokens": 276,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 17702,
+        "outputTokens": 92,
+        "cachedTokens": 17381
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 21059,
+        "outputTokens": 368,
+        "cachedTokens": 17381
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the literal values of MAX_RETRIES, RETRY_DELAY_MS, DEFAULT_REGION, and MAX_BATCH?",
+            "paths": [
+              "settings.mjs"
+            ]
+          },
+          "resultBytes": 122
+        }
+      ],
+      "final": "Based on the inspection of settings.mjs, here is the JSON with the requested configuration values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "cross-file-read/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "cross-file-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "durationMs": 5742,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 38368,
+        "outputTokens": 358,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 38368,
+        "outputTokens": 358,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 71605
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "limits.mjs"
+          },
+          "resultBytes": 34648
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "routes.mjs"
+          },
+          "resultBytes": 34668
+        }
+      ],
+      "final": "Based on my inspection of the three files, here is the JSON containing the requested configuration values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```\n\n**Source locations:**\n- `MAX_RETRIES`: settings.mjs line 371\n- `MAX_BATCH`: settings.mjs line 374\n- `burst`: limits.mjs line 181 (from LIMITS object)\n- `refillMs`: limits.mjs line 181 (from LIMITS object)\n- `primary`: routes.mjs line 181 (from ROUTES object)\n- `fallback`: routes.mjs line 181 (from ROUTES object)"
+    },
+    {
+      "label": "cross-file-read/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "cross-file-read",
+      "quality": true,
+      "jsonOnly": true,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "durationMs": 8249,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3787,
+        "outputTokens": 353,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 34612,
+        "outputTokens": 232,
+        "cachedTokens": 33765
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 38399,
+        "outputTokens": 585,
+        "cachedTokens": 33765
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "limits.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "routes.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the literal values of MAX_RETRIES, MAX_BATCH, burst, refillMs, primary, and fallback?",
+            "paths": [
+              "settings.mjs",
+              "limits.mjs",
+              "routes.mjs"
+            ]
+          },
+          "resultBytes": 111
+        }
+      ],
+      "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```"
+    },
+    {
+      "label": "targeted-read/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "targeted-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 2494,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 1724,
+        "outputTokens": 191,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 1724,
+        "outputTokens": 191,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs",
+            "offset": 371,
+            "limit": 4
+          },
+          "resultBytes": 153
+        }
+      ],
+      "final": "Perfect! Here's the JSON with the exact literal values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "targeted-read/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "targeted-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 2645,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 2171,
+        "outputTokens": 192,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 2171,
+        "outputTokens": 192,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs",
+            "offset": 371,
+            "limit": 4
+          },
+          "resultBytes": 153
+        }
+      ],
+      "final": "Perfect! Here's the JSON with the exact literal values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "code-write/off/1",
+      "enabled": false,
+      "repeat": 1,
+      "case": "code-write",
+      "quality": true,
+      "actual": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "expected": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "durationMs": 4007,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 2794,
+        "outputTokens": 312,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 2794,
+        "outputTokens": 312,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "reference.mjs"
+          },
+          "resultBytes": 69
+        },
+        {
+          "tool": "write_file",
+          "args": {
+            "path": "generated.mjs",
+            "content": "export const settings = {\n  timeoutMs: 4500,\n  retries: 7,\n  region: \"eu-west-4\",\n  strict: true,\n};"
+          },
+          "resultBytes": 19
+        }
+      ],
+      "final": "Done! I've created the `generated.mjs` file following the reference style from `reference.mjs`. The file exports a `settings` object with the specified configuration:\n- `timeoutMs: 4500`\n- `retries: 7`\n- `region: \"eu-west-4\"`\n- `strict: true`\n\nThe file maintains the same formatting and structure as the reference file."
+    },
+    {
+      "label": "code-write/on/1",
+      "enabled": true,
+      "repeat": 1,
+      "case": "code-write",
+      "quality": true,
+      "actual": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "expected": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "durationMs": 9805,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3494,
+        "outputTokens": 332,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 123,
+        "outputTokens": 122,
+        "cachedTokens": null
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 3617,
+        "outputTokens": 454,
+        "cachedTokens": null
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "reference.mjs"
+          },
+          "resultBytes": 69
+        },
+        {
+          "tool": "code_write",
+          "args": {
+            "spec": "Export const settings with timeoutMs: 4500, retries: 7, region: \"eu-west-4\", and strict: true",
+            "reference": "reference.mjs",
+            "target": "generated.mjs"
+          },
+          "resultBytes": 65
+        }
+      ],
+      "final": "Perfect! I've successfully created the `generated.mjs` file following the reference style from `reference.mjs`. The file exports a `settings` constant with the four properties you specified:\n- `timeoutMs: 4500`\n- `retries: 7`\n- `region: \"eu-west-4\"`\n- `strict: true`\n\nThe file has been written to disk and maintains the same clean, consistent formatting as the reference file."
+    },
+    {
+      "label": "large-read/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "large-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 4081,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 20163,
+        "outputTokens": 160,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 20163,
+        "outputTokens": 160,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 71605
+        }
+      ],
+      "final": "Perfect! I found the required values in the settings.mjs file. Here is the JSON with the literal values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "large-read/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "large-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 4827,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3348,
+        "outputTokens": 273,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 17702,
+        "outputTokens": 92,
+        "cachedTokens": 17381
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 21050,
+        "outputTokens": 365,
+        "cachedTokens": 17381
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the literal values of MAX_RETRIES, RETRY_DELAY_MS, DEFAULT_REGION, and MAX_BATCH?",
+            "paths": [
+              "settings.mjs"
+            ]
+          },
+          "resultBytes": 122
+        }
+      ],
+      "final": "Based on the inspection of settings.mjs, here is the JSON with the literal values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "cross-file-read/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "cross-file-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "durationMs": 3913,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 38369,
+        "outputTokens": 241,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 38369,
+        "outputTokens": 241,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": true,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 71605
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "limits.mjs"
+          },
+          "resultBytes": 34648
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "routes.mjs"
+          },
+          "resultBytes": 34668
+        }
+      ],
+      "final": "Based on the inspection of the three files, here is the JSON with the requested values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```"
+    },
+    {
+      "label": "cross-file-read/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "cross-file-read",
+      "quality": true,
+      "jsonOnly": true,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "MAX_BATCH": 48,
+        "burst": 37,
+        "refillMs": 2450,
+        "primary": "/relay/v3",
+        "fallback": "/relay/safe"
+      },
+      "durationMs": 11173,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3790,
+        "outputTokens": 353,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 34612,
+        "outputTokens": 232,
+        "cachedTokens": 33765
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 38402,
+        "outputTokens": 585,
+        "cachedTokens": 33765
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "limits.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "routes.mjs"
+          },
+          "resultBytes": 97
+        },
+        {
+          "tool": "bulk_read",
+          "args": {
+            "question": "What are the literal values of MAX_RETRIES, MAX_BATCH, burst, refillMs, primary, and fallback?",
+            "paths": [
+              "settings.mjs",
+              "limits.mjs",
+              "routes.mjs"
+            ]
+          },
+          "resultBytes": 111
+        }
+      ],
+      "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```"
+    },
+    {
+      "label": "targeted-read/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "targeted-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 3372,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 1712,
+        "outputTokens": 193,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 1712,
+        "outputTokens": 193,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs",
+            "offset": 371,
+            "limit": 4
+          },
+          "resultBytes": 153
+        }
+      ],
+      "final": "Perfect! Here's the JSON with the exact literal values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "targeted-read/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "targeted-read",
+      "quality": true,
+      "jsonOnly": false,
+      "actual": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "expected": {
+        "MAX_RETRIES": 7,
+        "RETRY_DELAY_MS": 1750,
+        "DEFAULT_REGION": "eu-west-4",
+        "MAX_BATCH": 48
+      },
+      "durationMs": 2660,
+      "driver": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 2162,
+        "outputTokens": 193,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 2,
+        "reportedRequests": 2,
+        "inputTokens": 2162,
+        "outputTokens": 193,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "settings.mjs",
+            "offset": 371,
+            "limit": 4
+          },
+          "resultBytes": 153
+        }
+      ],
+      "final": "Perfect! Here's the JSON with the exact literal values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```"
+    },
+    {
+      "label": "code-write/off/2",
+      "enabled": false,
+      "repeat": 2,
+      "case": "code-write",
+      "quality": true,
+      "actual": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "expected": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "durationMs": 4205,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 2788,
+        "outputTokens": 311,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 0,
+        "reportedRequests": 0,
+        "inputTokens": 0,
+        "outputTokens": 0,
+        "cachedTokens": 0
+      },
+      "total": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 2788,
+        "outputTokens": 311,
+        "cachedTokens": 0
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "reference.mjs"
+          },
+          "resultBytes": 69
+        },
+        {
+          "tool": "write_file",
+          "args": {
+            "path": "generated.mjs",
+            "content": "export const settings = {\n  timeoutMs: 4500,\n  retries: 7,\n  region: \"eu-west-4\",\n  strict: true,\n};"
+          },
+          "resultBytes": 19
+        }
+      ],
+      "final": "Done! I've created the generated.mjs file following the reference style. The file exports a `settings` object with the specified configuration:\n- `timeoutMs: 4500`\n- `retries: 7`\n- `region: \"eu-west-4\"`\n- `strict: true`\n\nThe file has been written successfully using the same formatting and structure as the reference.mjs file."
+    },
+    {
+      "label": "code-write/on/2",
+      "enabled": true,
+      "repeat": 2,
+      "case": "code-write",
+      "quality": true,
+      "actual": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "expected": {
+        "timeoutMs": 4500,
+        "retries": 7,
+        "region": "eu-west-4",
+        "strict": true
+      },
+      "durationMs": 7200,
+      "driver": {
+        "requests": 3,
+        "reportedRequests": 3,
+        "inputTokens": 3497,
+        "outputTokens": 326,
+        "cachedTokens": 0
+      },
+      "worker": {
+        "requests": 1,
+        "reportedRequests": 1,
+        "inputTokens": 123,
+        "outputTokens": 122,
+        "cachedTokens": null
+      },
+      "total": {
+        "requests": 4,
+        "reportedRequests": 4,
+        "inputTokens": 3620,
+        "outputTokens": 448,
+        "cachedTokens": null
+      },
+      "corpusReachedDriver": false,
+      "tools": [
+        {
+          "tool": "read_file",
+          "args": {
+            "path": "reference.mjs"
+          },
+          "resultBytes": 69
+        },
+        {
+          "tool": "code_write",
+          "args": {
+            "spec": "Export const settings with timeoutMs: 4500, retries: 7, region: \"eu-west-4\", and strict: true",
+            "reference": "reference.mjs",
+            "target": "generated.mjs"
+          },
+          "resultBytes": 65
+        }
+      ],
+      "final": "Perfect! I've successfully created the generated.mjs file following the reference style. The file exports a `settings` constant with the four properties you specified:\n- `timeoutMs: 4500`\n- `retries: 7`\n- `region: \"eu-west-4\"`\n- `strict: true`\n\nThe file has been written to disk and follows the same formatting and structure as the reference.mjs file."
+    }
+  ]
+}

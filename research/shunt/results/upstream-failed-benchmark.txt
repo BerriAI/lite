@@ -1,0 +1,84 @@
+
+Read hook (check-file-size)
+────────────────────────────────────────────────────────────────
+  PASS  small-file                     File under threshold — delegation overhead not worth it
+  PASS  boundary-exact-350             Exactly at threshold (<=350) — should not block
+  PASS  just-over-threshold            One line over threshold — should block
+  PASS  large-file                     Well over threshold — clear delegation candidate
+  PASS  very-large-file                Very large file — blocked regardless of extension
+  PASS  empty-file                     Empty file — nothing to delegate
+  PASS  targeted-read-offset           Offset set — targeted read, allow through
+  PASS  targeted-read-limit            Limit set — targeted read, allow through
+  PASS  targeted-read-both             Both offset and limit — definitely a targeted read
+  PASS  nonexistent-file               File doesn't exist — let Read handle the error
+  PASS  empty-filepath                 Empty path — pass through
+  PASS  missing-filepath-field         No file_path field — pass through gracefully
+  PASS  offset-zero                    offset:0 treated as targeted — known bypass, documenting behavior
+  PASS  limit-zero                     limit:0 treated as targeted — known bypass, documenting behavior
+  PASS  env-override-lower             SHUNT_MIN_LINES=200 overrides default — 250-line file should block
+  PASS  env-override-higher            SHUNT_MIN_LINES=500 overrides default — 351-line file should be allowed
+  PASS  env-non-numeric-fallback       Non-numeric SHUNT_MIN_LINES falls back to 350 — 351-line file blocked
+
+Bash hook (check-bash-read)
+────────────────────────────────────────────────────────────────
+  PASS  cat-large-file                 Plain cat on large file — should block
+  PASS  cat-small-file                 Small file — not worth delegating
+  PASS  cat-with-flag                  cat with -n flag — should still block
+  PASS  head-large-file                head on large file — should block
+  PASS  head-with-count                head -100 — still a bulk read, block
+  PASS  tail-large-file                tail on large file — should block
+  PASS  less-large-file                less on large file — should block
+  PASS  cat-pipe                       Piped command — targeted read
+  PASS  cat-redirect                   Redirect — copying file, not reading into context
+  PASS  non-read-command               Not a file read command
+  PASS  grep-command                   grep is a targeted search — not caught
+  PASS  cat-quoted-path                Quoted path — should still be caught
+  PASS  cat-nonexistent                File doesn't exist — let Bash handle the error
+  PASS  empty-command                  Empty command — pass through
+  PASS  missing-command-field          No command field — pass through
+  PASS  more-large-file                more on large file — only regex-matched command without coverage
+  PASS  head-n-space-count             Parser bug: -n and 5 are separate args, 5 is treated as file path — file '5' won't exist so allow
+
+Transport (scripts/lib/aika.sh, stubbed portal-cli)
+────────────────────────────────────────────────────────────────
+  PASS  answer-text-extracted            reads .text instead of scraping stdout
+  PASS  message-sent                     message survives the round trip verbatim
+  PASS  mode-name-sent                   the backend resolves the name
+  PASS  no-mode-id-sent                  mode_name and mode_id are mutually exclusive
+  PASS  no-history-sent                  every delegation is one shot
+  PASS  timeout-flag-sent                the invocation carries an explicit timeout
+  PASS  pinned-mode-id-sent              the override pins a mode past an ambiguity
+  PASS  no-mode-name-sent                mode_name and mode_id are mutually exclusive
+  PASS  modeless-answer-fails            an answer the mode never saw is an error
+  PASS  stale-pin-named                  the error points at the stale override
+  PASS  empty-answer-fails               an answer with no text is an error
+  PASS  garbled-response-fails           unparseable rc-0 output is a transport error
+  PASS  stderr-noise-ignored             stderr noise must not corrupt the response
+  PASS  oversized-payload-fails          input must fit in ARG_MAX
+  PASS  oversized-payload-explained      error names the limit
+  PASS  error-unwrapped                  portal-cli's message and remediation surface
+  PASS  non-json-error-passed-through    unparseable output is not swallowed
+
+════════════════════════════════════════════════════════════════
+Total: 51 passed, 0 failed, 51 total
+
+Token savings benchmark
+────────────────────────────────────────────────────────────────────────────────
+  Running [bulk-read] single-large-file...
+  Running [bulk-read] multi-file-cross-read...
+  Running [bulk-read] source-plus-test...
+  Running [code-write] code-generation...
+
+  Scenario                        Input   Without shunt      With shunt   Savings
+  ─────────────────────────  ──────────  ──────────────  ──────────────  ────────
+  single-large-file           602 lines        12006 tk            0 tk    100%
+  multi-file-cross-read       692 lines        12686 tk            0 tk    100%
+  source-plus-test             90 lines          680 tk            0 tk    100%
+  code-generation               codegen          680 tk            0 tk    100%
+  ─────────────────────────  ──────────  ──────────────  ──────────────  ────────
+  Total                                        26052 tk            0 tk    100%
+
+  Token estimate: chars / 4. Output tokens weighted 5x (Opus pricing).
+  Bulk-read: without = file content in context, with = AiKA summary in context.
+  Code-write: without = read files + generate code, with = code written to disk.
+

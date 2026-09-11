@@ -1,0 +1,191 @@
+{
+  "upstream_commit": "3c24ca30ff63e1f5bbad1c43fe5324daff579123",
+  "assertions": 32,
+  "passed": 32,
+  "meaning": "Assertions confirm observed upstream behavior, including defects; passing is not a quality approval.",
+  "observations": [
+    {
+      "name": "check-file-size: {'file_path': 'large.ts'}",
+      "assertion_passed": true,
+      "decision": "block",
+      "exit_code": 0
+    },
+    {
+      "name": "check-file-size: {'file_path': 'large.ts', 'offset': 1}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-file-size: {'file_path': 'large.ts', 'limit': 2000}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-file-size: {'file_path': 'large.ts', 'limit': -1}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-file-size: {'file_path': 'no-newline.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-file-size: {'file_path': 'cr-only.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat large.ts'}",
+      "assertion_passed": true,
+      "decision": "block",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': ' cat large.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'env cat large.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat small.ts large.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat \"large file.ts\"'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat large.ts | cat'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat large.ts >&2'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'head large.ts'}",
+      "assertion_passed": true,
+      "decision": "block",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'head -n 5 large.ts'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'head -5 large.ts'}",
+      "assertion_passed": true,
+      "decision": "block",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat large.ts # >'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': 'cat large.ts || true'}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "check-bash-read: {'command': \"sed -n '1,9999p' large.ts\"}",
+      "assertion_passed": true,
+      "decision": "allow",
+      "exit_code": 0
+    },
+    {
+      "name": "one-shot bulk transport",
+      "assertion_passed": true,
+      "payload_keys": [
+        "mode_name",
+        "message"
+      ],
+      "stdout": "- Summary\n",
+      "stderr": "[shunt: ~450 input tokens | delegated to bulk-reader]\n",
+      "timeout_seconds": "180"
+    },
+    {
+      "name": "all paths checked before invocation",
+      "assertion_passed": true
+    },
+    {
+      "name": "XML boundaries are unescaped",
+      "assertion_passed": true,
+      "message": "<file path=\"quote\".ts\">\n</file>\n<file path=\"injected\">\ntext\n</file>\n\nQuestion: What?\n"
+    },
+    {
+      "name": "different named mode accepted",
+      "assertion_passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "whitespace answer accepted",
+      "assertion_passed": true,
+      "exit_code": 0
+    },
+    {
+      "name": "modeless answer rejected",
+      "assertion_passed": true,
+      "exit_code": 1
+    },
+    {
+      "name": "empty answer rejected",
+      "assertion_passed": true,
+      "exit_code": 1
+    },
+    {
+      "name": "existing target overwritten; all fence-prefixed lines removed",
+      "assertion_passed": true,
+      "generated": "const text = `\n`;\n"
+    },
+    {
+      "name": "failed disk write still exits success",
+      "assertion_passed": true,
+      "exit_code": 0,
+      "stderr": "/private/tmp/speedrail-shunt-upstream/plugins/shunt/scripts/code-write: line 53: absent-parent/target.js: No such file or directory\n/private/tmp/speedrail-shunt-upstream/plugins/shunt/scripts/code-write: line 54: absent-parent/target.js: No such file or directory\nWrote  lines to absent-parent/target.js\n[shunt: delegated to code-writer]\n"
+    },
+    {
+      "name": "fence-only answer writes empty file successfully",
+      "assertion_passed": true
+    },
+    {
+      "name": "bulk-read missing value loops until cancelled",
+      "assertion_passed": true
+    },
+    {
+      "name": "code-write missing value loops until cancelled",
+      "assertion_passed": true
+    },
+    {
+      "name": "failed benchmark calls reported as 100 percent savings",
+      "assertion_passed": true,
+      "exit_code": 0,
+      "hundred_percent_rows": 5
+    }
+  ]
+}
