@@ -47,3 +47,7 @@ Project profiles in `.litespeed/profiles.json` and instruction skills in `.lites
 MCP server commands are executable configuration. Save and review them in **Settings → Integrations**, then choose **Connect** explicitly. Saving settings, checking status, and sending a model request never connect automatically. Tools use the same approval workflow as other mutable actions, but a pending approval cannot redirect an old tool name to a replacement server. Catalog changes require explicit refresh; interrupted calls are never replayed automatically. Named profiles and Plan mode exclude MCP tools; skills-only selection retains ordinary Build-mode policy. See [MCP connections, limits, and snapshot safety](mcp.md).
 
 [Back to Litespeed](../README.md)
+
+## Optional Shunt
+
+Shunt is off by default. Open Models → Advanced settings, or `/models` in the TUI, to select its independent model. The same compact option appears during onboarding. Its answers stream inline under the tool or worker that requested them. See the [Shunt guide](shunt.md).

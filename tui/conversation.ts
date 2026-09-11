@@ -1,3 +1,4 @@
+import { usagePhase } from '../shared/usage.js';
 import type { Message, SessionDetail, Usage } from '../shared/types.js';
 import { conversationBlocks } from '../shared/conversation-blocks.js';
 import { formatDuration } from './transcriptModel.js';
@@ -18,7 +19,7 @@ export function usageDetails(message: Message, usage?: Usage) {
   const rows = new Map<string, { label: string; input: number; output: number; count: number; reported: number }>();
   for (const record of message.turnUsage?.breakdown ?? []) {
     const key = JSON.stringify([record.role, record.providerId, record.model, record.phase]);
-    const row = rows.get(key) ?? { label: `${record.role === 'lead' ? 'Driver' : record.role} · ${record.providerId}/${record.model} · ${record.phase}`, input: 0, output: 0, count: 0, reported: 0 };
+    const row = rows.get(key) ?? { label: `${record.role === 'lead' ? 'Driver' : record.role} · ${record.providerId}/${record.model} · ${usagePhase(record.phase)}`, input: 0, output: 0, count: 0, reported: 0 };
     row.count++; if (record.usage) { row.reported++; row.input += record.usage.inputTokens; row.output += record.usage.outputTokens; } rows.set(key, row);
   }
   return [usageLabel(message, usage) || 'Usage not reported.', ...[...rows.values()].map(row => `${row.label}\n${row.reported ? `${row.input.toLocaleString()} input · ${row.output.toLocaleString()} output` : 'Usage not reported'} · ${row.count} requests${row.reported < row.count ? ` (${row.count - row.reported} unreported)` : ''}`)].join('\n\n');

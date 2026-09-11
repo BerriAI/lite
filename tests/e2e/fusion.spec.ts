@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import type { Session, SessionDetail } from '../../shared/types';
 
 for (const [name, kind, role] of [['Team Fusion', 'team-fusion', 'Worker'], ['Expert Fusion', 'expert-fusion', 'Expert']] as const) {

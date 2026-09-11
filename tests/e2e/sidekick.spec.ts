@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from './fixtures';
 import type { Session, SessionDetail } from '../../shared/types';
 import type { DelegationSummary } from '../../shared/delegation';
 

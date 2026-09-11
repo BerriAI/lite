@@ -1,3 +1,4 @@
+import { shuntLabel } from '../shared/shunt.js';
 /** Pure transcript-presentation logic for the terminal client. Everything here
  * is framework-free — the React layer in transcript.tsx maps these row models
  * onto renderer elements. Keeping the derivation pure means the collapse
@@ -125,6 +126,7 @@ export function toolRow(call: ToolCall): ToolRowModel {
     call, shape: 'inline', running, failed, denied, completed, separate: false,
     error: failed ? (call.output || 'Tool failed.') : undefined,
   };
+  if(call.shunt||call.routing||call.name==='bulk_read'||call.name==='code_write')return {...base,icon:'↳',text:shuntLabel(call),pending:shuntLabel(call)};
   const args = call.args ?? {};
   switch (call.name) {
     case 'bash': {

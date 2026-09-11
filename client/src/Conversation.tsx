@@ -1,3 +1,5 @@
+import { usagePhase } from '../../shared/usage';
+import { shuntLabel } from '../../shared/shunt';
 import { conversationBlocks } from './conversation-blocks';
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { QuestionRequest } from '../../shared/questions';
@@ -24,9 +26,15 @@ function CopyCode({ children }: { children: React.ReactNode }) {
   }
   return <CopyButton text={text(children).replace(/\n$/, '')} label="Copy code" />;
 }
-const toolLabels: Record<string, string> = { read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Research task', sidekick: 'Sidekick', delegate: 'Worker', verify: 'Driver verification', takeover: 'Driver takeover', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
+const toolLabels: Record<string, string> = { bulk_read:'Shunt reader',code_write:'Shunt writer', read_file: 'Read file', write_file: 'Write file', edit_file: 'Edit file', glob: 'Find files', grep: 'Search code', bash: 'Run command', web_fetch: 'Fetch page', web_search: 'Search web', view_image: 'View image', todo_write: 'Update plan', todo_read: 'Read plan', task: 'Research task', sidekick: 'Sidekick', delegate: 'Worker', verify: 'Driver verification', takeover: 'Driver takeover', ask_user: 'Ask a question', history_search: 'Search history', memory_remember: 'Remember fact', memory_forget: 'Forget fact', memory_recall: 'Recall memory' };
 function ToolCard({ tool }: { tool: ToolCall }) {
   const working = tool.status === 'running' || tool.status === 'pending';
+  if(tool.shunt||tool.routing||tool.name==='bulk_read'||tool.name==='code_write')return <section className={`shunt-operation${tool.status==='error'||tool.status==='denied'?' failed':''}`} aria-label={tool.shunt?.kind==='writer'||tool.name==='code_write'?'Shunt writer':'Shunt reader'}>
+    <div className="shunt-operation-heading">{working?<span className="working-dot"/>:tool.status==='completed'?<Check size={13}/>:<X size={13}/>}<span>{shuntLabel(tool)}</span></div>
+    {typeof tool.args.question==='string'&&<p className="shunt-question">{String(tool.args.question)}</p>}
+    {tool.output&&<div className="shunt-answer"><Markdown content={tool.output}/></div>}
+    {tool.shunt&&<details className="shunt-sources"><summary>{tool.shunt.sources.length} source{tool.shunt.sources.length===1?'':'s'}{tool.shunt.target?` → ${tool.shunt.target}`:''}</summary>{tool.shunt.sources.map((source,index)=><div key={index}><code>{source.path}</code> · {source.lines} lines · {source.bytes} bytes<small>sha256 {source.sha256}</small></div>)}</details>}
+  </section>;
   const title = tool.waitingForWorkspace || tool.args?.path || tool.args?.command || tool.args?.pattern || tool.args?.url;
   // Sidecar interception is VISIBLE by design (design note 4.5): the summary
   // row is tagged with the interceptor's name, and the expanded body shows the
@@ -44,7 +52,7 @@ function Approval({ request, onDecide, onAllowAll, busy }: { request: Permission
   </section>;
 }
 export function Conversation({ detail, connection, onDecide, onAllowAll, onFork, renderQuestion, renderTask, busy, readOnly = false, inline = false }: { detail: SessionDetail; connection: 'connecting' | 'connected' | 'reconnecting'; onDecide: (id: string, decision: 'allow' | 'always' | 'deny') => void; onAllowAll?: () => void; onFork: (messageId: string) => void; renderQuestion: (question: QuestionRequest) => ReactNode; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode; busy: boolean; readOnly?: boolean; inline?: boolean }) {
-  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(() => new Set());
+  const [expandedSteps, setExpandedSteps] = useState<Map<string,boolean>>(() => new Map());
   const scroll = useRef<HTMLDivElement>(null);
   const [atBottom, setAtBottom] = useState(true);
   const running = detail.session.status === 'running' || detail.session.status === 'waiting';
@@ -62,7 +70,7 @@ export function Conversation({ detail, connection, onDecide, onAllowAll, onFork,
   }, [atBottom, inline]);
   return <div className="conversation-shell"><div className="conversation-scroll" ref={scroll} onScroll={e => { const el = e.currentTarget; setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 100); }}><div className="conversation-content">
     <div className="conversation-start"><span />{new Date(detail.session.createdAt).toLocaleDateString(undefined, { month: 'long', day: 'numeric' })}<span /></div>
-    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }, index) => <MessageView driver={!inline && Boolean(detail.session.architecture)} workerNoun={detail.session.architecture?.kind === 'expert-fusion' ? 'expert' : 'worker'} key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript && index === groups.length - 1} runUsage={runUsage} steps={steps} expanded={expandedSteps.has(message.id)} onExpand={open => setExpandedSteps(current => { const next = new Set(current); if (open) next.add(message.id); else next.delete(message.id); return next; })} inline={inline} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
+    {groups.map(({ message, startsRun, endsRun, closesTranscript, runUsage, steps }, index) => <MessageView driver={!inline && Boolean(detail.session.architecture)} workerNoun={detail.session.architecture?.kind === 'expert-fusion' ? 'expert' : 'worker'} key={message.id} message={message} running={running && message.id === last?.id} grouped={message.role === 'assistant' && !startsRun} tail={endsRun} live={running && closesTranscript && index === groups.length - 1} runUsage={runUsage} steps={steps} expanded={expandedSteps.get(message.id)??inline} onExpand={open => setExpandedSteps(current => { const next = new Map(current); next.set(message.id,open); return next; })} inline={inline} workActivity={workActivity} onFork={() => onFork(message.id)} disabled={busy || running} readOnly={readOnly} renderTask={readOnly ? undefined : renderTask} />)}
     {!detail.messages.length && <div className="session-empty"><Logo /><h2>{readOnly ? 'No transcript yet.' : 'A fresh start.'}</h2><p>{readOnly ? 'Research messages will appear here when available. This view cannot start a run.' : 'Give your agent a task. It will work in this session’s workspace.'}</p></div>}
     {!readOnly && detail.questions?.map(renderQuestion)}
     {!readOnly && detail.permissions.map(request => <Approval key={request.id} request={request} onDecide={onDecide} onAllowAll={onAllowAll} busy={busy} />)}
@@ -139,7 +147,7 @@ function UsageDetails({usage,family}:{usage:Usage;family?:Message['turnUsage']})
   const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number}>();
   for(const record of family?.breakdown??[]) {
     const key=JSON.stringify([record.providerId,record.model,record.role,record.phase]);
-    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${record.phase}`}`,input:0,output:0,requests:0,reported:0};
+    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${usagePhase(record.phase)}`}`,input:0,output:0,requests:0,reported:0};
     row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;}rows.set(key,row);
   }
   const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;

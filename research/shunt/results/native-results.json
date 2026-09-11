@@ -1,0 +1,1555 @@
+{
+  "experiments": [
+    {
+      "name": "native-pilot",
+      "models": {
+        "driver": "claude-haiku-4-5-20251001",
+        "worker": "gemini/gemini-2.5-flash",
+        "shunt": "gemini/gemini-2.5-flash-lite"
+      },
+      "results": [
+        {
+          "label": "single/large-read/on",
+          "passed": true,
+          "durationMs": 6265,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 20304,
+          "usage": {
+            "inputTokens": 38074,
+            "outputTokens": 404,
+            "requests": 5,
+            "reportedRequests": 5,
+            "durationMs": 6263,
+            "requestsByRole": {
+              "lead": 4,
+              "shunt": 1
+            },
+            "cachedTokens": 14975
+          },
+          "final": "Perfect! Here's the JSON containing all the exported configuration values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/large-read/off",
+          "passed": true,
+          "durationMs": 6391,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 30628,
+          "usage": {
+            "inputTokens": 30628,
+            "outputTokens": 416,
+            "requests": 3,
+            "reportedRequests": 3,
+            "cachedTokens": 17309,
+            "durationMs": 6387,
+            "requestsByRole": {
+              "lead": 3
+            }
+          },
+          "final": "Perfect! I've found all the configuration values. Here's the JSON response:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/cross-file-read/on",
+          "passed": true,
+          "durationMs": 5244,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 3,
+          "callerInputTokens": 15779,
+          "usage": {
+            "inputTokens": 50566,
+            "outputTokens": 420,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 27639,
+            "durationMs": 5242,
+            "requestsByRole": {
+              "lead": 3,
+              "shunt": 1
+            }
+          },
+          "final": "Perfect. Here's the JSON with the extracted configuration values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/cross-file-read/off",
+          "passed": true,
+          "durationMs": 9254,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 66009,
+          "usage": {
+            "inputTokens": 66009,
+            "outputTokens": 777,
+            "requests": 3,
+            "reportedRequests": 3,
+            "cachedTokens": 34863,
+            "durationMs": 9249,
+            "requestsByRole": {
+              "lead": 3
+            }
+          },
+          "final": "Perfect! I have found all the required values. Here's the JSON response:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/targeted-read/on",
+          "passed": true,
+          "durationMs": 2943,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 9933,
+          "usage": {
+            "inputTokens": 9933,
+            "outputTokens": 154,
+            "requests": 2,
+            "reportedRequests": 2,
+            "cachedTokens": 4874,
+            "durationMs": 2941,
+            "requestsByRole": {
+              "lead": 2
+            }
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/targeted-read/off",
+          "passed": true,
+          "durationMs": 13783,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 67610,
+          "usage": {
+            "inputTokens": 67610,
+            "outputTokens": 991,
+            "requests": 7,
+            "reportedRequests": 7,
+            "cachedTokens": 53619,
+            "durationMs": 13775,
+            "requestsByRole": {
+              "lead": 7
+            }
+          },
+          "final": "Perfect! Now I can see the exported values. The request asks for the four exported literal values starting at byte offset 371. These are:\n\n1. `MAX_RETRIES = 7`\n2. `RETRY_DELAY_MS = 1750`\n3. `DEFAULT_REGION = 'eu-west-4'`\n4. `MAX_BATCH = 48`\n\nHere's the response as JSON:\n\n```json\n{\n  \"exports\": [\n    {\n      \"name\": \"MAX_RETRIES\",\n      \"value\": 7\n    },\n    {\n      \"name\": \"RETRY_DELAY_MS\",\n      \"value\": 1750\n    },\n    {\n      \"name\": \"DEFAULT_REGION\",\n      \"value\": \"eu-west-4\"\n    },\n    {\n      \"name\": \"MAX_BATCH\",\n      \"value\": 48\n    }\n  ]\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/generate/off",
+          "passed": true,
+          "durationMs": 11070,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 28901,
+          "usage": {
+            "inputTokens": 28901,
+            "outputTokens": 965,
+            "requests": 6,
+            "reportedRequests": 6,
+            "cachedTokens": 23503,
+            "durationMs": 11036,
+            "requestsByRole": {
+              "lead": 6
+            }
+          },
+          "final": "Perfect! ✅ **Task completed successfully.**\n\n## Summary\n\n1. **Created `generated.mjs`** matching the style of `reference.mjs`:\n   - Compact formatting with no spaces after colons in object properties\n   - Exports a `const settings` object with the exact properties requested\n\n2. **Settings included:**\n   - `timeoutMs: 4500`\n   - `retries: 7`\n   - `region: \"eu-west-4\"`\n   - `strict: true`\n\n3. **Test Result:** ✅ **All fixture checks passed** (Exit code: 0)",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "single/exact-edit/off",
+          "passed": true,
+          "durationMs": 7316,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 22792,
+          "usage": {
+            "inputTokens": 22792,
+            "outputTokens": 444,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 17880,
+            "durationMs": 7272,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Perfect! ✅ The fix is complete:\n- Changed `retries:0` to `retries:7` in `generated.mjs`\n- All tests passed successfully",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "single/generate/on",
+          "passed": true,
+          "durationMs": 12993,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 40208,
+          "usage": {
+            "inputTokens": 40208,
+            "outputTokens": 1161,
+            "requests": 7,
+            "reportedRequests": 7,
+            "cachedTokens": 33578,
+            "durationMs": 12953,
+            "requestsByRole": {
+              "lead": 7
+            }
+          },
+          "final": "## Summary\n\n✅ **Task completed successfully**\n\n1. **Generated `generated.mjs`** - Created from `reference.mjs` matching its style:\n   - Export statement with const settings object\n   - Properties formatted with no spaces after colons (matching reference style)\n   - Included all required fields: `timeoutMs:4500`, `retries:7`, `region:\"eu-west-4\"`, `strict:true`\n\n2. **npm test result** - **PASSED** ✅\n   - Command: `npm test` (runs `node check.mjs`)\n   - Output: \"All fixture checks passed.\"\n   - Exit code: 0\n\nThe generated file matches the reference style and all checks pass.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "single/exact-edit/on",
+          "passed": true,
+          "durationMs": 6801,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 25900,
+          "usage": {
+            "inputTokens": 25900,
+            "outputTokens": 452,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 20366,
+            "durationMs": 6765,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Perfect! ✅ The fix is complete:\n\n**Summary:**\n- Changed `retries:0` to `retries:7` in generated.mjs\n- npm test passed with all fixture checks passing",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "single/debug-read/off",
+          "passed": true,
+          "durationMs": 8149,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 48353,
+          "usage": {
+            "inputTokens": 48353,
+            "outputTokens": 543,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 34948,
+            "durationMs": 8147,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Perfect! I have the exact information needed. Based on the code analysis:\n\n```javascript\nexport function retries(status, code) { \n  if(status===401)return 0; \n  if(code==='TEMP')return 3; \n  return 7; \n}\n```\n\n**Explanation:**\n- **401 errors (authentication)**: Returns 0 retries. Authentication failures are not retried—they fail immediately.\n- **503 errors with code TEMP (temporary failures)**: Returns 3 retries. Temporary errors are retried up to 3 times.\n- **All other errors**: Returns 7 retries (the default).\n\n**Answer:**\n\n```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/large-read/off",
+          "passed": true,
+          "durationMs": 5113,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 36888,
+          "usage": {
+            "inputTokens": 36888,
+            "outputTokens": 352,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 23139,
+            "durationMs": 5109,
+            "requestsByRole": {
+              "lead": 4
+            }
+          },
+          "final": "Perfect! I found all the exported configuration values. Here is the JSON response:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "single/debug-read/on",
+          "passed": true,
+          "durationMs": 11902,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 26634,
+          "usage": {
+            "inputTokens": 44396,
+            "outputTokens": 973,
+            "requests": 6,
+            "reportedRequests": 6,
+            "durationMs": 11899,
+            "requestsByRole": {
+              "lead": 5,
+              "shunt": 1
+            },
+            "cachedTokens": 20824
+          },
+          "final": "Excellent! I have found the exact retry logic. Let me explain what I found:\n\n**Retry Limits Analysis:**\n\nThe `retry.mjs` file contains a `retries()` function that determines retry limits based on HTTP status codes and error codes:\n\n```javascript\nexport function retries(status, code) { \n  if(status===401)return 0; \n  if(code==='TEMP')return 3; \n  return 7; \n}\n```\n\n**Explanation:**\n- **401 Error (Unauthorized)**: Returns **0 retries** - This is a permanent authentication failure that should not be retried.\n- **503 Error with code 'TEMP'**: Returns **3 retries** - This indicates a temporary service unavailability and allows limited retry attempts.\n- **All other errors**: Return **7 retries** - Default retry policy for other error types.\n\n**JSON Response:**\n\n```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/large-read/on",
+          "passed": true,
+          "durationMs": 5490,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 16852,
+          "usage": {
+            "inputTokens": 34617,
+            "outputTokens": 482,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 28369,
+            "durationMs": 5489,
+            "requestsByRole": {
+              "lead": 3,
+              "shunt": 1
+            }
+          },
+          "final": "Here is the JSON with all exported configuration values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/cross-file-read/off",
+          "passed": true,
+          "durationMs": 9716,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 67184,
+          "usage": {
+            "inputTokens": 67184,
+            "outputTokens": 796,
+            "requests": 3,
+            "reportedRequests": 3,
+            "cachedTokens": 35845,
+            "durationMs": 9706,
+            "requestsByRole": {
+              "lead": 3
+            }
+          },
+          "final": "Perfect! I now have all the required values. Let me compile the JSON response:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```\n\nThis extracts the settings as defined in:\n- **settings.mjs** (lines 371, 374): `MAX_RETRIES = 7`, `MAX_BATCH = 48`\n- **limits.mjs** (line 181): `burst = 37`, `refillMs = 2450` (from LIMITS export)\n- **routes.mjs** (line 181): `primary = \"/relay/v3\"`, `fallback = \"/relay/safe\"` (from ROUTES export)",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/cross-file-read/on",
+          "passed": true,
+          "durationMs": 8146,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 3,
+          "callerInputTokens": 17794,
+          "usage": {
+            "inputTokens": 52582,
+            "outputTokens": 774,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 45194,
+            "durationMs": 8144,
+            "requestsByRole": {
+              "lead": 3,
+              "shunt": 1
+            }
+          },
+          "final": "Perfect. Here's the extracted configuration as JSON:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/targeted-read/on",
+          "passed": true,
+          "durationMs": 2287,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 10899,
+          "usage": {
+            "inputTokens": 10899,
+            "outputTokens": 171,
+            "requests": 2,
+            "reportedRequests": 2,
+            "cachedTokens": 5357,
+            "durationMs": 2285,
+            "requestsByRole": {
+              "lead": 2
+            }
+          },
+          "final": "Based on the file read, here are the four exported literal values as JSON:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/targeted-read/off",
+          "passed": true,
+          "durationMs": 2445,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 9735,
+          "usage": {
+            "inputTokens": 9735,
+            "outputTokens": 189,
+            "requests": 2,
+            "reportedRequests": 2,
+            "cachedTokens": 4766,
+            "durationMs": 2443,
+            "requestsByRole": {
+              "lead": 2
+            }
+          },
+          "final": "Perfect. The four exported literal values from lines 371-374 are:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/generate/on",
+          "passed": true,
+          "durationMs": 7891,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 23008,
+          "usage": {
+            "inputTokens": 23008,
+            "outputTokens": 689,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 16883,
+            "durationMs": 7856,
+            "requestsByRole": {
+              "lead": 4
+            }
+          },
+          "final": "Perfect! I've successfully completed the task:\n\n## Summary\n\n✅ **Generated file created:** `generated.mjs` \n- Matches the style of `reference.mjs` (arrow functions omitted, clean formatting)\n- Exports `const settings` with the exact specifications:\n  - `timeoutMs: 4500`\n  - `retries: 7`\n  - `region: \"eu-west-4\"`\n  - `strict: true`\n\n✅ **Tests passed:** `npm test` ran successfully\n- Output: \"All fixture checks passed.\"\n- Exit code: 0\n\nThe generated file matches the reference style and all requirements have been met.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/generate/off",
+          "passed": true,
+          "durationMs": 10586,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 31782,
+          "usage": {
+            "inputTokens": 31782,
+            "outputTokens": 943,
+            "requests": 6,
+            "reportedRequests": 6,
+            "cachedTokens": 25912,
+            "durationMs": 10548,
+            "requestsByRole": {
+              "lead": 6
+            }
+          },
+          "final": "Perfect! ✅ **Task completed successfully.**\n\n**Summary:**\n- ✅ Created `generated.mjs` matching the style of `reference.mjs`\n- ✅ Exported `const settings` with the exact values you specified:\n  - `timeoutMs: 4500`\n  - `retries: 7`\n  - `region: \"eu-west-4\"`\n  - `strict: true`\n- ✅ Ran `npm test` — **all fixture checks passed** (exit code: 0)",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/exact-edit/off",
+          "passed": true,
+          "durationMs": 6277,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 25287,
+          "usage": {
+            "inputTokens": 25287,
+            "outputTokens": 412,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 19896,
+            "durationMs": 6243,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "✅ Complete. Fixed the retries value in generated.mjs from 0 to 7, and npm test passed with \"All fixture checks passed.\"",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/exact-edit/on",
+          "passed": true,
+          "durationMs": 6928,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 23034,
+          "usage": {
+            "inputTokens": 23034,
+            "outputTokens": 622,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 16882,
+            "durationMs": 6891,
+            "requestsByRole": {
+              "lead": 4
+            }
+          },
+          "final": "✅ Done! I've successfully:\n\n1. **Fixed generated.mjs**: Changed `retries:0` to `retries:7` \n2. **Ran npm test**: All fixture checks passed\n\nThe change is complete and verified.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/debug-read/on",
+          "passed": true,
+          "durationMs": 8942,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 23026,
+          "usage": {
+            "inputTokens": 40786,
+            "outputTokens": 656,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 34296,
+            "durationMs": 8938,
+            "requestsByRole": {
+              "lead": 4,
+              "shunt": 1
+            }
+          },
+          "final": "Perfect! Based on my investigation of retry.mjs, here's the answer:\n\n```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```\n\n**Explanation:**\n- **401 error (Authentication)**: Retry limit is **0** — authentication errors are not retried; they fail immediately.\n- **503 error with code TEMP (Temporary)**: Retry limit is **3** — temporary errors are retried up to 3 times before giving up.",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "sidekick-fusion/debug-read/off",
+          "passed": true,
+          "durationMs": 13839,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 51926,
+          "usage": {
+            "inputTokens": 51926,
+            "outputTokens": 934,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 37630,
+            "durationMs": 13835,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Excellent! I have found the retry logic. The `retries` function at line 371 defines:\n\n```javascript\nexport function retries(status, code) { \n  if(status===401) return 0;        // 401 error → 0 retries\n  if(code==='TEMP') return 3;        // code TEMP → 3 retries\n  return 7;                          // default → 7 retries\n}\n```\n\n**Analysis:**\n\n1. **401 error (Authentication/Authorization)**: Returns `0` retries. A 401 error indicates an authentication problem that won't be resolved by retrying, so the function fails immediately without retry.\n\n2. **503 error with code TEMP (Temporary)**: A 503 error is a \"Service Unavailable\" status. When the `code` parameter is `'TEMP'`, the function returns `3` retries. This indicates a temporary issue that should be retried up to 3 times before giving up.\n\n**Response:**\n\n```json\n{\"authRetries\": 0, \"tempRetries\": 3}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/large-read/on",
+          "passed": true,
+          "durationMs": 5613,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 14956,
+          "usage": {
+            "inputTokens": 32724,
+            "outputTokens": 497,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 27107,
+            "durationMs": 5609,
+            "requestsByRole": {
+              "lead": 3,
+              "shunt": 1
+            }
+          },
+          "final": "Perfect! Here's the JSON containing all exported configuration values from settings.mjs:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```\n\nAll four requested configuration values have been successfully extracted from the settings.mjs file.",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/large-read/off",
+          "passed": true,
+          "durationMs": 7451,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 40642,
+          "usage": {
+            "inputTokens": 40642,
+            "outputTokens": 712,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 26922,
+            "durationMs": 7446,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Perfect! Here is the JSON containing all the exported configuration values:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/cross-file-read/on",
+          "passed": true,
+          "durationMs": 8309,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 3,
+          "callerInputTokens": 15986,
+          "usage": {
+            "inputTokens": 50781,
+            "outputTokens": 917,
+            "requests": 4,
+            "reportedRequests": 4,
+            "cachedTokens": 43891,
+            "durationMs": 8306,
+            "requestsByRole": {
+              "lead": 3,
+              "shunt": 1
+            }
+          },
+          "final": "Here's the extracted configuration as JSON:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/cross-file-read/off",
+          "passed": true,
+          "durationMs": 9415,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 65850,
+          "usage": {
+            "inputTokens": 65850,
+            "outputTokens": 793,
+            "requests": 3,
+            "reportedRequests": 3,
+            "cachedTokens": 34970,
+            "durationMs": 9400,
+            "requestsByRole": {
+              "lead": 3
+            }
+          },
+          "final": "Perfect! Now I have all the values. Let me compile the JSON response:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```\n\n**Summary of extracted values:**\n- **MAX_RETRIES** = 7 (from settings.mjs line 371)\n- **MAX_BATCH** = 48 (from settings.mjs line 374)\n- **burst** = 37 (from limits.mjs line 181)\n- **refillMs** = 2450 (from limits.mjs line 181)\n- **primary** = '/relay/v3' (from routes.mjs line 181)\n- **fallback** = '/relay/safe' (from routes.mjs line 181)",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/targeted-read/off",
+          "passed": true,
+          "durationMs": 1867,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 8843,
+          "usage": {
+            "inputTokens": 8843,
+            "outputTokens": 188,
+            "requests": 2,
+            "reportedRequests": 2,
+            "cachedTokens": 4320,
+            "durationMs": 1865,
+            "requestsByRole": {
+              "lead": 2
+            }
+          },
+          "final": "Here are the four exported literal values from settings.mjs as JSON:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/targeted-read/on",
+          "passed": true,
+          "durationMs": 2585,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 9685,
+          "usage": {
+            "inputTokens": 9685,
+            "outputTokens": 188,
+            "requests": 2,
+            "reportedRequests": 2,
+            "cachedTokens": 4742,
+            "durationMs": 2582,
+            "requestsByRole": {
+              "lead": 2
+            }
+          },
+          "final": "Perfect. Here are the four exported literal values from settings.mjs as JSON:\n\n```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/generate/off",
+          "passed": true,
+          "durationMs": 18907,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 46097,
+          "usage": {
+            "inputTokens": 46097,
+            "outputTokens": 2073,
+            "requests": 10,
+            "reportedRequests": 10,
+            "durationMs": 18875,
+            "requestsByRole": {
+              "lead": 7,
+              "worker": 3
+            },
+            "cachedTokens": 29714
+          },
+          "final": "Perfect! Here's the summary:\n\n## Summary\n\n✅ **Generated file created successfully**\n- File: `generated.mjs`\n- Content matches the style of `reference.mjs`\n- Exports const `settings` with all required properties:\n  - `timeoutMs:4500`\n  - `retries:7`\n  - `region:\"eu-west-4\"`\n  - `strict:true`\n\n✅ **Tests passed**\n- Command: `npm test`\n- Result: **All fixture checks passed**\n- Exit code: 0\n\nThe trial is complete and successful!",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/generate/on",
+          "passed": true,
+          "durationMs": 17810,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "writer",
+              "status": "error",
+              "error": "ENOENT: no such file or directory, lstat '/private/var/folders/pl/f4fm9jpd3_n2s90lqp8cxmzw0000gn/T/litespeed-shunt-native-eval-1jqDVM/336ce5db-ac31-4ceb-abed-3e4c72710efd/export const settings = {\n  timeoutMs:2000,\n  retries:3,\n};'"
+            }
+          ],
+          "directReads": 5,
+          "routingHints": 0,
+          "callerInputTokens": 48347,
+          "usage": {
+            "inputTokens": 48347,
+            "outputTokens": 1676,
+            "requests": 10,
+            "reportedRequests": 10,
+            "durationMs": 17776,
+            "requestsByRole": {
+              "lead": 6,
+              "worker": 4
+            },
+            "cachedTokens": 26500
+          },
+          "final": "## Summary\n\n✅ **Success!** I have completed the trial:\n\n1. **Generated `generated.mjs`** - Created the file matching the reference style with:\n   - Export const settings\n   - timeoutMs: 4500\n   - retries: 7\n   - region: \"eu-west-4\"\n   - strict: true\n   - Exact formatting match (no spaces around colons, 2-space indentation)\n\n2. **Test Results** - `npm test` passed:\n   ```\n   All fixture checks passed.\n   Exit code: 0\n   ```\n\nThe generated file correctly matches the reference.mjs style and contains all required properties with their exact values, and all tests pass.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/exact-edit/off",
+          "passed": true,
+          "durationMs": 10557,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 37315,
+          "usage": {
+            "inputTokens": 37315,
+            "outputTokens": 819,
+            "requests": 9,
+            "reportedRequests": 9,
+            "durationMs": 10526,
+            "requestsByRole": {
+              "lead": 6,
+              "worker": 3
+            },
+            "cachedTokens": 25372
+          },
+          "final": "Excellent! I've successfully fixed the retries value in generated.mjs. Here's what was done:\n\n✅ **Changed** retries from 0 to 7 in generated.mjs\n✅ **Ran** npm test successfully\n\nThe test output shows \"All fixture checks passed\" with exit code 0, confirming that the fix is correct.\n\n[Driver verification is incomplete. Review the recorded changes and checks before treating this task as verified.]",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/exact-edit/on",
+          "passed": true,
+          "durationMs": 11644,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 43383,
+          "usage": {
+            "inputTokens": 43383,
+            "outputTokens": 847,
+            "requests": 9,
+            "reportedRequests": 9,
+            "durationMs": 11613,
+            "requestsByRole": {
+              "lead": 7,
+              "worker": 2
+            },
+            "cachedTokens": 30665
+          },
+          "final": "Perfect! ✅ **Task completed successfully.**\n\n**What was done:**\n1. Located `generated.mjs` and read its content\n2. Changed `retries:0` to `retries:7` in the settings object\n3. Verified the file was updated correctly: `retries:7` is now present\n4. Ran `npm test` which passed all fixture checks\n\nThe retries value has been fixed from 0 to 7, and all tests pass.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/debug-read/on",
+          "passed": true,
+          "durationMs": 11408,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 25946,
+          "usage": {
+            "inputTokens": 43706,
+            "outputTokens": 936,
+            "requests": 6,
+            "reportedRequests": 6,
+            "cachedTokens": 37674,
+            "durationMs": 11407,
+            "requestsByRole": {
+              "lead": 5,
+              "shunt": 1
+            }
+          },
+          "final": "Excellent! I've found the precise retry logic. Based on the code at line 371 of retry.mjs:\n\n```javascript\nexport function retries(status, code) { \n  if(status===401)return 0; \n  if(code==='TEMP')return 3; \n  return 7; \n}\n```\n\n**Explanation:**\n- **401 error (authentication failure)**: Retry limit is **0** — no retries are attempted because re-submitting the same request with bad authentication credentials will never succeed\n- **503 error with code TEMP (temporary service unavailable)**: Retry limit is **3** — the service is temporarily unavailable and may recover, so the client retries up to 3 times\n\n**JSON Response:**\n```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "team-fusion/debug-read/off",
+          "passed": true,
+          "durationMs": 13382,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 49540,
+          "usage": {
+            "inputTokens": 49540,
+            "outputTokens": 902,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 35654,
+            "durationMs": 13379,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Excellent! I have found the exact retry logic. Based on the code analysis:\n\n```javascript\nexport function retries(status, code) { \n  if(status===401)return 0; \n  if(code==='TEMP')return 3; \n  return 7; \n}\n```\n\n**Analysis:**\n\n1. **401 Error (Authentication error)**: Returns `0` retries - meaning no retries are allowed\n2. **503 Error with code 'TEMP' (Temporary error)**: Returns `3` retries\n3. **Default case**: Returns `7` retries\n\n**JSON Result:**\n\n```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```\n\nThe logic indicates that authentication failures (401) should not be retried at all (0 retries), while temporary errors (503 with code 'TEMP') should be retried 3 times before giving up.",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/large-read/on",
+          "passed": true,
+          "durationMs": 4077,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 11262,
+          "usage": {
+            "inputTokens": 29033,
+            "outputTokens": 395,
+            "requests": 4,
+            "reportedRequests": 4,
+            "durationMs": 4075,
+            "requestsByRole": {
+              "driver": 3,
+              "shunt": 1
+            },
+            "cachedTokens": 23815
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/cross-file-read/off",
+          "passed": false,
+          "durationMs": 18735,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 109686,
+          "usage": {
+            "inputTokens": 109686,
+            "outputTokens": 1157,
+            "requests": 4,
+            "reportedRequests": 4,
+            "durationMs": 18728,
+            "requestsByRole": {
+              "driver": 4
+            },
+            "cachedTokens": 71762
+          },
+          "final": "",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/cross-file-read/on",
+          "passed": true,
+          "durationMs": 3407,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 0,
+          "routingHints": 0,
+          "callerInputTokens": 7606,
+          "usage": {
+            "inputTokens": 7606,
+            "outputTokens": 568,
+            "requests": 2,
+            "reportedRequests": 2,
+            "durationMs": 3404,
+            "requestsByRole": {
+              "driver": 2
+            },
+            "cachedTokens": 0
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/targeted-read/off",
+          "passed": true,
+          "durationMs": 2861,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 6681,
+          "usage": {
+            "inputTokens": 6681,
+            "outputTokens": 380,
+            "requests": 2,
+            "reportedRequests": 2,
+            "durationMs": 2859,
+            "requestsByRole": {
+              "driver": 2
+            },
+            "cachedTokens": 0
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/targeted-read/on",
+          "passed": true,
+          "durationMs": 2149,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 1,
+          "routingHints": 0,
+          "callerInputTokens": 7262,
+          "usage": {
+            "inputTokens": 7262,
+            "outputTokens": 250,
+            "requests": 2,
+            "reportedRequests": 2,
+            "durationMs": 2146,
+            "requestsByRole": {
+              "driver": 2
+            },
+            "cachedTokens": 0
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/generate/off",
+          "passed": true,
+          "durationMs": 9114,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 27038,
+          "usage": {
+            "inputTokens": 27038,
+            "outputTokens": 847,
+            "requests": 7,
+            "reportedRequests": 7,
+            "durationMs": 9084,
+            "requestsByRole": {
+              "driver": 4,
+              "expert": 3
+            },
+            "cachedTokens": 4133
+          },
+          "final": "I have successfully generated `generated.mjs` with the requested settings and style.\n\nThe `npm test` command was executed and reported:\n```\n> test\n> node check.mjs\n\nAll fixture checks passed.\n\nExit code: 0\n```\nThis indicates that the generated file passes all checks.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/generate/on",
+          "passed": true,
+          "durationMs": 21850,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 66973,
+          "usage": {
+            "inputTokens": 66973,
+            "outputTokens": 1884,
+            "requests": 13,
+            "reportedRequests": 13,
+            "durationMs": 21817,
+            "requestsByRole": {
+              "driver": 4,
+              "expert": 9
+            },
+            "cachedTokens": 50994
+          },
+          "final": "The file `generated.mjs` was created with the following content:\n```javascript\nexport const settings = {\n  timeoutMs: 4500,\n  retries: 7,\n  region: \"eu-west-4\",\n  strict: true,\n};\n```\nThe `npm test` command was executed and reported:\n```\n> test\n> node check.mjs\n\nAll fixture checks passed.\n```",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/large-read/off",
+          "passed": true,
+          "durationMs": 73178,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 254892,
+          "usage": {
+            "inputTokens": 254892,
+            "outputTokens": 15995,
+            "requests": 12,
+            "reportedRequests": 12,
+            "durationMs": 73172,
+            "requestsByRole": {
+              "driver": 9,
+              "expert": 3
+            },
+            "cachedTokens": 81763
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"RETRY_DELAY_MS\": 1750,\n  \"DEFAULT_REGION\": \"eu-west-4\",\n  \"MAX_BATCH\": 48\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/exact-edit/off",
+          "passed": true,
+          "durationMs": 14697,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 44482,
+          "usage": {
+            "inputTokens": 44482,
+            "outputTokens": 1597,
+            "requests": 11,
+            "reportedRequests": 11,
+            "durationMs": 14652,
+            "requestsByRole": {
+              "driver": 6,
+              "expert": 5
+            },
+            "cachedTokens": 22982
+          },
+          "final": "The `retries` value in `generated.mjs` has been successfully updated from `0` to `7`. The file now contains `export const settings = {timeoutMs:4500,retries:7,region:\"eu-west-4\",strict:true};`.\n\nThe change was verified by running `npm test`, which reported \"All fixture checks passed.\"",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/exact-edit/on",
+          "passed": true,
+          "durationMs": 11587,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 41571,
+          "usage": {
+            "inputTokens": 41571,
+            "outputTokens": 944,
+            "requests": 9,
+            "reportedRequests": 9,
+            "durationMs": 11553,
+            "requestsByRole": {
+              "driver": 3,
+              "expert": 6
+            },
+            "cachedTokens": 24531
+          },
+          "final": "The `retries` value in `generated.mjs` has been changed from 0 to 7. I've verified this change by running `npm test`, which passed successfully.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/debug-read/off",
+          "passed": true,
+          "durationMs": 8225,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 82597,
+          "usage": {
+            "inputTokens": 82597,
+            "outputTokens": 1020,
+            "requests": 5,
+            "reportedRequests": 5,
+            "durationMs": 8219,
+            "requestsByRole": {
+              "driver": 5
+            },
+            "cachedTokens": 0
+          },
+          "final": "```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/debug-read/on",
+          "passed": true,
+          "durationMs": 5071,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 0,
+          "routingHints": 1,
+          "callerInputTokens": 15242,
+          "usage": {
+            "inputTokens": 33007,
+            "outputTokens": 560,
+            "requests": 5,
+            "reportedRequests": 5,
+            "durationMs": 5070,
+            "requestsByRole": {
+              "driver": 4,
+              "shunt": 1
+            },
+            "cachedTokens": 23799
+          },
+          "final": "```json\n{\n  \"authRetries\": 0,\n  \"tempRetries\": 3\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        }
+      ]
+    },
+    {
+      "name": "native-writer",
+      "models": {
+        "driver": "claude-haiku-4-5-20251001",
+        "worker": "gemini/gemini-2.5-flash",
+        "shunt": "gemini/gemini-2.5-flash-lite"
+      },
+      "results": [
+        {
+          "label": "single/generate/off",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 10635,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 24497,
+          "usage": {
+            "inputTokens": 24497,
+            "outputTokens": 926,
+            "requests": 5,
+            "reportedRequests": 5,
+            "cachedTokens": 19068,
+            "durationMs": 10600,
+            "requestsByRole": {
+              "lead": 5
+            }
+          },
+          "final": "Perfect! ✅ **Task completed successfully.**\n\n**Summary:**\n1. ✅ Created `generated.mjs` matching the reference style with:\n   - `timeoutMs: 4500`\n   - `retries: 7`\n   - `region: \"eu-west-4\"`\n   - `strict: true`\n\n2. ✅ Ran `npm test` - **All fixture checks passed** (Exit code: 0)",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "single/generate/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 13348,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "writer",
+              "status": "completed"
+            }
+          ],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 33728,
+          "usage": {
+            "inputTokens": 33934,
+            "outputTokens": 1241,
+            "requests": 7,
+            "reportedRequests": 7,
+            "durationMs": 13314,
+            "requestsByRole": {
+              "lead": 6,
+              "shunt": 1
+            },
+            "cachedTokens": 27468
+          },
+          "final": "## Summary\n\n✅ **Task completed successfully!**\n\n1. **Generated `generated.mjs`** - Created the file using code_write with the reference style from `reference.mjs`\n2. **File content verified** - The generated file correctly exports `const settings` with all requested properties:\n   - `timeoutMs: 4500`\n   - `retries: 7`\n   - `region: \"eu-west-4\"`\n   - `strict: true`\n3. **Style matched** - The file follows the exact formatting of the reference file (compact object notation without spaces around colons)\n4. **Tests passed** - `npm test` ran successfully with \"All fixture checks passed\" (Exit code: 0)",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/generate/off",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 11220,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 0,
+          "callerInputTokens": 33675,
+          "usage": {
+            "inputTokens": 33675,
+            "outputTokens": 981,
+            "requests": 6,
+            "reportedRequests": 6,
+            "cachedTokens": 27312,
+            "durationMs": 11189,
+            "requestsByRole": {
+              "lead": 6
+            }
+          },
+          "final": "Perfect! **Task completed successfully.**\n\n**Summary:**\n- ✅ Created `generated.mjs` matching the style of `reference.mjs`\n- ✅ Exported `const settings` with:\n  - `timeoutMs: 4500`\n  - `retries: 7`\n  - `region: \"eu-west-4\"`\n  - `strict: true`\n- ✅ Ran `npm test` — **All fixture checks passed** (exit code 0)\n\nThe generated file follows the same formatting as the reference (compact syntax with no spaces around colons, trailing comma, semicolon at end).",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "sidekick-fusion/generate/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 9884,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "writer",
+              "status": "completed"
+            }
+          ],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 35167,
+          "usage": {
+            "inputTokens": 35400,
+            "outputTokens": 704,
+            "requests": 7,
+            "reportedRequests": 7,
+            "durationMs": 9842,
+            "requestsByRole": {
+              "lead": 6,
+              "shunt": 1
+            },
+            "cachedTokens": 28907
+          },
+          "final": "Perfect! ✅ **Task completed successfully:**\n\n1. **Generated `generated.mjs`** - Created using `code_write` with the reference file as a style guide\n2. **File verification** - Confirmed the exported `settings` object contains:\n   - `timeoutMs: 4500`\n   - `retries: 7`\n   - `region: \"eu-west-4\"`\n   - `strict: true`\n3. **Style match** - The file matches the reference format exactly (compact property formatting)\n4. **Test result** - `npm test` passed with all fixture checks successful (exit code 0)",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/generate/off",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 15881,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 35440,
+          "usage": {
+            "inputTokens": 35440,
+            "outputTokens": 1494,
+            "requests": 8,
+            "reportedRequests": 8,
+            "durationMs": 15842,
+            "requestsByRole": {
+              "lead": 5,
+              "worker": 3
+            },
+            "cachedTokens": 24929
+          },
+          "final": "Perfect! ✅ **Task completed successfully.**\n\n## Summary\n\n1. **Generated `generated.mjs`** with the requested settings:\n   - `timeoutMs: 4500`\n   - `retries: 7`\n   - `region: \"eu-west-4\"`\n   - `strict: true`\n\n2. **Matched the reference style** exactly:\n   - Compact property notation (no spaces around colons)\n   - Consistent formatting\n   - Proper export syntax\n\n3. **Test Results**: ✅ **All fixture checks passed**\n   - Exit code: 0\n   - Command: `npm test` (which runs `node check.mjs`)\n\nThe generated.mjs file is now in place and all tests pass.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "team-fusion/generate/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 29122,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "writer",
+              "status": "completed"
+            }
+          ],
+          "directReads": 6,
+          "routingHints": 0,
+          "callerInputTokens": 71218,
+          "usage": {
+            "inputTokens": 71452,
+            "outputTokens": 2793,
+            "requests": 14,
+            "reportedRequests": 14,
+            "durationMs": 29089,
+            "requestsByRole": {
+              "lead": 9,
+              "worker": 4,
+              "shunt": 1
+            },
+            "cachedTokens": 57772
+          },
+          "final": "## Summary\n\n✅ **Task completed successfully!**\n\n**Generated file:** `/var/folders/pl/f4fm9jpd3_n2s90lqp8cxmzw0000gn/T/litespeed-shunt-native-eval-vJV3ex/d31c44be-806a-4919-b885-737461850c9e/generated.mjs`\n\n**Content:**\n```javascript\nexport const settings = {\n  timeoutMs:4500,\n  retries:7,\n  region:\"eu-west-4\",\n  strict:true,\n};\n```\n\n**Style matching:** \n- Used 2-space indentation (matching reference.mjs)\n- No spaces around colons in property definitions\n- Closing semicolon on the final brace\n\n**Test result:** ✅ `npm test` passed\n- Output: \"All fixture checks passed.\"\n- Exit code: 0\n\nThe generated settings object correctly exports all required properties with their specified values and matches the coding style of the reference file.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/generate/off",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 23280,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 67555,
+          "usage": {
+            "inputTokens": 67555,
+            "outputTokens": 1918,
+            "requests": 14,
+            "reportedRequests": 14,
+            "durationMs": 23246,
+            "requestsByRole": {
+              "driver": 4,
+              "expert": 10
+            },
+            "cachedTokens": 47662
+          },
+          "final": "All fixture checks passed. The `generated.mjs` file was created with the specified settings and passed the `npm test`.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/generate/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 26344,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "reader",
+              "status": "completed"
+            }
+          ],
+          "directReads": 3,
+          "routingHints": 2,
+          "callerInputTokens": 82431,
+          "usage": {
+            "inputTokens": 108838,
+            "outputTokens": 2182,
+            "requests": 17,
+            "reportedRequests": 17,
+            "durationMs": 26311,
+            "requestsByRole": {
+              "driver": 5,
+              "expert": 11,
+              "shunt": 1
+            },
+            "cachedTokens": 62513
+          },
+          "final": "The `generated.mjs` file has been created, matching the style of `reference.mjs` and including the specified `settings` object.\n\nThe `npm test` command was executed and reported the following result:\n```\n> test\n> node check.mjs\n\nAll fixture checks passed.\n\nExit code: 0\n```\nThe tests passed successfully.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        }
+      ]
+    },
+    {
+      "name": "native-expert-followup",
+      "models": {
+        "driver": "claude-haiku-4-5-20251001",
+        "worker": "gemini/gemini-2.5-flash",
+        "shunt": "gemini/gemini-2.5-flash-lite"
+      },
+      "results": [
+        {
+          "label": "expert-fusion/cross-file-read/off",
+          "passed": false,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 7663,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 37843,
+          "usage": {
+            "inputTokens": 37843,
+            "outputTokens": 266,
+            "requests": 2,
+            "reportedRequests": 2,
+            "durationMs": 7657,
+            "requestsByRole": {
+              "driver": 2
+            },
+            "cachedTokens": 0
+          },
+          "final": "",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/cross-file-read/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 13384,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 2,
+          "routingHints": 2,
+          "callerInputTokens": 53576,
+          "usage": {
+            "inputTokens": 53576,
+            "outputTokens": 1811,
+            "requests": 7,
+            "reportedRequests": 7,
+            "durationMs": 13381,
+            "requestsByRole": {
+              "driver": 7
+            },
+            "cachedTokens": 16600
+          },
+          "final": "```json\n{\n  \"MAX_RETRIES\": 7,\n  \"MAX_BATCH\": 48,\n  \"burst\": 37,\n  \"refillMs\": 2450,\n  \"primary\": \"/relay/v3\",\n  \"fallback\": \"/relay/safe\"\n}\n```",
+          "validation": "exact JSON key/value comparison"
+        },
+        {
+          "label": "expert-fusion/generate/on",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 11960,
+          "status": "idle",
+          "shuntCalls": [
+            {
+              "kind": "writer",
+              "status": "completed"
+            }
+          ],
+          "directReads": 3,
+          "routingHints": 0,
+          "callerInputTokens": 41227,
+          "usage": {
+            "inputTokens": 41462,
+            "outputTokens": 1178,
+            "requests": 10,
+            "reportedRequests": 10,
+            "durationMs": 11914,
+            "requestsByRole": {
+              "driver": 4,
+              "expert": 5,
+              "shunt": 1
+            },
+            "cachedTokens": 19607
+          },
+          "final": "The `npm test` command completed successfully, confirming that `generated.mjs` was created correctly according to the specified requirements and style.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        },
+        {
+          "label": "expert-fusion/generate/off",
+          "passed": true,
+          "errors": [],
+          "forcedWriter": true,
+          "durationMs": 20598,
+          "status": "idle",
+          "shuntCalls": [],
+          "directReads": 4,
+          "routingHints": 0,
+          "callerInputTokens": 50559,
+          "usage": {
+            "inputTokens": 50559,
+            "outputTokens": 1895,
+            "requests": 12,
+            "reportedRequests": 12,
+            "durationMs": 20562,
+            "requestsByRole": {
+              "driver": 6,
+              "expert": 6
+            },
+            "cachedTokens": 21779
+          },
+          "final": "All fixture checks passed after creating `generated.mjs`.",
+          "validation": "node check.mjs: assert.deepEqual on generated file"
+        }
+      ]
+    }
+  ]
+}

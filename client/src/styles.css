@@ -1038,3 +1038,22 @@ fieldset.model-picker { padding: 22px 24px; gap: 22px; overflow: visible; }
 .update-details [role="alert"] { color: var(--red); }
 .update-actions .button { padding: 5px 8px; font-size: 12px; }
 .update-actions a { color: var(--muted); }
+
+.shunt-settings > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; color: var(--secondary); font-size: 12px; list-style: none; }
+.shunt-settings > summary::-webkit-details-marker { display: none; }
+.shunt-settings > summary small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; }
+.shunt-settings[open] > summary { margin-bottom: 12px; }
+.shunt-settings[open] > summary svg { transform: rotate(180deg); }
+.shunt-settings .planner-heading { margin: 14px 0; }
+.shunt-settings .field-hint { line-height: 1.5; }
+.shunt-operation { padding: 6px 0; color: var(--muted); font-size: 12px; min-width: 0; }
+.shunt-operation-heading { display: flex; align-items: center; gap: 8px; }
+.shunt-operation.failed .shunt-operation-heading { color: var(--red); }
+.shunt-question { margin: 5px 0 0 21px; overflow-wrap: anywhere; }
+.shunt-answer { margin: 6px 0 0 21px; font-style: italic; overflow-wrap: anywhere; line-height: 1.6; max-height: 360px; overflow: auto; }
+.shunt-answer > :first-child { margin-top: 0; }
+.shunt-answer > :last-child { margin-bottom: 0; }
+.shunt-answer pre { white-space: pre-wrap; font-style: normal; }
+.shunt-sources { margin: 6px 0 0 21px; font-size: 11px; overflow-wrap: anywhere; }
+.shunt-sources summary { cursor: pointer; }
+.shunt-sources small { display: block; font-size: 10px; }

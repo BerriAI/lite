@@ -1,6 +1,6 @@
 # Shunt research harness
 
-Research only. Nothing here is imported by the product or enabled in an existing session. See [the design proposal](../../docs/design-shunt.md) for findings, integration boundaries, and open decisions.
+Evaluation scripts are separate from the product. The native integration is now available, off by default: see [Shunt](../../docs/shunt.md) and the [native verification report](results/native-summary.md). The older probes below preserve the research that informed this implementation.
 
 The source reference is Spotify’s Apache-2.0 plugin at `3c24ca30ff63e1f5bbad1c43fe5324daff579123`. The article-linked fork is pinned separately in the proposal. The scripts below run against a separate clone; they do not install a plugin, authenticate to Portal, or modify the main checkout.
 
@@ -32,7 +32,7 @@ SHUNT_RESEARCH_REPEATS=2 \
 node research/shunt/live-eval.mjs /tmp/shunt-reference
 ```
 
-Repeat with `SHUNT_RESEARCH_REAL_CODE=1` to run the real-source cases. Omit `SHUNT_RESEARCH_ENV_FILE` when the configured provider already has its key. `SHUNT_RESEARCH_PROVIDER` defaults to `litellm`. The gateway adapter is deliberately separate from `server/providers.ts`: it uses nonstreaming OpenAI-compatible requests to control temperature and output bounds, capabilities the production adapter does not currently expose. This is not a Portal backend reproduction or production UI E2E.
+Repeat with `SHUNT_RESEARCH_REAL_CODE=1` to run the real-source cases. Omit `SHUNT_RESEARCH_ENV_FILE` when the configured provider already has its key. `SHUNT_RESEARCH_PROVIDER` defaults to `litellm`. The gateway adapter is deliberately separate from `server/providers.ts`: it uses nonstreaming OpenAI-compatible requests to control temperature and output bounds, independently of the production adapter. This is not a Portal backend reproduction or production UI E2E.
 
 The bounded agent chooses native read/write versus the new tools. Reader/writer calls execute the **unmodified** upstream scripts with `PORTAL_CLI_BIN` pointing to `gateway-bridge.mjs`. The bridge translates the mode name into the published prompt and selected worker model. It implements neither AiKA processors nor mode lookup/ownership semantics. No external model tools are available to the one-shot worker.
 
@@ -48,6 +48,27 @@ Results overwrite this harness’s prior result files. They contain fixture prom
 - [Direct writer](results/direct-writer.json): real worker output written and loaded successfully, independent of driver routing.
 - `live-requests.jsonl` in each result directory: raw fixture/model exchanges and provider usage for independent audit.
 
-The observed results do not establish general correctness, dollar savings, an identical private model runtime, or production readiness. The proposal specifies the remaining native integration, UI, fault-injection, and live-quality acceptance matrix.
+The observed results do not establish general correctness, dollar savings, an identical private model runtime, or production readiness. The native report below records the integration, UI, fault-injection, and live-quality verification.
 
-The checked-in result files are historical evidence from the repository before the Litespeed rename. Original transcripts and measured values are preserved verbatim.
+The older upstream-harness result files are historical evidence from the repository before the Litespeed rename. Original transcripts and measured values are preserved verbatim.
+
+## Native integration evaluation
+
+`native-eval.ts` uses the actual Runner and streaming provider adapter in disposable workspaces with synthetic sources. It does not change saved application settings. It sends real, billable requests and runs fixture code with automatic tool permissions. Run it only against the selected test gateway:
+
+```sh
+SHUNT_RESEARCH_LIVE=1 \
+SHUNT_RESEARCH_SETTINGS_DB=/absolute/path/to/.litespeed/litespeed.db \
+SHUNT_RESEARCH_ENV_FILE=/absolute/path/to/.env \
+node --import tsx research/shunt/native-eval.ts
+```
+
+The defaults run six tasks × four architectures × off/on, with two trials at once and a three-minute cancellation bound per trial. Override `SHUNT_RESEARCH_DRIVER`, `SHUNT_RESEARCH_WORKER`, and the independent `SHUNT_RESEARCH_SHUNT` model if needed. `SHUNT_RESEARCH_LIMIT` caps the pilot at 1–48 trials. Optional comma-separated `SHUNT_RESEARCH_CASES` and `SHUNT_RESEARCH_ARCHITECTURES` select a subset. `SHUNT_RESEARCH_FORCE_WRITER=1` makes generation prompts explicitly request the writer and carry that requirement into worker assignments. `SHUNT_RESEARCH_OUTPUT` selects a result JSON path.
+
+The [60-trial record](results/native-results.json) combines the paired pilot, writer trials and Expert follow-up. It retains exact final answers, file assertion outcomes, request counts, role counts, cache reports and usage totals; transient request/session UUIDs are omitted. Read answers are rescored by `scoring.ts`; generation is checked on disk by a separate Node assertion during the run. To summarize fresh raw results:
+
+```sh
+node --import tsx research/shunt/summarize-native.ts research/shunt/results/native-pilot.json
+```
+
+This overwrites `results/native-results.json`. Pass additional result files to retain multiple experiments. See [the report](results/native-summary.md) for failures and limits, including the distinction between caller context, total tokens and cost.

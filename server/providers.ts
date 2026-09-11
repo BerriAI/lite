@@ -15,6 +15,8 @@ export interface CompletionOptions {
   provider: Provider; model: string; messages: ProviderMessage[]; tools?: ToolDefinition[];
   sessionId?: string;
   signal: AbortSignal; system?: string; reasoningEffort?: ReasoningEffort;
+  maxOutputTokens?: number;
+  requireCompleteText?: boolean;
   /** Reports a scheduled retry, not a guarantee that a failed attempt was unbilled. */
   onRetry?: (retry: ProviderRetry) => void;
 }
@@ -212,7 +214,7 @@ function usage(value: any): Usage {
     cachedTokens: value.prompt_tokens_details?.cached_tokens ?? value.input_tokens_details?.cached_tokens ?? value.cache_read_input_tokens,
   };
 }
-async function* chatStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }): AsyncGenerator<StreamChunk> {
+async function* chatStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }, requireCompleteText = false): AsyncGenerator<StreamChunk> {
   let finished = false, reasoningText = '', toolsSeen = false;
   const thinkingBlocks: any[] = [], reasoningItems: any[] = [];
   const remember = function* (): Generator<StreamChunk> {
@@ -223,7 +225,7 @@ async function* chatStream(response: Response, signal: AbortSignal, scope: { pro
     } };
   };
   for await (const { data } of parseSSE(response, signal)) {
-    if (data.trim() === '[DONE]') { if (!toolsSeen) finished = true; break; }
+    if (data.trim() === '[DONE]') { if (!toolsSeen && !requireCompleteText) finished = true; break; }
     const chunk = jsonEvent(data);
     if (chunk.error) throw streamError(chunk);
     if (chunk.usage) yield { type: 'usage', usage: usage(chunk.usage) };
@@ -252,6 +254,7 @@ async function* chatStream(response: Response, signal: AbortSignal, scope: { pro
     if (choice.finish_reason) {
       if (choice.finish_reason === 'length') throw new ProviderError('The model reached its output limit. No partial tool calls were executed.');
       if (choice.finish_reason === 'content_filter') throw new ProviderError('The provider stopped the response because of content filtering.');
+      if(requireCompleteText && choice.finish_reason !== 'stop') throw new ProviderError('Shunt did not return a complete text response. No generated file was written.');
       finished = true;
     }
   }
@@ -304,8 +307,9 @@ function anthropicMessages(messages: ProviderMessage[], providerId: string, mode
   }
   return result;
 }
-async function* anthropicStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }): AsyncGenerator<StreamChunk> {
+async function* anthropicStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }, requireCompleteText = false): AsyncGenerator<StreamChunk> {
   let finished = false, tokens: Usage = { inputTokens: 0, outputTokens: 0 };
+  let stopReason: string | undefined;
   const thinking = new Map<number, any>();
   for await (const { event, data } of parseSSE(response, signal)) {
     const chunk = jsonEvent(data), type = chunk.type || event;
@@ -335,10 +339,12 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
       if (chunk.delta?.type === 'input_json_delta') yield { type: 'tool', tool: { index: chunk.index, arguments: chunk.delta.partial_json } };
     }
     if (type === 'message_delta') {
+      if (chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
       if (chunk.usage?.output_tokens !== undefined) tokens.outputTokens = chunk.usage.output_tokens;
-      if (chunk.delta?.stop_reason === 'max_tokens') throw new ProviderError('The model reached its output limit. No partial tool calls were executed.');
+      if (chunk.delta?.stop_reason === 'max_tokens') { yield {type:'usage',usage:tokens}; throw new ProviderError('The model reached its output limit. No partial tool calls were executed.'); }
     }
     if (type === 'message_stop') {
+      if(requireCompleteText && stopReason !== 'end_turn') { yield {type:'usage',usage:tokens}; throw new ProviderError('Shunt did not return a complete text response. No generated file was written.'); }
       const blocks = [...thinking].sort(([a], [b]) => a - b).map(([, block]) => block).filter(block => block.type === 'redacted_thinking' || block.signature);
       if (blocks.length) yield { type: 'metadata', metadata: { ...scope, anthropicThinking: blocks } };
       finished = true; yield { type: 'usage', usage: tokens }; break;
@@ -470,7 +476,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
     const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
     const anthropicTools = tools?.length ? tools.map((t, index) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters, ...(index === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) : undefined;
-    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: 8192, stream: true, messages: markTrailingCacheBreakpoint(anthropicMessages(messages, provider.id, model), 'anthropic'),
+    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: options.maxOutputTokens ?? 8192, stream: true, messages: markTrailingCacheBreakpoint(anthropicMessages(messages, provider.id, model), 'anthropic'),
       ...(instructions ? { system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }] } : {}),
       ...(anthropicTools ? { tools: anthropicTools } : {}) };
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
@@ -486,7 +492,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
     const optInCache = /\bclaude\b|anthropic/i.test(model) || provider.anthropicCacheModels?.includes(model);
     const history = chatMessages(messages, provider.id, model);
-    body = { model, ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}), messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...(optInCache ? markTrailingCacheBreakpoint(history, 'chat') : history)], stream: true,
+    body = { model, ...(options.maxOutputTokens ? { max_completion_tokens: options.maxOutputTokens } : {}), ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}), messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...(optInCache ? markTrailingCacheBreakpoint(history, 'chat') : history)], stream: true,
       stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
     url = endpoint(provider.baseUrl, 'chat/completions');
   }
@@ -495,7 +501,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     await response.body?.cancel();
     throw new ProviderError('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
   }
-  const chunks = provider.kind === 'anthropic' ? anthropicStream(response, signal, { providerId: provider.id, model }) : provider.kind === 'codex' ? responsesStream(response, signal, { providerId: provider.id, model }) : chatStream(response, signal, { providerId: provider.id, model });
+  const chunks = provider.kind === 'anthropic' ? anthropicStream(response, signal, { providerId: provider.id, model }, options.requireCompleteText) : provider.kind === 'codex' ? responsesStream(response, signal, { providerId: provider.id, model }) : chatStream(response, signal, { providerId: provider.id, model }, options.requireCompleteText);
   for await (const chunk of chunks) { watchdog.progress(); yield chunk; }
   } finally { watchdog.close(); }
 }

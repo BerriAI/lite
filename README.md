@@ -12,14 +12,14 @@ Download the **macOS package** with its runtimes included—no Node or npm setup
 curl -fsSL https://github.com/BerriAI/litespeed/releases/latest/download/install.sh | sh
 ```
 
-Then run it from **the project you want to work on**:
+Open a **new terminal**, then run it from **the project you want to work on**:
 
 ```sh
 cd /path/to/your/project
-~/.local/bin/litespeed
+litespeed
 ```
 
-Use `litespeed` once `~/.local/bin` is on your PATH; the installer prints the setup line if needed. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
+The installer adds `litespeed` to your shell setup (zsh or Bash). To keep using the **current terminal** instead, run `export PATH="$HOME/.local/bin:$PATH"` once. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
 
 See [installation, updates, and the source-build alternative](docs/installing.md). Packages support Apple silicon and Intel Macs. Git and your project's development tools remain separate.
 
@@ -46,11 +46,11 @@ For a web-only session, run `litespeed serve`. For development, use `npm run dev
 | **Team Fusion** | A strong driver assigns fresh cheaper workers, runs independent work in parallel, and verifies the combined result. |
 | **Expert Fusion** | A cheaper driver coordinates fresh strong experts and verifies their work. Independent assignments can run in parallel. |
 
-Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Litespeed remembers your model arrangement per workspace; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
+Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Litespeed uses your last chosen model arrangement for new sessions across workspaces; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
 
 ## Additional options
 
-**Shunt (proposed)** would let agents in any architecture send large reads and predictable file generation to a separate Shunt model you choose, keeping their reasoning and review roles. It would be off by default, available during onboarding and in model settings in both clients. It is not shipped yet; see the [integration proposal](docs/shunt-integration.md) and [research and measured results](docs/design-shunt.md).
+**Shunt** sends large reads and routine generation to a separate model. Off by default; enable it in **Advanced settings** during setup or in Models, in either client. [How it works and measured results](docs/shunt.md).
 
 ## Guides
 

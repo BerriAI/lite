@@ -35,3 +35,7 @@ SOFTWARE.
 The web client bundles Geist and Geist Mono by the Geist Project Authors under the SIL Open Font License 1.1. Their complete copyright and license notices are included in [Geist-OFL.txt](client/public/licenses/Geist-OFL.txt) and [GeistMono-OFL.txt](client/public/licenses/GeistMono-OFL.txt), and copied into the built web client at `/licenses/`.
 
 Other dependencies retain the license notices distributed in their packages.
+
+## Spotify Shunt prompt examples
+
+The reader and writer prompts in `server/shunt.ts` adapt Spotify’s [Shunt mode examples](https://github.com/spotify/portal-ai-plugins/tree/3c24ca30ff63e1f5bbad1c43fe5324daff579123/plugins/shunt), distributed under Apache-2.0. Litespeed adds source-data boundaries and output/verification requirements. The license is included in [research/shunt/UPSTREAM-LICENSE](research/shunt/UPSTREAM-LICENSE). No Portal CLI or private service implementation is bundled.

@@ -31,7 +31,15 @@ const mock=createServer(async(req,res)=>{
   const emit=(delta:any,finish_reason?:string)=>res.write(`data: ${JSON.stringify({choices:[{index:0,delta,finish_reason}]})}\n\n`);
   let toolCall=false;
   const summarizing=data.messages.some((message:any)=>message.role==='system'&&typeof message.content==='string'&&message.content.includes('Summarize the supplied conversation data'));
-  if(summarizing){
+  if(data.messages.some((message:any)=>message.role==='system'&&typeof message.content==='string'&&message.content.includes('You are a precise code analyst.'))) {
+    emit({content:'The fixture exports a greeting. Shunt kept the source out of the caller context.'});
+    if(prompt.includes('LIVE_SHUNT'))await new Promise<void>(resolve=>{const release=()=>{pendingDelegations.delete(release);res.off('close',release);resolve();};pendingDelegations.add(release);res.once('close',release);});
+    if(res.destroyed)return;
+  }else if(prompt.includes('SHUNT_WORKERS')&&data.messages.at(-1)?.role!=='tool') {
+    toolCall=true;emit({tool_calls:['alpha','beta'].map((name,index)=>({index,id:`shunt-worker-${name}`,type:'function',function:{name:'delegate',arguments:JSON.stringify({description:`Read ${name}`,prompt:`SHUNT_CHILD ${name}`})}}))});
+  }else if((prompt.includes('SHUNT_BROWSER')||prompt.includes('SHUNT_CHILD'))&&data.messages.at(-1)?.role!=='tool') {
+    toolCall=true;emit({tool_calls:[{index:0,id:'shunt-reader',type:'function',function:{name:'bulk_read',arguments:JSON.stringify({paths:['README.md'],question:`LIVE_SHUNT explain the fixture ${prompt.includes('beta')?'beta':'alpha'}`})}}]});
+  }else if(summarizing){
     if(prompt.includes('WAIT_BUDGET_SUMMARY')) {
       await new Promise<void>(resolve=>{const release=()=>{pendingSummaries.delete(release);res.off('close',release);resolve();};pendingSummaries.add(release);res.once('close',release);});
       if(res.destroyed)return;

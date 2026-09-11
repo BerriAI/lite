@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/react */
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Model, ModelReasoning, Session, Settings } from '../shared/types.js';
+import { SHUNT_DESCRIPTION, SHUNT_BENEFIT, SHUNT_MODEL_HINT, shuntConfigured, type ShuntSelection } from '../shared/shunt.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { ARCHITECTURES, architectureWorker, selectArchitecture, type ArchitectureKind, type ModelRoute } from '../shared/architectures.js';
 import { SETUP_ARCHITECTURES, modelGuidance } from '../shared/setup.js';
@@ -34,13 +35,14 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   const [kind, setKind] = useState<'single' | ArchitectureKind>(initial.architecture?.kind ?? 'single');
   const [driver, setDriver] = useState<ModelRoute>({ providerId: initial.providerId, model: initial.model });
   const [worker, setWorker] = useState<ModelRoute | null>(initial.architecture ? architectureWorker(initial.architecture) : null);
+  const [shunt,setShunt]=useState<ShuntSelection>(initial.shunt??{enabled:false});
   const [planner, setPlanner] = useState<ModelRoute | null>(initial.planner ?? null);
   const [reasoning, setReasoning] = useState<ModelReasoning>(initial.modelReasoning ?? {});
   const [concurrency, setConcurrency] = useState<1 | 2 | 3 | 4 | undefined>(initial.architecture?.kind === 'team-fusion' || initial.architecture?.kind === 'expert-fusion' ? initial.architecture.concurrency : undefined);
   const [style, setStyle] = useState(initial.outputStyle ?? ''), [styles, setStyles] = useState(['concise', 'explanatory', 'learning']);
   const [view, setView] = useState('main'), [catalog, setCatalog] = useState<Model[]>([]);
   useEffect(() => { let live = true; controller.client.api<{ styles: string[] }>(`/styles?workspace=${encodeURIComponent(initial.workspace)}`).then(result => { if (live) setStyles([...new Set([...styles, ...result.styles])]); }).catch(() => {}); return () => { live = false; }; }, []);
-  const route = view.includes('worker') ? worker : view.includes('planner') ? planner : driver;
+  const route = view.includes('shunt') ? shunt.model : view.includes('worker') ? worker : view.includes('planner') ? planner : driver;
   useEffect(() => {
     if (!view.startsWith('reasoning:') || !route) return;
     let live = true; setCatalog([]);
@@ -50,6 +52,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   const back = () => setView('main');
   const name = kind === 'single' ? 'Single model' : ARCHITECTURES.find(item => item.kind === kind)!.name;
   const workerLabel = kind === 'team-fusion' ? 'Worker' : kind === 'expert-fusion' ? 'Expert' : 'Sidekick';
+  if (view === 'advanced') return <ShuntSettings controller={controller} settings={settings} value={shunt} onChange={setShunt} onClose={back} reasoning={shunt.model?reasoning[JSON.stringify([shunt.model.providerId,shunt.model.model])]:undefined} onReasoning={()=>setView('reasoning:shunt')}/>;
   if (view === 'architecture') return <Menu title="Architecture" search={false} onClose={back} items={[
     ...SETUP_ARCHITECTURES.map(item => ({ id: item.kind, label: `${item.name}${item.recommended ? ' · Recommended' : ''}`, description: item.description, action: () => { setKind(item.kind); back(); } })),
   ]} />;
@@ -72,7 +75,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
     try {
       const architecture = kind !== 'single' && worker ? selectArchitecture(kind, worker) : null;
       if (architecture?.kind === 'team-fusion' || architecture?.kind === 'expert-fusion') architecture.concurrency = concurrency;
-      if (await controller.configure({ ...driver, architecture, planner, modelReasoning: reasoning, outputStyle: style || null }, initial.configRevision ?? 0)) onClose();
+      if (await controller.configure({ ...driver, architecture, planner, shunt, modelReasoning: reasoning, outputStyle: style || null }, initial.configRevision ?? 0)) onClose();
     } catch (error) { controller.notice(String((error as Error).message)); }
   };
   return <Menu title="Models" search={false} onClose={onClose} footer={state.notice || '↑↓ choose · Enter edit · Save applies changes · Esc cancel'} items={[
@@ -80,10 +83,24 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
     ...fields('driver', kind === 'single' ? 'Model' : 'Driver', driver),
     ...(kind !== 'single' ? fields('worker', workerLabel, worker) : []),
     ...(kind === 'team-fusion' || kind === 'expert-fusion' ? [{ id: 'workers', label: `Workers at once: ${concurrency ?? 'Automatic'}`, action: () => setView('concurrency') }] : []),
+    { id:'advanced',label:`Advanced settings · Shunt ${shunt.enabled?'On':'Off'}`,description:SHUNT_DESCRIPTION,action:()=>setView('advanced')},
     { id: 'planner', separatorBefore: true, label: `Planner model: ${planner ? 'On' : 'Off'}`, description: 'Use a different model in Plan mode.', action: () => { if (planner) setPlanner(null); else setView('model:planner'); } },
     ...(planner ? fields('planner', 'Planner', planner) : []),
     { id: 'style', separatorBefore: true, label: `Output style: ${style || 'Default'}`, action: () => setView('style') },
-    { id: 'save', separatorBefore: true, label: state.pending ? 'Saving…' : 'Save', disabled: Boolean(state.pending) || !driver.model.trim() || !driver.providerId || (kind !== 'single' && !worker), action: () => { void save(); } },
+    { id: 'save', separatorBefore: true, label: state.pending ? 'Saving…' : 'Save', disabled: Boolean(state.pending) || !shuntConfigured(shunt,settings.providers) || !driver.model.trim() || !driver.providerId || (kind !== 'single' && !worker), action: () => { void save(); } },
     { id: 'providers', label: 'Manage providers', action: onProviders },
   ]} />;
+}
+
+export function ShuntSettings({controller,settings,value,onChange,onClose,reasoning,onReasoning}:{controller:TerminalController;settings:Settings;value:ShuntSelection;onChange:(value:ShuntSelection)=>void;onClose:()=>void;reasoning?:string;onReasoning?:()=>void}) {
+  const [choosing,setChoosing]=useState(false);
+  const providers=settings.providers.filter(provider=>provider.kind!=='codex');
+  if(choosing)return <ModelChooser controller={controller} settings={{...settings,providers}} title="Shunt model" feedback={SHUNT_MODEL_HINT} value={value.model??{providerId:providers[0]?.id??'',model:''}} onClose={()=>setChoosing(false)} onChange={model=>{onChange({...value,enabled:true,model});setChoosing(false);}}/>;
+  return <Menu title="Advanced settings" search={false} onClose={onClose} footer={`${SHUNT_BENEFIT} Reported by Spotify; results vary.`} items={[
+    {id:'shunt',label:`Shunt: ${value.enabled?'On':'Off'}`,description:SHUNT_DESCRIPTION,disabled:!providers.length,action:()=>{if(value.enabled)onChange({...value,enabled:false});else if(value.model)onChange({...value,enabled:true,model:value.model});else setChoosing(true);}},
+    ...(value.enabled?[{id:'shunt-model',label:`Shunt model: ${value.model.model}`,description:SHUNT_MODEL_HINT,action:()=>setChoosing(true)}]:[]),
+    ...(value.enabled&&onReasoning?[{id:'reasoning',label:`Reasoning: ${reasoning??'Default'}`,action:onReasoning}]:[]),
+    ...(!providers.length?[{id:'connect',label:'Connect an API-key provider to use Shunt',disabled:true,action:()=>{}}]:[]),
+    {id:'back',label:'Back',action:onClose},
+  ]}/>;
 }

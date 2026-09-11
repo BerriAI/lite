@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 for (const [kind, role, concurrency, width] of [
   ['team-fusion', 'Worker', undefined, 1440],

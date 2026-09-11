@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 700 }]) {
   test(`model dialog fits ${viewport.width}×${viewport.height}`, async ({ page, request }) => {

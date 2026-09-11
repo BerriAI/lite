@@ -57,6 +57,7 @@ export interface Settings { mcpConfigRevision?: string; providers: Provider[]; d
  * (docs/design-capability-proxy.md, Option 3). */
 export interface McpServerConfig { command?: string; args?: string[]; env?: Record<string,string>; url?: string; enabled?: boolean; advertise?: boolean; }
 export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProfile; configRevision?: number; historyRevision?: number; id: string; title: string; workspace: string; model: string; providerId: string; mode: Mode; permissionMode: PermissionMode; createdAt: number; updatedAt: number; status: RunStatus; archived: boolean; parentId?: string;
+  shunt?: import('./shunt.js').ShuntSelection;
   /** Session goal (goal mode): persists on the session; see shared/goals.ts. */
   goal?: SessionGoal;
   /** Optional planner half of a planner+executor pair. Plan-mode turns run on
@@ -76,6 +77,8 @@ export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProf
    * change with a revision bump, exactly like changing the model. */
   outputStyle?: string; }
 export interface ToolCall { waitingForWorkspace?: string; changes?: FileChange[]; delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
+  shunt?: import('./shunt.js').ShuntOperation;
+  routing?: { kind: 'shunt'; paths: string[] };
   /** Sidecar interception attribution (design note 4.5): present iff a sidecar
    * modified this call. `args` above are the MODIFIED (executed) arguments;
    * the unmodified original is preserved here so the interception is auditable

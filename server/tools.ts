@@ -14,6 +14,8 @@ import { createPatch } from 'diff';
 import type { Attachment, FileChange, FileEntry, Todo, ToolDefinition } from '../shared/types.js';
 
 export interface ToolContext {
+  expectedFile?: { absolute: string; identity: string | null };
+  receiptOnly?: boolean;
   workspace: string;
   /** Host-issued approval for this call's resolved path; never a model argument. */
   fileAccess?: ToolPathAccess;
@@ -55,7 +57,7 @@ const IGNORED_DIRS = new Set(['node_modules', 'vendor', 'dist', 'build', 'covera
 // GET (5.6): both mutate nothing, so they join the read-only set AND the
 // researcher child ceiling — a deliberate ceiling expansion recorded in
 // docs/delegation.md and the ceiling tests.
-const READ_ONLY = new Set(['read_file', 'view_image', 'glob', 'grep', 'web_fetch', 'web_search', 'todo_read', 'history_search', 'memory_recall', 'tool_output_page', 'bash_output', 'wait']);
+const READ_ONLY = new Set(['read_file', 'bulk_read', 'view_image', 'glob', 'grep', 'web_fetch', 'web_search', 'todo_read', 'history_search', 'memory_recall', 'tool_output_page', 'bash_output', 'wait']);
 const string = { type: 'string' };
 const integer = (minimum: number, maximum: number) => ({ type: 'integer', minimum, maximum });
 const definition = (name: string, description: string, properties: Record<string, unknown>, required: string[] = []): ToolDefinition => ({
@@ -482,6 +484,47 @@ export async function readFile(workspace: string, filePath: string): Promise<{ p
   return { path: portable(path.relative(await fs.realpath(workspace), result.absolute)), content: result.content, ...(result.truncated ? { truncated: true } : {}) };
 }
 
+export async function shuntSource(workspace: string, args: Record<string, unknown>, access: ToolPathAccess | undefined, signal: AbortSignal, maxBytes: number) {
+  const original = args;
+  const local = await externalToolContext('read_file', args, { workspace, fileAccess: access, signal } as ToolContext);
+  signal.throwIfAborted();
+  const file = await readTextFile(local.context.workspace, textArg(local.args, 'path'), maxBytes, true);
+  await validateToolPath(workspace, 'read_file', original, access);
+  signal.throwIfAborted();
+  return { path: access?.external ? file.absolute : portable(path.relative(await fs.realpath(workspace), file.absolute)), content: file.content, bytes: Buffer.byteLength(file.content), sha256: createHash('sha256').update(file.content).digest('hex'), lines: logicalLines(file.content) };
+}
+function logicalLines(content: string): number {
+  if (!content) return 0;
+  return content.split(/\r\n|\r|\n/).length - (/[\r\n]$/.test(content) ? 1 : 0);
+}
+export async function shuntReadGate(workspace: string, args: Record<string, unknown>, access: ToolPathAccess | undefined, signal: AbortSignal, minLines: number): Promise<boolean> {
+  numberArg(args, 'offset', 1, 1_000_000);
+  const limit = numberArg(args, 'limit', 2000, 2000);
+  if (args.direct_reason !== undefined) {
+    const reason = textArg(args, 'direct_reason').trim();
+    if (!reason || reason.length > 1000) throw new Error('direct_reason must explain the direct read in 1–1000 characters.');
+    return false;
+  }
+  if (args.limit !== undefined && limit <= minLines) return false;
+  const local = await externalToolContext('read_file', args, { workspace, fileAccess: access, signal } as ToolContext);
+  const sample = await readFileRange(local.context.workspace, textArg(local.args, 'path'), 1, minLines + 1, signal);
+  await validateToolPath(workspace, 'read_file', args, access);
+  return sample.lines.length > minLines || sample.truncated;
+}
+export async function shuntWriteTarget(workspace: string, target: string, access: ToolPathAccess | undefined, signal: AbortSignal) {
+  const local = await externalToolContext('write_file', { path: target }, { workspace, fileAccess: access, signal } as ToolContext);
+  const absolute = await writablePath(local.context.workspace, textArg(local.args, 'path'));
+  let identity: string | null = null;
+  try { identity = fileIdentity(await fs.stat(absolute, { bigint: true })); }
+  catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
+  await validateToolPath(workspace, 'write_file', { path: target }, access);
+  signal.throwIfAborted();
+  return { absolute, identity };
+}
+function fileIdentity(stat: import('node:fs').BigIntStats): string {
+  return [stat.dev, stat.ino, stat.size, stat.mtimeNs, stat.ctimeNs].join(':');
+}
+
 async function readFileRange(workspace: string, filePath: string, offset: number, limit: number, signal: AbortSignal): Promise<{ lines: string[]; truncated: boolean }> {
   const absolute = await assertReadablePath(workspace, filePath);
   const handle = await fs.open(absolute, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -696,6 +739,11 @@ async function writablePath(workspace: string, filePath: string): Promise<string
 async function mutateFile(args: Record<string, unknown>, context: ToolContext, edit: boolean): Promise<string> {
   const filePath = textArg(args, 'path');
   let absolute = await writablePath(context.workspace, filePath);
+  if (context.expectedFile) {
+    let identity: string | null = null;
+    try { identity = fileIdentity(await fs.stat(absolute, { bigint: true })); } catch (error) { if (!hasCode(error, 'ENOENT')) throw error; }
+    if (absolute !== context.expectedFile.absolute || identity !== context.expectedFile.identity) throw new Error('The target changed while Shunt was generating. Read the current file and retry; no generated content was written.');
+  }
   let before: string | null = null;
   try { before = (await readTextFile(context.workspace, absolute, EDIT_LIMIT, true)).content; }
   catch (error) { if (edit || !hasCode(error, 'ENOENT')) throw error; }
@@ -737,6 +785,7 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
     if (!stat.isFile()) throw new Error('Path is not a regular file.');
     if (stat.nlink > 1) throw new Error('Refusing to modify a hard-linked file; it may have aliases outside the workspace.');
     if (before !== null) {
+      if (context.expectedFile && fileIdentity(await handle.stat({ bigint: true })) !== context.expectedFile.identity) throw new Error('The target changed while Shunt was generating. Read the current file and retry; no generated content was written.');
       const latest = await readTextFile(context.workspace, absolute, EDIT_LIMIT, true);
       const latestStat = await fs.stat(absolute);
       if (latest.content !== before || latestStat.ino !== stat.ino || latestStat.dev !== stat.dev) throw new Error('File changed while preparing this edit. Read it again and retry.');
@@ -747,6 +796,7 @@ async function mutateFile(args: Record<string, unknown>, context: ToolContext, e
   } finally { await handle.close(); }
   // Once the mutation happened, always record it, even if cancellation arrived.
   await context.onChange({ path: relative, before, after });
+  if (context.receiptOnly) return `Wrote ${relative} (${Buffer.byteLength(after)} bytes, sha256 ${createHash('sha256').update(after).digest('hex')}). Review the actual file and run the relevant checks.`;
   const patch = createPatch(relative, before ?? '', after, 'before', 'after', { timeout: 250, maxEditLength: 10_000 }) ?? '[Diff omitted: change is too large to render quickly.]';
   return bounded(`${edit ? `Updated ${relative} (${replacements} replacement${replacements === 1 ? '' : 's'})` : `${before === null ? 'Created' : 'Wrote'} ${relative}`}\n${patch}`);
 }

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 const state = { currentVersion: '0.1.0', latestVersion: '0.2.0', available: true, packaged: true, restartRequired: false, releaseUrl: 'https://github.com/BerriAI/litespeed/releases/tag/v0.2.0', command: 'litespeed update' };
 test('updates are visible, staged explicitly, and preserve work when restart is blocked', async ({ page }) => {
   let installed = false;

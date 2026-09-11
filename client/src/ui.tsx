@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Check, Copy, X } from 'lucide-react';
 import { useState } from 'react';
+import { copyText } from './clipboard';
 
 export function Logo({ small = false }: { small?: boolean }) {
   return <span className={`litespeed-logo ${small ? 'small' : ''}`} aria-hidden="true"><svg viewBox="0 0 40 32" fill="none"><path d="M5 7h15c6 0 11 5 15 12 1.4 2.5-.2 5-3 5H5" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" /><path d="M19 11h2c3 0 6 3 8 6H18l1-6Z" fill="currentColor" /><path d="M2 12h9M1 18h11M9 29h23" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg></span>;
@@ -38,7 +39,7 @@ export function CopyButton({ text, label = 'Copy' }: { text: string; label?: str
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
   return <button className="copy-button" aria-label={state === 'copied' ? 'Copied' : label} onClick={async () => {
-    try { await navigator.clipboard.writeText(text); setState('copied'); } catch { setState('error'); }
+    try { await copyText(text); setState('copied'); } catch { setState('error'); }
     clearTimeout(timer.current); timer.current = setTimeout(() => setState('idle'), 1800);
   }}>{state === 'copied' ? <Check size={13} /> : <Copy size={13} />}<span>{state === 'copied' ? 'Copied' : state === 'error' ? 'Copy unavailable' : label}</span></button>;
 }

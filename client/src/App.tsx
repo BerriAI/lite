@@ -1,4 +1,5 @@
 import { Updates } from './Updates';
+import { useCopyOnSelection } from './clipboard';
 import { workerLabels } from './worker-presentation';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Target, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
@@ -41,6 +42,7 @@ const suggestions = [
   { Icon: WandSparkles, label: 'Make it better', description: 'Find a worthwhile improvement', prompt: 'Review this project for one high-impact improvement. Explain your recommendation and wait for my approval before making changes.' },
 ];
 export default function App() {
+  useCopyOnSelection();
   const [settings, setSettings] = useState<SettingsType | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [activeId, setActiveId] = useState<string | null>(readSessionHash);
@@ -139,7 +141,7 @@ export default function App() {
 
   useEffect(() => {
     const session = detail?.session;
-    if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode, planner: session.planner, outputStyle: session.outputStyle, modelReasoning: session.modelReasoning, architecture: session.architecture });
+    if (session && session.id === currentId.current && !configBusy) setSelection({ providerId: session.providerId, model: session.model, mode: session.mode, permissionMode: session.permissionMode, shunt: session.shunt, planner: session.planner, outputStyle: session.outputStyle, modelReasoning: session.modelReasoning, architecture: session.architecture });
   }, [detail?.session.modelReasoning, detail?.session.providerId, detail?.session.model, detail?.session.mode, detail?.session.permissionMode, detail?.session.planner?.providerId, detail?.session.planner?.model, detail?.session.outputStyle, detail?.session.architecture, detail?.session.configRevision, configBusy]);
   const provider = settings?.providers.find(p => p.id === selection.providerId);
   const closeSettings = useCallback(() => { setSettingsOpen(false); setProfileDialog(null); }, []);
@@ -196,7 +198,7 @@ export default function App() {
     let live=true;const request=selectionRequest.current;
     api<Partial<Selection> & {setupComplete?: boolean}>(`/workspace-preferences?${query({workspace})}`).then(preferred=>{
       if(live&&!currentId.current&&selectionRequest.current===request&&!pendingSession.current) {
-        const next = {...selection,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}};
+        const next = {...selection,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,shunt:preferred.shunt??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}};
         setSelection(next);
         if (needsSetup(settings, next) && !setupSeen.current.has(workspace) && !currentDraft.current.text.trim() && !currentDraft.current.attachments.length) { setupSeen.current.add(workspace); setSetup({selection:next,id:null,revision:0,workspace,quick:true}); }
       }
@@ -209,7 +211,7 @@ export default function App() {
     const s = settingsRef.current;
     if (s) setSelection({ providerId: s.defaultProvider, model: s.defaultModel, mode: 'build', permissionMode: s.permissionMode, architecture:null });
     const request=selectionRequest.current;
-    if(s)void api<Partial<Selection>>(`/workspace-preferences?${query({workspace:s.workspace})}`).then(preferred=>{if(!currentId.current&&selectionRequest.current===request)setSelection(current=>({...current,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}}));}).catch(()=>{});
+    if(s)void api<Partial<Selection>>(`/workspace-preferences?${query({workspace:s.workspace})}`).then(preferred=>{if(!currentId.current&&selectionRequest.current===request)setSelection(current=>({...current,...preferred,architecture:preferred.architecture??null,planner:preferred.planner??null,shunt:preferred.shunt??null,outputStyle:preferred.outputStyle??null,modelReasoning:preferred.modelReasoning??{}}));}).catch(()=>{});
     setTimeout(() => document.getElementById('message-input')?.focus(), 50);
   }, [navigate]);
   const load = useCallback(async () => {
@@ -275,7 +277,7 @@ export default function App() {
       try {
         const initial = await api<SessionDetail>(`/sessions/${id}`);
         if (!live) return;
-        setDetail(initial); setSelection({ providerId: initial.session.providerId, model: initial.session.model, mode: initial.session.mode, permissionMode: initial.session.permissionMode, planner: initial.session.planner, outputStyle: initial.session.outputStyle, modelReasoning: initial.session.modelReasoning, architecture: initial.session.architecture }); setSessionLoading(false);
+        setDetail(initial); setSelection({ providerId: initial.session.providerId, model: initial.session.model, mode: initial.session.mode, permissionMode: initial.session.permissionMode, shunt: initial.session.shunt, planner: initial.session.planner, outputStyle: initial.session.outputStyle, modelReasoning: initial.session.modelReasoning, architecture: initial.session.architecture }); setSessionLoading(false);
         source = new EventSource(`/api/sessions/${id}/events`);
         source.onopen = () => {
           if (!live) return;
