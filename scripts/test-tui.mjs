@@ -182,6 +182,8 @@ try {
   await waitFor(() => screen().includes('Queue a follow-up'), 'queue test running');
   terminal.write('queued follow-up\r');
   await waitFor(async () => (await detail()).queue.items.length === 1, 'follow-up queued');
+  assert(screen().includes('queued follow-up')&&screen().includes('Steer now'),'queued content and direct steering stay visible');
+  assert(screen().includes('Enter queue · Alt+Enter steer'),'running composer accurately labels both actions');
   terminal.write('\x1b'); await new Promise(done => setTimeout(done, 150)); terminal.write('\x1b');
   await waitFor(() => screen().includes('idle'), 'queue task stopped');
   terminal.write('/queue\r');

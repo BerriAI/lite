@@ -67,7 +67,7 @@ const mock=createServer(async(req,res)=>{
     }else if(count===1){await say('Driver hands the note to Sidekick.');call('sidekick',{description:'Update the project note',prompt:'TUI_FLOW_CHILD inspect the project and write its note.'});}
     else if(count===2){await say('Driver checks the Sidekick result.');call('bash',{command:'cat sidekick-note.txt'});}
     else if(count===3)call('todo_write',todos(2));
-    else await say('Driver report: the project note is verified.');
+    else await say('Driver report: the project note is verified.\n\n## What changed\n\nThe **project note** now describes the result. See `sidekick-note.txt`.');
   }else if(prompt.includes('DELEGATE_CHILD')){
     if(data.messages.at(-1)?.role!=='tool'){
       const name=prompt.includes('FORCE_WRITE')?'write_file':prompt.includes('FORCE_NESTED')?'task':prompt.includes('FORCE_QUESTION')?'ask_user':'read_file';

@@ -21,6 +21,16 @@ export function activityActors(detail: SessionDetail) {
   }
   return actors;
 }
+export function taskInvocations(detail: SessionDetail) {
+  const last = detail.messages.findLast(message => message.role === 'user');
+  const latest = new Map<string, DelegationSummary>();
+  for (const task of detail.delegations ?? []) {
+    if (task.status !== 'running' && task.parentTurnId !== (last?.turnId ?? last?.id)) continue;
+    const previous = latest.get(task.childSessionId);
+    if (!previous || task.createdAt >= previous.createdAt) latest.set(task.childSessionId, task);
+  }
+  return [...latest.values()].sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running') || a.createdAt - b.createdAt);
+}
 export function activitySections(steps: Message[], actors: ReturnType<typeof activityActors>): ActivitySection[] {
   const sections: ActivitySection[] = [];
   const append = (entry: ActivityEntry) => {

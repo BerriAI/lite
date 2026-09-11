@@ -14,6 +14,7 @@ let log='',terminal,emulator,browser,frames=[],previous='';
 server.stdout.on('data',chunk=>log+=chunk);server.stderr.on('data',chunk=>log+=chunk);
 const screen=()=>emulator?Array.from({length:emulator.rows},(_,row)=>emulator.buffer.active.getLine(emulator.buffer.active.viewportY+row)?.translateToString(true,0,emulator.cols)??'').join('\n'):'';
 const delay=ms=>new Promise(done=>setTimeout(done,ms));
+function clickLine(marker){const lines=screen().split('\n'),row=lines.findIndex(line=>line.includes(marker));assert(row>=0,`Missing ${marker}\n${screen()}`);const x=lines[row].indexOf(marker)+2;terminal.write(`\x1b[<0;${x};${row+1}M\x1b[<0;${x};${row+1}m`);}
 async function waitFor(check,label,timeout=45000){const end=Date.now()+timeout;while(Date.now()<end){if(await check())return;await delay(60);}throw new Error(label+'\n'+screen()+'\n'+log.slice(-1000));}
 function record(){const text=screen();if(text!==previous){frames.push({at:Date.now(),cols:emulator.cols,rows:emulator.rows,text});previous=text;}}
 const escape=text=>text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
@@ -51,9 +52,14 @@ try{
  terminal.onData(chunk=>emulator.write(chunk,record));await waitFor(()=>screen().includes('Ask Litespeed to do something…')&&screen().includes('Ctrl+P Commands'),'TUI composer starts');
  if(!baseline)assert(screen().split('\n')[0].includes('test-model + sidekick'),'model selection names the companion architecture');
  terminal.write('TUI_FLOW_DRIVER inspect and update the note.\r');
- let approved=new Set(),captured=false,childRequest=false;
+ let approved=new Set(),captured=false,childRequest=false,reasoningChecked=false;
  await waitFor(async()=>{
   const detail=await api('/sessions/'+session.id);
+  if(!baseline&&!reasoningChecked&&screen().includes('▸ Thought')&&screen().includes('Driver explains the plan.')){
+   assert(!screen().includes('Driver reasoning'),'completed reasoning is collapsed by default');
+   clickLine('▸ Thought');await waitFor(()=>screen().includes('Driver reasoning'),'reasoning expands inline');await save('reasoning-expanded');
+   clickLine('▾ Thought');await waitFor(()=>!screen().includes('Driver reasoning'),'reasoning collapses inline');reasoningChecked=true;
+  }
   for(const p of detail.permissions){
    if(approved.has(p.id))continue;
    await delay(400);await save('approval-'+p.tool);
@@ -85,7 +91,8 @@ try{
  await delay(200);await save('complete');assert(childRequest);assert.equal(await readFile(join(settings.workspace,'sidekick-note.txt'),'utf8'),'Project inspection complete.\nThe note records the observed result.\nNo configuration changes are needed.\n');
  if(!baseline){
   const reasoningFrames=frames.filter(frame=>frame.text.includes('Driver reasoning')&&frame.text.includes('Driver explains the plan.'));
-  assert(reasoningFrames.length>0);
+  assert(reasoningChecked);assert(reasoningFrames.length>0);
+  assert(!frames.some(frame=>frame.text.includes('Full reasoning')),'no reasoning preview plus duplicate disclosure');
   for(const frame of reasoningFrames)assert(frame.text.indexOf('Driver reasoning')<frame.text.indexOf('Driver explains the plan.'),'reasoning stays before the response');
   assert(!frames.some(frame=>frame.text.includes('Driver → Sidekick')),'no duplicate handoff heading');
   assert(frames.some(frame=>frame.text.includes('Thinking…')),'captures active reasoning');
@@ -93,9 +100,10 @@ try{
   assert(frames.every(frame=>(frame.text.match(/Thinking…/g)??[]).length<=1),'one thinking indicator during this sequential handoff');
   assert(screen().includes('Driver · 2/2 done')&&screen().includes('Sidekick · 3/3 done'),'task completion remains visible');
   const lines=screen().split('\n'), actor=lines.findIndex(line=>/^\s*Sidekick\s*(?:│.*)?$/.test(line));
-  assert(actor>=0&&lines[actor+1].includes('▸ 5 steps · completed'),'Sidekick identity stays above its collapsed steps');
+  assert(actor>=0&&lines[actor+1].includes('▸ Update the project note · 5 steps · completed'),'Sidekick identity stays above its collapsed steps');
   assert(lines.slice(actor+2).some(line=>/^\s*Driver\s*(?:│.*)?$/.test(line)),'Driver is labeled again after the handoff');
   assert(!lines[actor+1].includes('Sidekick'),'the activity row does not repeat the agent name');
+  assert.equal(lines.filter(line=>/^\s*Driver\s*(?:│.*)?$/.test(line)).length,2,'Driver is named only before and after Sidekick');
   assert(!screen().includes('Changes haven’t been checked')&&!screen().includes('Checks need attention'),'no generic verification footer');
   assert(screen().includes('Cache unavailable'),'unknown cache usage is not presented as a zero hit rate');
   assert(screen().includes('test-model + sidekick · 660 tokens'),'family usage names both driver and companion');

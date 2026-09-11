@@ -4966,8 +4966,8 @@ export const BUILTIN_THEMES: Record<string, ThemeJson> = {
         "light": "lightStep12"
       },
       "markdownHeading": {
-        "dark": "darkAccent",
-        "light": "lightAccent"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownLink": {
         "dark": "darkStep9",
@@ -4978,32 +4978,32 @@ export const BUILTIN_THEMES: Record<string, ThemeJson> = {
         "light": "lightCyan"
       },
       "markdownCode": {
-        "dark": "darkGreen",
-        "light": "lightGreen"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownBlockQuote": {
-        "dark": "darkYellow",
-        "light": "lightYellow"
+        "dark": "darkStep11",
+        "light": "lightStep11"
       },
       "markdownEmph": {
-        "dark": "darkYellow",
-        "light": "lightYellow"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownStrong": {
-        "dark": "darkOrange",
-        "light": "lightOrange"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownHorizontalRule": {
         "dark": "darkStep11",
         "light": "lightStep11"
       },
       "markdownListItem": {
-        "dark": "darkStep9",
-        "light": "lightStep9"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownListEnumeration": {
-        "dark": "darkCyan",
-        "light": "lightCyan"
+        "dark": "darkStep12",
+        "light": "lightStep12"
       },
       "markdownImage": {
         "dark": "darkStep9",

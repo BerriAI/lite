@@ -102,7 +102,6 @@ export class TerminalController {
       if (this.state.draft === draft) this.setDraft(empty());
       try { this.storage?.remember?.(draft.text); } catch { this.notice('Message accepted; input history could not be saved.'); }
     });
-    if (accepted && queued) this.notice('Queued after the current response.');
     return accepted;
   }
   cancel() { return this.action('Stopping', () => this.client.api(this.path('/cancel'), {})); }

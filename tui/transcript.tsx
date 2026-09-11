@@ -112,13 +112,13 @@ function UserRow({ message, first }: { message: Message; first: boolean }) {
 }
 
 function ReasoningRow({ row }: { row: { running: boolean; title: string | null; body: string }; subtle: SyntaxStyle }) {
-  const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
+  const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState<boolean | null>(null);
   const text = terminalText([row.title, row.body].filter(Boolean).join('\n'), true);
-  const preview = collapseToolOutput(text, 3, 240);
+  const open = expanded ?? settings.showThinking;
   if (row.running) return <box paddingLeft={3} flexShrink={0}><text fg={toHex(theme.textMuted)}><em>Thinking…</em></text></box>;
-  return <box paddingLeft={3} flexShrink={0} flexDirection="column">
-    <text fg={toHex(theme.textMuted)} wrapMode="word"><em>{expanded || settings.showThinking ? text : preview.output}</em></text>
-    {preview.overflow && <Button onPress={() => setExpanded(value => !value)}>{expanded ? 'Less reasoning' : 'Full reasoning'}</Button>}
+  return <box paddingLeft={2} flexShrink={0} flexDirection="column">
+    <Button tone="muted" onPress={() => setExpanded(!open)}>{`${open ? '▾' : '▸'} Thought`}</Button>
+    {open && <text paddingLeft={1} fg={toHex(theme.textMuted)} wrapMode="word"><em>{text}</em></text>}
   </box>;
 }
 
@@ -307,12 +307,13 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, em
   const open = expanded || showDetails, row = toolRow(call);
   const output = terminalText(call.output ?? (call.status === 'pending' ? 'Waiting to start…' : call.status === 'running' ? 'Running…' : 'No output.'), true);
   const preview = collapseToolOutput(output, 10, outputBudget(10, width - 8));
-  const result = <box flexDirection="column" flexShrink={0}><text fg={toHex(row.failed || row.denied ? theme.error : theme.textMuted)} wrapMode="word"><em>{fullOutput ? output : preview.output}</em></text>{preview.overflow && <Button onPress={() => setFullOutput(value => !value)}>{fullOutput ? 'Less output' : 'Full output'}</Button>}</box>;
+  const result = <box flexDirection="column" flexShrink={0}><text fg={toHex(row.failed || row.denied ? theme.error : theme.textMuted)} wrapMode="word"><em>{fullOutput ? output : preview.output}</em></text>{preview.overflow && <Button tone="muted" onPress={() => setFullOutput(value => !value)}>{fullOutput ? 'Less output' : 'Full output'}</Button>}</box>;
   if (call.name === 'todo_write') {
     const todos = parseTodos(call.args.todos);
-    return <box paddingLeft={3} flexDirection="column" flexShrink={0}>
-      <text fg={toHex(theme.textMuted)}>{row.failed ? 'Task update failed' : row.denied ? 'Task update declined' : row.completed ? 'Tasks updated' : 'Update tasks'}</text>
-      {todos.map(todo => <text key={todo.id ?? todo.content} fg={toHex(todo.status === 'in_progress' ? theme.primary : theme.textMuted)} wrapMode="word">{`${TODO_MARKERS[todo.status] ?? '○'} ${terminalText(todo.content)}`}</text>)}
+    const title = row.failed ? 'Task update failed' : row.denied ? 'Task update declined' : row.completed ? 'Tasks updated' : 'Update tasks';
+    return <box paddingLeft={2} flexDirection="column" flexShrink={0}>
+      <Button tone={row.failed ? 'error' : 'muted'} onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${title} · ${todos.filter(todo => todo.status === 'completed').length}/${todos.length} done`}</Button>
+      {open && todos.map(todo => <text paddingLeft={1} key={todo.id ?? todo.content} fg={toHex(todo.status === 'in_progress' ? theme.text : theme.textMuted)} wrapMode="word">{`${TODO_MARKERS[todo.status] ?? '○'} ${terminalText(todo.content)}`}</text>)}
       {row.error && <text fg={toHex(theme.error)} wrapMode="word">{terminalText(row.error, true)}</text>}
     </box>;
   }
@@ -333,24 +334,23 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, em
 function DriverActivity({ entries, detail, live, heading, syntax, width, embedded }: { entries: ActivityEntry[]; detail: SessionDetail; live: boolean; heading: boolean; syntax: ReturnType<typeof useSyntax>; width: number; embedded: boolean }) {
   const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
   const calls = entries.flatMap(entry => entry.call ? [entry.call] : []);
-  const issues = calls.filter(call => call.status === 'error' || call.status === 'denied').length;
   const open = live || expanded || settings.toolDetails || settings.showThinking;
-  return <box marginTop={1} flexDirection="column" flexShrink={0}>
+  return <box flexDirection="column" flexShrink={0}>
     {heading && <text paddingLeft={3} fg={toHex(theme.textMuted)}>Driver</text>}
-    {!live && <Button onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process'}${issues ? ` · ${issues} issues` : ''}`}</Button>}
-    {open && entries.map(({ message, call }) => call
+    {!live && calls.length > 0 && <Button tone="muted" onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${calls.length} ${calls.length === 1 ? 'step' : 'steps'}`}</Button>}
+    {(open || !calls.length) && entries.map(({ message, call }) => call
       ? <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} embedded={embedded} />
       : <ReasoningRow key={message.id} subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning!) }} />)}
   </box>;
 }
 
-function WorkLog({ steps, detail, actors, live, syntax, width, controller, embedded }: { controller?: TerminalController; steps: Message[]; detail: SessionDetail; actors: ReturnType<typeof activityActors>; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; embedded: boolean }) {
+function WorkLog({ steps, detail, actors, live, syntax, width, controller, embedded, precedingActor, hasText }: { controller?: TerminalController; steps: Message[]; detail: SessionDetail; actors: ReturnType<typeof activityActors>; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; embedded: boolean; precedingActor?: 'driver' | 'worker'; hasText: boolean }) {
   const settings = useTranscriptSettings();
   const sections = activitySections(steps, actors);
-  const firstHasHeading = Boolean(steps[0]?.content.trim() || steps[0]?.reasoning);
-  return <>{sections.map((section, index) => section.kind === 'worker' && controller
+  if (!sections.length) return null;
+  return <box flexDirection="column" flexShrink={0} gap={1} marginTop={hasText ? 1 : 0}>{sections.map((section, index) => section.kind === 'worker' && controller
     ? <WorkerCard key={section.id} task={section.task} call={section.call} label={section.label} controller={controller} width={width - 6} defaultOpen={live || settings.toolDetails || settings.showThinking} needsApproval={detail.permissions.some(item => item.toolCallId === section.call.id)} renderTranscript={(child, childWidth) => <Transcript detail={child} width={childWidth} active={false} embedded />} />
-    : <DriverActivity key={section.id} entries={section.kind === 'driver' ? section.entries : [{ message: section.message, call: section.call }]} detail={detail} live={live && index === sections.length - 1} heading={!embedded && Boolean(detail.session.architecture) && (index > 0 || !firstHasHeading)} syntax={syntax} width={width} embedded={embedded} />)}</>;
+    : <DriverActivity key={section.id} entries={section.kind === 'driver' ? section.entries : [{ message: section.message, call: section.call }]} detail={detail} live={live && index === sections.length - 1} heading={!embedded && Boolean(detail.session.architecture) && (index ? sections[index - 1].kind : precedingActor) !== 'driver'} syntax={syntax} width={width} embedded={embedded} />)}</box>;
 }
 
 export const Transcript = memo(function Transcript({ detail, width, active = true, embedded = false, onInspect, onUsage, controller }: { detail: SessionDetail; width: number; controller?: TerminalController; active?: boolean; embedded?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
@@ -371,21 +371,31 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
     if (key.ctrl && key.name === 'home') { key.preventDefault(); key.stopPropagation(); follow(false); setLimit(count => count + 120); scroll.current?.scrollTo(0); }
     if ((key.ctrl && key.name === 'end') || (key.ctrl && key.name === 'g')) { key.preventDefault(); key.stopPropagation(); latest(); }
   });
+  let previousActor: 'driver' | 'worker' | undefined;
   const contents = <>
     {groups.length > limit && <Button onPress={() => setLimit(count => count + 120)}>Load earlier messages</Button>}
     {!groups.length && <box flexGrow={1} marginTop={2} paddingLeft={2} flexDirection="column"><Brand /><text marginTop={1} fg={toHex(theme.text)}><strong>A fresh start.</strong></text><text fg={toHex(theme.textMuted)}>Give Litespeed a task in this workspace.</text><text fg={toHex(theme.textMuted)}>{terminalText(detail.session.workspace)}</text></box>}
     {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
-      if (message.role === 'user') return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />;
-      if (message.role === 'system') return <box key={message.id} marginTop={1} paddingLeft={2} flexShrink={0}><text fg={toHex(theme.textMuted)}>{terminalText(message.content, true)}</text></box>;
+      if (message.role === 'user') { previousActor = undefined; return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />; }
+      if (message.role === 'system') {
+        previousActor = undefined;
+        const steering = message.content.startsWith('[Steering]');
+        const content = message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '');
+        return <box key={message.id} marginTop={1} paddingLeft={3} flexDirection="column" flexShrink={0}>{steering && <text fg={toHex(theme.textMuted)}>You · update</text>}<text fg={toHex(steering ? theme.text : theme.textMuted)} wrapMode="word">{terminalText(content, true)}</text></box>;
+      }
       const usageMessage = steps.findLast(step => step.turnUsage) ?? steps.at(-1) ?? message;
       const content = withoutVerificationNotice(message.content, message.receipts);
-      return <box key={message.id} flexDirection="column" flexShrink={0}>
-        {(message.content.trim() || message.reasoning) && detail.session.architecture && controller && <text paddingLeft={3} marginTop={1} fg={toHex(theme.textMuted)}>Driver</text>}
+      const hasText = Boolean(content.trim() || message.reasoning);
+      const showDriver = hasText && previousActor !== 'driver';
+      const precedingActor = hasText ? 'driver' : previousActor;
+      previousActor = activitySections(steps, actors).at(-1)?.kind ?? precedingActor;
+      return <box key={message.id} marginTop={index === 0 && embedded ? 0 : 1} flexDirection="column" flexShrink={0}>
+        {showDriver && detail.session.architecture && controller && <text paddingLeft={3} fg={toHex(theme.textMuted)}>Driver</text>}
         {message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning) }} />}
-        {content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(content, true)} syntax={syntax.normal} />}
-        <WorkLog steps={steps} detail={detail} actors={actors} live={live} syntax={syntax} width={width} controller={controller} embedded={embedded} />
+        {content.trim() && <TextRow compact text={terminalText(content, true)} syntax={syntax.normal} />}
+        <WorkLog steps={steps} detail={detail} actors={actors} live={live} syntax={syntax} width={width} controller={controller} embedded={embedded} precedingActor={precedingActor} hasText={hasText} />
         {message.error && <ErrorRow error={terminalText(message.error, true)} />}
-        {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
+        {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button tone="muted" onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
       </box>;
     })}
   </>;

@@ -6,9 +6,10 @@ import { terminalText } from './protocol.js';
 import { useTheme } from './context.js';
 import { toHex } from './theme.js';
 
-export function Button({ children, onPress, selected = false, disabled = false }: { children: ReactNode; onPress: () => void; selected?: boolean; disabled?: boolean }) {
+export function Button({ children, onPress, selected = false, disabled = false, tone = 'accent' }: { children: ReactNode; onPress: () => void; selected?: boolean; disabled?: boolean; tone?: 'accent' | 'muted' | 'normal' | 'error' }) {
   const theme = useTheme();
-  return <box paddingLeft={1} paddingRight={1} height={1} backgroundColor={selected ? toHex(theme.primary) : undefined} onMouseDown={() => { if (!disabled) onPress(); }}><text fg={toHex(disabled ? theme.textMuted : selected ? theme.background : theme.primary)}>{children}</text></box>;
+  const color = tone === 'muted' ? theme.textMuted : tone === 'normal' ? theme.text : tone === 'error' ? theme.error : theme.primary;
+  return <box paddingLeft={1} paddingRight={1} height={1} backgroundColor={selected ? toHex(theme.primary) : undefined} onMouseDown={() => { if (!disabled) onPress(); }}><text fg={toHex(disabled ? theme.textMuted : selected ? theme.background : color)}>{children}</text></box>;
 }
 
 export function Dialog({ title, children, footer = 'Esc back', onClose, width: preferred = 76 }: { title: string; children: ReactNode; footer?: string; onClose: () => void; width?: number }) {

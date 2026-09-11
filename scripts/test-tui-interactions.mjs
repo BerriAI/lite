@@ -154,9 +154,9 @@ try{
       await waitFor(()=>screen().includes('Driver report: both assignments are complete.'),'driver receives completed workers');
       await waitFor(()=>screen().split('\n').some(line=>line.trim()===label+' 2'),'completed worker identity remains visible');
       card=screen().split('\n').findIndex(line=>line.trim()===label+' 2');
-      clickLine('▸ 1 step',card+1);
+      clickLine('▸ Review beta',card+1);
       await waitFor(()=>screen().includes('beta is inspecting its assignment.'),'completed worker reopens directly');
-      await waitFor(()=>screen().includes('beta final report: inspection complete.'),'completed child transcript keeps its final update');clickLine('▾ 1 step',screen().split('\n').findIndex(line=>line.trim()===label+' 2')+1);
+      await waitFor(()=>screen().includes('beta final report: inspection complete.'),'completed child transcript keeps its final update');clickLine('▾ Review beta',screen().split('\n').findIndex(line=>line.trim()===label+' 2')+1);
       await waitFor(()=>!screen().includes('beta is inspecting its assignment.'),'worker card collapses without stopping work');
     }
     await fetch(base+'/fixture/delegations/release',{method:'POST'});

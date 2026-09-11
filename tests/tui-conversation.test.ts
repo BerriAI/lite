@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
-import type { Message, SessionDetail } from '../shared/types.js';
-import { activityActors, activitySections, conversationGroups, usageLabel, usageDetails } from '../tui/conversation.js';
+import type { DelegationSummary, Message, SessionDetail } from '../shared/types.js';
+import { activityActors, activitySections, conversationGroups, taskInvocations, usageLabel, usageDetails } from '../tui/conversation.js';
 const message = (id: string, extra: Partial<Message>): Message => ({ id, sessionId: 'root', role: 'assistant', content: id, createdAt: 1, ...extra });
 function detail(messages: Message[], status = 'idle'): SessionDetail { return { session: { id: 'root', status, model: 'new-model', mode: 'plan' }, messages, permissions: [], todos: [] } as unknown as SessionDetail; }
+describe('current task sidebar', () => {
+  const task = (id: string, child: string, turn: string, createdAt: number, status: DelegationSummary['status'] = 'completed'): DelegationSummary => ({ id, childSessionId: child, parentSessionId: 'root', parentTurnId: turn, parentMessageId: id, toolCallId: id, description: id, status, createdAt });
+  it('shows only the latest checklist for a reused Sidekick, without deleting its handoff history', () => {
+    const session = detail([message('turn', { role: 'user' })]);
+    session.delegations = [task('latest', 'sidekick', 'turn', 3), task('first', 'sidekick', 'turn', 1), task('second', 'sidekick', 'turn', 2)];
+    expect(taskInvocations(session).map(task => task.id)).toEqual(['latest']);
+    expect(session.delegations).toHaveLength(3);
+  });
+  it('keeps separate workers and prioritizes running work, including an active earlier turn', () => {
+    const session = detail([message('turn', { role: 'user' })]);
+    session.delegations = [task('old', 'old-worker', 'earlier', 1), task('alpha', 'worker-a', 'turn', 2), task('beta', 'worker-b', 'turn', 3, 'running'), task('background', 'worker-c', 'earlier', 0, 'running')];
+    expect(taskInvocations(session).map(task => task.id)).toEqual(['background', 'beta', 'alpha']);
+  });
+});
 describe('terminal conversation parity', () => {
   it('groups multi-request turns once across system notices and exposes one family usage footer', () => {
     const messages = [message('u', { role: 'user', turnId: 't' }), message('a', { turnId: 't', usage: { inputTokens: 10, outputTokens: 2 }, toolCalls: [] }), message('notice', { role: 'system', turnId: 't' }), message('b', { turnId: 't', turnUsage: { inputTokens: 110, outputTokens: 12, requests: 2, reportedRequests: 2, breakdown: [] } })];
