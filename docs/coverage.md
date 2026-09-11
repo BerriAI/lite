@@ -2,7 +2,7 @@
 
 This document distinguishes implemented behavior from planned work. A feature's existence is not evidence of complete ecosystem parity.
 
-Latest local verification: 1,865 unit/integration tests passed (one opt-in runtime test skipped), 15 targeted browser workflows passed after the final presentation changes, and 12 context browser workflows passed during the runtime changes. Ten real gateway compaction comparisons passed across all four architectures, including Sidekick editing and command execution. Production TUI startup and interactive terminal checks also passed. The current source runtime minimum is Node 26.4; older Node 22 results below are historical evidence.
+Latest local verification: 1,866 unit/integration tests passed (one opt-in runtime test skipped), 15 targeted browser workflows passed after the final presentation changes, and 12 context browser workflows passed during the runtime changes. Ten real gateway compaction comparisons passed across all four architectures, including Sidekick editing and command execution. Production TUI startup and interactive terminal checks also passed. The current source runtime minimum is Node 26.4; older Node 22 results below are historical evidence.
 
 [Litespeed 0.1.2](https://github.com/BerriAI/litespeed/releases/tag/v0.1.2) is published for Apple silicon and Intel Macs. Both [release jobs](https://github.com/BerriAI/litespeed/actions/runs/34559346612) passed fresh dependency installation, all 1,740 tests, production startup, and packaged install/update checks. The public installer was independently verified on macOS arm64 with an isolated home and no Node/Bun on PATH, including server/web startup and unconfigured gateway setup.
 

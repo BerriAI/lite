@@ -1,4 +1,4 @@
-# Litespeed 0.1.7
+# Litespeed 0.1.8
 
 Long tasks keep going, and a failing check no longer makes a completed Sidekick look like a failed model invocation.
 
