@@ -1,10 +1,10 @@
-# Launch audit · September 10, 2026
+# Launch audit · September 10–11, 2026
 
 This audit covers the local installation, shared backend, terminal and browser clients, provider adapters, tool permissions, worker execution, persistence, recovery, and release setup. The target is people installing their own local instance. It does not establish readiness to host one unauthenticated instance for 100 people.
 
 ## Launch assessment
 
-The everyday macOS workflow is exercised end to end. The runtime and input problems found during this audit are fixed below. A broad public launch still needs repeatable clean-machine CI and a resolution or clear product limitation for large conversation exports that cannot be imported. Native Linux/Windows and live ChatGPT subscription authentication are not verified by this audit.
+The everyday macOS workflow is exercised end to end. The runtime and input problems found during this audit are fixed below. A macOS release workflow now provides fresh dependency installation, typechecking, tests, builds, production TUI startup, and packaged install/update checks on Apple silicon and Intel runners. Large conversation exports still have the documented restore limitation below. Native Linux/Windows and live ChatGPT subscription authentication are not verified by this audit.
 
 ## Fixed during this audit
 
@@ -44,20 +44,27 @@ The exact Node 20.20.2 runtime reproduced the original crash. The updated `npm c
 
 The maintainer selected Apache-2.0. The repository now includes the full license, matching package metadata, and README guidance. The bundled terminal theme catalog includes OpenCode theme definitions; the audit verified an exact upstream match and restored the MIT attribution in `THIRD_PARTY_NOTICES.md`. Geist and Geist Mono retain their SIL Open Font License notices, which are also copied into the built web client.
 
+### Conversation caching and distribution
+
+The provider adapter now marks growing conversation history as cacheable through both LiteLLM Chat Completions and native Anthropic Messages. Sixteen live synthetic requests completed correctly; subsequent fixed requests reused about 99% of input, while the system-only baseline reported no hits. The [reproducible results](../research/cache/README.md) supersede the earlier claim that gateway caching was disabled.
+
+[Litespeed 0.1.2](https://github.com/BerriAI/litespeed/releases/tag/v0.1.2) is published for Apple silicon and Intel Macs. Its packages include their own Node and Bun runtimes. The installer verifies downloads, and updates preserve application data outside version directories. Both interfaces report available updates. See [installation and update behavior](installing.md).
+
 ## Remaining launch issues and decisions
 
 | Priority | Issue | Evidence and consequence | Next action |
 | --- | --- | --- | --- |
 | High | Large exports are not reliably restorable | A synthetic 14,004,913-byte conversation exported with HTTP 200 and failed to import with HTTP 413. `server/app.ts` limits JSON bodies to 12 MiB; web import accepts files up to 15 MiB. Imports also cap each message at 500,000 characters and the conversation at 10,000 messages. Multiple image attachments across turns can reach the body limit. The original session is preserved, but an export is not a dependable standalone backup. | Align export/import contracts and add large attachment round-trip coverage. Prefer a bounded archive/streaming restore design over removing request limits. The current limits and full-data backup procedure are now documented in `local-data.md`. |
-| High for a broad launch | Verification is local, not a repeatable release gate | The repo has no `.github` workflow directory. Extensive tests exist, but future pushes have no repository-defined clean-machine install/build/test gate. The current machine has toolchains and cached native dependencies that fresh users may not have. | Add CI for the supported Node floor and current LTS, clean `npm ci`, build, units, browser tests, and terminal startup on the advertised platforms. Validate a fresh clone in CI, not only a linked checkout. |
-| Scope decision | Platform and subscription support exceed current live evidence | PTY/startup checks here ran on macOS arm64. The embedded shell explicitly rejects Windows. ChatGPT device/browser authentication has mock coverage but no fresh live subscription-account validation in this audit. | Make launch support explicit: macOS verified; Linux requires a clean native run; Windows needs a supported route such as a verified WSL installation. Keep subscription sign-in labeled experimental until a real sign-in, refresh, disconnect, and tool turn are checked. |
+| Outside the macOS launch scope | Other platforms and subscription sign-in need live verification | Interactive browser/PTY checks ran on macOS arm64; production startup and packaged install/update checks also passed on Intel macOS in CI. The embedded shell explicitly rejects Windows. ChatGPT device/browser authentication has mock coverage but no fresh live subscription-account validation in this audit. | Make launch support explicit: macOS verified; Linux requires a clean native run; Windows needs a supported route such as a verified WSL installation. Keep subscription sign-in labeled experimental until a real sign-in, refresh, disconnect, and tool turn are checked. |
 
 These are substantive launch concerns. Missing IDE integration, cosmetic spacing, model naming preferences, and optional advanced features are not blockers in this assessment.
 
 ## Verification and limits
 
-- `npm run check`: typecheck, full unit/integration suite, and production build passed; 1,661 tests passed, one opt-in runtime test skipped.
-- Full Chrome suite: all 138 tests passed. Covers permissions, rejected actions, cancellation, queue/steering, recovery, profiles, MCP lifecycle, browser storage, responsive setup, multiple workers, and session isolation.
+- [Release workflow](https://github.com/BerriAI/litespeed/actions/runs/34559346612): both macOS architectures passed fresh `npm ci`, all 1,740 tests, typecheck/build, production TUI startup, and bundled install/update tests before publication.
+- The published installer was downloaded without GitHub authentication and run in an isolated macOS arm64 home with no Node/Bun on PATH. The installed CLI reported 0.1.2; the bundled server and web app started, the caller workspace was retained, gateway settings were blank, and memory defaulted on. Temporary processes and installation data were removed afterward.
+- `npm run check`: typecheck, full unit/integration suite, and production build passed; 1,740 tests passed, one opt-in runtime test skipped.
+- Full Chrome suite: all 141 tests passed. Covers permissions, rejected actions, cancellation, queue/steering, recovery, profiles, MCP lifecycle, browser storage, responsive setup, multiple workers, and session isolation.
 - Real PTY interaction suite passed: built-in autocomplete, gateway failure/retry with a masked key, recommended Sidekick setup, saved models, Allow all, live tool output, two workers, two experts, Sidekick handoff, narrow/wide views, and typing with 240 historical messages (about 62 ms in the measured sample).
 - Production terminal startup suite passed: bare `litespeed` on PATH, automatic backend startup, caller workspace, suspend/foreground, clean exit, and the backend remaining available.
 - Disposable built-backend probes verified exclusive ownership and reproduced the export/import limitation. They used synthetic conversations and a local mock streaming provider, not user credentials or live user state.
