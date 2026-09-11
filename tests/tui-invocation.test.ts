@@ -44,4 +44,23 @@ describe('inline invocation synchronization',()=>{
       pending[0](snapshot());await first;expect(sync.getState().detail?.lastEventId).toBe(10);
     }finally{sync.stop();}
   });
+  it('retains child reasoning and completed tool arguments and output',async()=>{
+    const current=snapshot();current.messages=[{id:'assistant',sessionId:'sidekick',role:'assistant',content:'',createdAt:1,turnId:'assignment-user'}];
+    const sync=new InvocationSync({api:async()=>current} as unknown as LitespeedClient,task);
+    try{
+      await sync.refresh();
+      sync.apply({id:2,sessionId:'sidekick',type:'reasoning',data:{messageId:'assistant',delta:'Checking the fixture.'}});
+      sync.apply({id:3,sessionId:'sidekick',type:'tool',data:{messageId:'assistant',tool:{id:'read',name:'read_file',args:{path:'README.md'},status:'running'}}});
+      sync.apply({id:4,sessionId:'sidekick',type:'tool',data:{messageId:'assistant',tool:{id:'read',name:'read_file',args:{path:'README.md'},status:'completed',output:'A small project for browser tests.'}}});
+      expect(sync.getState().detail?.messages[0]).toMatchObject({reasoning:'Checking the fixture.',toolCalls:[{id:'read',args:{path:'README.md'},status:'completed',output:'A small project for browser tests.'}]});
+    }finally{sync.stop();}
+  });
+  it('a fresh synchronizer can reopen the same sealed handoff after an inline view unmounts',async()=>{
+    const terminal={...snapshot(),delegation:{...task,status:'completed'},session:{...snapshot().session,status:'idle'},messages:[{id:'final',sessionId:'sidekick',role:'assistant',content:'Sealed report',createdAt:1}],lastEventId:8} as DelegationDetail;
+    const client={api:async()=>terminal} as unknown as LitespeedClient;
+    const first=new InvocationSync(client,task);await first.refresh();first.stop();
+    const reopened=new InvocationSync(client,task);
+    try{await reopened.refresh();expect(reopened.getState().detail?.messages[0].content).toBe('Sealed report');}
+    finally{reopened.stop();}
+  });
 });

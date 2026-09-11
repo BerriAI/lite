@@ -17,6 +17,8 @@ const server=spawn(process.execPath,['--import','tsx','scripts/e2e-server.ts'],{
 let log='',terminal,emulator,browser;
 server.stdout.on('data',chunk=>log+=chunk);server.stderr.on('data',chunk=>log+=chunk);
 const screen=()=>emulator?Array.from({length:emulator.rows},(_,row)=>emulator.buffer.active.getLine(emulator.buffer.active.viewportY+row)?.translateToString(true,0,emulator.cols)??'').join('\n'):'';
+function clickLine(marker,start=0){const lines=screen().split('\n'),row=lines.findIndex((line,index)=>index>=start&&line.includes(marker));assert(row>=0,`Missing clickable row: ${marker}\n${screen()}`);const column=lines[row].indexOf(marker)+2;terminal.write(`\x1b[<0;${column};${row+1}M\x1b[<0;${column};${row+1}m`);return row;}
+function scrollLine(marker,direction,start=0){const lines=screen().split('\n'),row=lines.findIndex((line,index)=>index>=start&&line.includes(marker));assert(row>=0,`Missing scroll row: ${marker}\n${screen()}`);const column=lines[row].indexOf(marker)+2;terminal.write(`\x1b[<${direction==='down'?65:64};${column};${row+1}M`);}
 async function waitFor(check,label,timeout=15000){const deadline=Date.now()+timeout;while(Date.now()<deadline){if(await check())return;await new Promise(done=>setTimeout(done,60));}throw new Error(`${label}\n${screen()}\n${log.slice(-1000)}`);}
 const escape=text=>text.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 async function save(name){
@@ -90,9 +92,10 @@ try{
   await waitFor(()=>screen().split('\n').filter(line=>line.includes('Read README.md')||line.includes('Read src/hello.ts')).length>=5,'consecutive tools visible without Inspect');
   assert(!screen().includes('Inspect'));
   await new Promise(done=>setTimeout(done,200));
-  const row=screen().split('\n').findIndex(line=>line.includes('Read README.md'))+1;
-  terminal.write(`\x1b[<0;10;${row}M\x1b[<0;10;${row}m`);
+  clickLine('Read README.md');
   await waitFor(()=>screen().includes('A small project for browser tests.'),'tool result opens inline on click');await save('04-inline-tools');
+  clickLine('Read README.md');
+  await waitFor(()=>!screen().includes('A small project for browser tests.'),'tool result collapses on second click');
   await fetch(base+'/fixture/delegations/release',{method:'POST'});
   await waitFor(async()=>(await api(`/sessions/${live.id}`)).session.status==='idle','tool run finishes');
   terminal.write('\x1bo');await waitFor(()=>screen().includes('A small project for browser tests.'),'Alt+O opens completed activity');
@@ -103,12 +106,32 @@ try{
     if(label==='Sidekick'){
       await waitFor(()=>screen().includes('Permission requested · sidekick'),'sidekick permission');terminal.write('1');
       await waitFor(()=>screen().includes('Permission requested · write_file'),'sidekick action');
-      await waitFor(()=>screen().includes('Driver → Sidekick'),'sidekick handoff visible');await save('07-sidekick');terminal.write('4');
+      await waitFor(()=>screen().includes('Driver → Sidekick'),'sidekick handoff visible');
+      await waitFor(()=>screen().includes('SIDEKICK_CHILD HOLD_CHILD'),'sidekick card opens its bound invocation by default');await save('07-sidekick');clickLine('Driver → Sidekick');
+      await waitFor(()=>!screen().includes('SIDEKICK_CHILD HOLD_CHILD'),'sidekick card collapses without resolving its permission');terminal.write('4');
     }else{
-      await waitFor(()=>screen().includes('Driver → '+label+' 1')&&screen().includes('Driver → '+label+' 2')&&screen().includes('beta progress:'),'both live transcripts');
-      assert(screen().includes('alpha progress:'));assert(!screen().includes('prompt='));await save('05-'+label.toLowerCase()+'s');
-      terminal.resize(80,24);emulator.resize(80,24);await new Promise(done=>setTimeout(done,300));await save('06-'+label.toLowerCase()+'s-narrow');
+      await waitFor(()=>screen().includes('Driver → '+label+' 1')&&screen().includes('Driver → '+label+' 2'),'both worker cards');
+      await waitFor(()=>screen().includes('WORKERS_CHILD beta'),'worker card opens its bound child transcript by default');
+      assert(!screen().includes('A small project for browser tests.'));
+      let card=screen().split('\n').findIndex(line=>line.includes('Driver → '+label+' 2'));
+      await waitFor(()=>screen().split('\n').some((line,index)=>index>card&&line.includes('1 step')),'child work log is visible');
+      await new Promise(done=>setTimeout(done,150));card=screen().split('\n').findIndex(line=>line.includes('Driver → '+label+' 2'));clickLine('1 step',card+1);
+      await waitFor(()=>screen().includes('Read README.md'),'child work log opens');clickLine('Read README.md',card+1);
+      await waitFor(()=>screen().includes('A small project for browser tests.'),'child tool result opens inline');await save('05-'+label.toLowerCase()+'s');
+      const headerRow=screen().split('\n').findIndex(line=>line.includes('Driver → '+label+' 2'));
+      scrollLine('beta progress:','up',headerRow+1);
+      await waitFor(()=>screen().includes('WORKERS_CHILD beta'),'inner wheel reveals the earlier assignment');
+      assert.equal(screen().split('\n').findIndex(line=>line.includes('Driver → '+label+' 2')),headerRow,'inner wheel leaves the parent position unchanged');
+      scrollLine('beta is inspecting','down',headerRow+1);await waitFor(()=>!screen().includes('WORKERS_CHILD beta')&&screen().includes('A small project for browser tests.'),'child transcript returns to its tool output');
+      card=screen().split('\n').findIndex(line=>line.includes('Driver → '+label+' 2'));clickLine('Read README.md',card+1);
+      await waitFor(()=>!screen().includes('{"path":"README.md"}'),'child tool result collapses');
+      terminal.resize(80,24);emulator.resize(80,24);await new Promise(done=>setTimeout(done,300));await save('06-'+label.toLowerCase()+'s-narrow-expanded');
       terminal.resize(100,38);emulator.resize(100,38);
+      await fetch(base+'/fixture/delegations/release',{method:'POST'});
+      await waitFor(()=>screen().includes('Driver report: both assignments are complete.'),'driver receives completed workers');clickLine('2 '+label.toLowerCase()+'s');
+      await waitFor(()=>screen().includes('Driver → '+label+' 2'),'completed parent activity reopens');
+      await waitFor(()=>screen().includes('beta final report: inspection complete.'),'completed child transcript keeps its final update');clickLine('Driver → '+label+' 2');
+      await waitFor(()=>!screen().includes('beta is inspecting its assignment.'),'worker card collapses without stopping work');
     }
     await fetch(base+'/fixture/delegations/release',{method:'POST'});
     await waitFor(async()=>(await api(`/sessions/${next.id}`)).session.status==='idle','workers finish');
