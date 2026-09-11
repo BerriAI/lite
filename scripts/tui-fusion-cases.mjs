@@ -48,7 +48,11 @@ export async function fusionCases({ api, terminal, screen, waitFor, save, settin
   };
   const approve = async () => {
     let permission;
-    await waitFor(async () => { permission = (await detail()).permissions[0]; return permission && screen().includes(`Permission requested · ${permission.tool}`); }, 'worker approval reaches root');
+    await waitFor(async () => {
+      permission = (await detail()).permissions[0];
+      const action = permission?.tool === 'sidekick' ? 'wants to ask Sidekick' : permission?.tool === 'delegate' ? 'wants to assign a worker' : permission?.tool === 'write_file' ? 'wants to write a file' : 'wants to run a command';
+      return permission && screen().includes(action) && screen().includes('1 Allow once');
+    }, 'worker approval reaches root');
     terminal.write('1'); await waitFor(async () => !(await detail()).permissions.some(item => item.id === permission.id), 'permission resolved');
   };
   await api(`/sessions/${session.id}/tool-grants`, undefined, 'DELETE');
@@ -97,7 +101,7 @@ export async function fusionCases({ api, terminal, screen, waitFor, save, settin
   assert.notEqual(fresh[0], fresh[1], 'Team and Expert use fresh contexts');
   terminal.write('FUSION_BROWSER terminal cancel worker\r');
   await approve();
-  await waitFor(async () => (await detail()).permissions.some(item => item.tool === 'write_file') && screen().includes('Permission requested · write_file'), 'worker awaiting decision before stop');
+  await waitFor(async () => (await detail()).permissions.some(item => item.tool === 'write_file') && screen().includes('wants to write a file'), 'worker awaiting decision before stop');
   terminal.write('\x1b'); await new Promise(done => setTimeout(done, 180)); terminal.write('\x1b');
   await idle();
   assert.equal((await detail()).delegations.at(-1).status, 'cancelled');

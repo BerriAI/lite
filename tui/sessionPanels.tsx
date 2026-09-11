@@ -1,7 +1,9 @@
 /** @jsxImportSource @opentui/react */
+import { useTerminalDimensions } from '@opentui/react';
+import { TaskProgress } from './tasks.js';
 import { useState, useSyncExternalStore } from 'react';
 import { isRunning, type TerminalController } from './controller.js';
-import { Menu, TextPrompt, TextViewer } from './ui.js';
+import { Dialog, Menu, TextPrompt, TextViewer } from './ui.js';
 
 export function GoalPanel({ controller, onClose }: { controller: TerminalController; onClose: () => void }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState), goal = state.sync.detail?.session.goal;
@@ -19,8 +21,9 @@ export function GoalPanel({ controller, onClose }: { controller: TerminalControl
 }
 
 export function PlanPanel({ controller, onClose }: { controller: TerminalController; onClose: () => void }) {
+  const { height } = useTerminalDimensions();
   const { sync } = useSyncExternalStore(controller.subscribe, controller.getState);
-  return <TextViewer title="Task list" text={sync.detail?.todos.map(todo => `${todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '●' : '○'} ${todo.content}`).join('\n\n') || 'The agent has not created a task list yet.'} onClose={onClose} />;
+  return <Dialog title="Task list" onClose={onClose}><scrollbox height={Math.max(4, height - 10)} focused>{sync.detail && <TaskProgress detail={sync.detail} controller={controller} />}</scrollbox></Dialog>;
 }
 
 export function HistoryPanel({ controller, onClose }: { controller: TerminalController; onClose: () => void }) {

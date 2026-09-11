@@ -47,14 +47,14 @@ export function reasoningSummary(content: string): { title: string | null; body:
   return { title: match[1].trim(), body: trimmed.slice(match[0].length) };
 }
 
-/** Primitive args rendered as a compact [key=value, …] suffix; objects and
+/** Primitive args rendered as a readable suffix; objects and
  * arrays are dropped, and listed keys are excluded. */
 export function inlineArgs(args: Record<string, unknown>, exclude: string[] = []): string {
   const parts = Object.entries(args)
     .filter(([key, value]) => !exclude.includes(key)
       && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'))
-    .map(([key, value]) => `${key}=${value}`);
-  return parts.length ? `[${parts.join(', ')}]` : '';
+    .map(([key, value]) => `${key.replaceAll('_', ' ')} ${typeof value === 'boolean' ? value ? 'yes' : 'no' : value}`);
+  return parts.length ? `· ${parts.join(' · ')}` : '';
 }
 
 /** Extract the unified diff from a write_file/edit_file tool result. The
@@ -241,7 +241,7 @@ export function questionAnswer(output: string): string {
 }
 
 export const TODO_MARKERS: Record<Todo['status'], string> = {
-  completed: '[✓]', in_progress: '[•]', pending: '[ ]',
+  completed: '✓', in_progress: '●', pending: '○',
 };
 
 /** Minimal ANSI escape stripper for command output. */

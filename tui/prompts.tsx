@@ -9,9 +9,11 @@ import { createTwoFilesPatch } from 'diff';
 import { Button, Dialog, TextViewer } from './ui.js';
 import { terminalText } from './protocol.js';
 import { workerLabels } from '../shared/worker-presentation.js';
+import { permissionPresentation } from './permissionPresentation.js';
+import { collapseToolOutput, outputBudget } from './transcriptModel.js';
 
 export function PermissionPrompt({ request, controller, disabled, onOverlayChange, active = true }: { request: PermissionRequest; controller: TerminalController; disabled: boolean; active?: boolean; onOverlayChange: (open: boolean) => void }) {
-  const theme = useTheme(), { height } = useTerminalDimensions(), [preview, setPreview] = useState(false), [previewText, setPreviewText] = useState('');
+  const theme = useTheme(), { height, width } = useTerminalDimensions(), [preview, setPreview] = useState(false), [previewText, setPreviewText] = useState('');
   useEffect(() => {
     if (!preview) return;
     let live = true; const args = request.args;
@@ -51,16 +53,16 @@ export function PermissionPrompt({ request, controller, disabled, onOverlayChang
   const summary = terminalText(request.description || request.tool, true);
   const forced = request.ruleMatch?.decision === 'ask';
   const args = terminalText(JSON.stringify(request.args, null, 2), true);
-  return <><box border borderColor={toHex(theme.warning)} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0}>
-    <text fg={toHex(theme.warning)}><strong>Permission requested · {request.tool}</strong></text>
-    <text fg={toHex(theme.textMuted)}>{actor}{forced ? ` · ${request.ruleMatch!.source} rule requires approval each time` : request.scopePath ? ' · this exact path' : ' · this session, including its workers'}</text>
-    <text height={height < 20 ? 1 : 2} fg={toHex(theme.text)}>{summary.slice(0, 300)}</text>
-    <text height={height < 20 ? 1 : 3} fg={toHex(theme.textMuted)}>{args.split('\n').slice(0, 3).join('\n')}</text>
-    <box flexDirection="row" gap={1}><Button disabled={disabled} onPress={() => decide('allow')}>1 Allow once</Button>{!forced && <Button disabled={disabled} onPress={() => decide('always')}>{request.scopePath ? '2 Allow at this path' : '2 Allow this tool'}</Button>}<Button disabled={disabled} onPress={() => decide('deny')}>3 Deny</Button></box>
-    {forced && <Button onPress={() => setPreview(true)}>Ctrl+F Details</Button>}
-    {!forced && <box flexDirection="row"><Button disabled={disabled} onPress={() => { void controller.permissionMode('auto'); }}>4 Allow all tools</Button><text fg={toHex(theme.textMuted)}>For this session</text><Button onPress={() => setPreview(true)}>Ctrl+F Details</Button></box>}
+  const presentation = permissionPresentation(request, actor), lines = height < 28 ? 2 : 4;
+  const body = collapseToolOutput(terminalText(presentation.body, true), lines, outputBudget(lines, width));
+  return <><box border={['left']} borderColor={toHex(theme.warning)} paddingLeft={1} paddingRight={1} flexDirection="column" flexShrink={0}>
+    <box flexDirection="row"><text fg={toHex(theme.warning)} wrapMode="word"><strong>{terminalText(presentation.title)}</strong></text><box flexGrow={1} /><Button onPress={() => setPreview(true)}>Ctrl+F Details</Button></box>
+    {presentation.target && <text fg={toHex(theme.text)} wrapMode="word">{terminalText(presentation.target)}</text>}
+    {presentation.body && <text fg={toHex(theme.text)} wrapMode="word" maxHeight={lines + 1}>{body.output}</text>}
+    <text fg={toHex(theme.textMuted)}>{forced ? `${request.ruleMatch!.source} rule requires approval each time` : request.scopePath ? 'Remembered approval applies to this exact path.' : 'Remembered approval applies to this tool in this session.'}</text>
+    <box flexDirection="row" flexWrap="wrap" gap={1}><Button disabled={disabled} onPress={() => decide('allow')}>1 Allow once</Button>{!forced && <Button disabled={disabled} onPress={() => decide('always')}>{request.scopePath ? '2 Allow at this path' : '2 Allow this tool'}</Button>}<Button disabled={disabled} onPress={() => decide('deny')}>3 Deny</Button>{!forced && <Button disabled={disabled} onPress={() => { void controller.permissionMode('auto'); }}>4 Allow all tools</Button>}</box>
   </box>
-    {preview && <Dialog title={`Review ${request.tool}`} onClose={() => setPreview(false)}><scrollbox height={Math.max(4, height - 10)} focused><text fg={toHex(theme.text)}>{previewText + '\n\n' + summary + '\n\n' + args}</text></scrollbox></Dialog>}
+    {preview && <Dialog title={`Review · ${presentation.title}`} onClose={() => setPreview(false)}><scrollbox height={Math.max(4, height - 10)} focused><text fg={toHex(theme.text)} wrapMode="word">{terminalText([presentation.target, presentation.body, previewText, summary, 'Tool arguments', args].filter(Boolean).join('\n\n'), true)}</text></scrollbox></Dialog>}
   </>;
 }
 

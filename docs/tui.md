@@ -39,7 +39,7 @@ litespeed --url http://localhost:3210
 
 1. On first launch, enter your LiteLLM gateway URL and API key, then choose your setup and models. Sidekick Fusion is recommended: a powerful driver plus an efficient coding workhorse. Single model is also available. Configured launches open chat directly, including in another project.
 2. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will handle the next turn.
-3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Click a worker, expert, research, or Sidekick card to reveal its assignment-scoped read-only transcript; click a nested tool row to inspect its arguments and result. Consecutive tools stay open while working and collapse at the next text response. Click any tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
+3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Worker, expert, research, and Sidekick transcripts open inline in the conversation, with one shared scroll area. Click their heading to collapse them; click a tool row to inspect its result. Consecutive tools stay open while working and collapse at the next text response. Click any tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
 
 Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to complete, and Esc to dismiss. Built-in commands, workspace templates, and registered skill IDs appear together.
 
@@ -77,9 +77,13 @@ Ctrl+P is the main navigation surface: search actions or project commands, use �
 
 Mouse selection, buttons, scrolling, and dialogs are supported. Selecting text copies it when you release the mouse. Local macOS sessions use the system clipboard; remote sessions use OSC 52 where supported. Hold Shift while selecting to use your terminal’s native selection instead. Escape closes the current dialog before it can act on the task. Approvals and questions temporarily own input, keeping your draft intact. Ctrl+D exits only when the composer is empty; with text it retains its editing function.
 
-For an approval, press **1 Allow once**, **2 Always**, or **3 Deny**. Ctrl+F opens the full arguments and a file-edit preview where available. A Fusion handoff and a worker's subsequent edit or command are separate decisions in Ask mode. Questions use numbered choices or **0 Custom reply**.
+Approvals show who is asking, the target file or command, and a readable preview. Choose **1 Allow once**, **2 Allow this tool** (or **Allow at this path**), **3 Deny**, or **4 Allow all tools** for the session. These choices share one row when the terminal has room. Ctrl+F opens the full arguments and a file-edit preview where available. A Fusion handoff and a worker's subsequent edit or command are separate decisions in Ask mode. Questions use numbered choices or **0 Custom reply**.
 
 ## Conversation and review
+
+The current task list stays at the top right in terminals at least 112 columns wide, with separate Driver and worker progress. Narrow terminals keep the current task and completion count below the header; `/todos` shows the full task lists. Completed tasks remain visible.
+
+While a model is reasoning, one “Thinking…” indicator appears. Its finished reasoning appears in muted text before the response. Live tool calls appear directly in order and collapse into a work log at the next text response. Scrolling up pauses automatic following; **Ctrl+G** or **Latest** returns to the live output.
 
 Each response has one expandable work log. Tool arguments, output, reasoning, and intercepted-call provenance remain inspectable. Worker views are read-only and scoped to an individual assignment; revisiting an old Sidekick handoff does not append its later work. Sidekick reuses compatible context; Team and Expert use fresh assignment contexts. Final usage includes the task family and distinguishes unreported usage from zero.
 
@@ -101,7 +105,7 @@ Use `/skills` (or `/skill`) to select, preview, and apply registered project ski
 
 ## Settings and appearance
 
-Settings has consistent sections for Providers, General, Permissions, Project profiles, Integrations, and Usage. Profiles can be created, edited, previewed, and applied, including recommended models and skills. MCP configuration is reviewed before an explicit connect or refresh. Usage counts provider-reported tokens; memory is off until enabled.
+Settings has consistent sections for Providers, General, Permissions, Project profiles, Integrations, and Usage. Profiles can be created, edited, previewed, and applied, including recommended models and skills. MCP configuration is reviewed before an explicit connect or refresh. Usage counts provider-reported tokens; memory is enabled by default unless you turn it off.
 
 Put terminal preferences in `~/.config/litespeed/litespeed-tui.jsonc`, or your project's `.litespeed/litespeed-tui.jsonc`. Configuration follows the selected session's workspace. `LITESPEED_TUI_CONFIG` selects an explicit configuration file; `LITESPEED_DISABLE_PROJECT_CONFIG=1` disables project discovery. The loader supports layered JSONC configuration and custom themes; see `tui/tuiConfig.ts` for precedence.
 

@@ -11,7 +11,7 @@ import { selectedForeground, toHex, type Theme } from './theme.js';
 import { subtleSyntaxRules, syntaxRules } from './syntax.js';
 import {
   collapseToolOutput, filetypeOf, formatDuration,
-  outputBudget, scannerFrame, TODO_MARKERS, type ToolRowModel,
+  outputBudget, scannerFrame, TODO_MARKERS, parseTodos, type ToolRowModel,
   SCANNER_INTERVAL_MS, SPINNER_FRAMES, SPINNER_INTERVAL_MS,
 } from './transcriptModel.js';
 import { conversationGroups, usageLabel } from './conversation.js';
@@ -113,9 +113,13 @@ function UserRow({ message, first }: { message: Message; first: boolean }) {
 }
 
 function ReasoningRow({ row }: { row: { running: boolean; title: string | null; body: string }; subtle: SyntaxStyle }) {
-  const theme = useTheme();
-  return <box paddingLeft={1} flexShrink={0} flexDirection="column">
-    <text fg={toHex(theme.textMuted)}><em>{terminalText([row.title, row.body].filter(Boolean).join('\n') || (row.running ? 'Thinking…' : 'Thought'), true)}</em></text>
+  const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
+  const text = terminalText([row.title, row.body].filter(Boolean).join('\n'), true);
+  const preview = collapseToolOutput(text, 3, 240);
+  if (row.running) return <box paddingLeft={3} flexShrink={0}><text fg={toHex(theme.textMuted)}><em>Thinking…</em></text></box>;
+  return <box paddingLeft={3} flexShrink={0} flexDirection="column">
+    <text fg={toHex(theme.textMuted)} wrapMode="word"><em>{expanded || settings.showThinking ? text : preview.output}</em></text>
+    {preview.overflow && <Button onPress={() => setExpanded(value => !value)}>{expanded ? 'Less reasoning' : 'Full reasoning'}</Button>}
   </box>;
 }
 
@@ -245,7 +249,7 @@ function BlockBody({ row, syntax, width }: { row: ToolRowModel; syntax: SyntaxSt
         <box flexDirection="column">
           {body.todos.map((todo, index) => (
             <text key={todo.id ?? index} fg={toHex(todo.status === 'in_progress' ? theme.warning : theme.textMuted)}>
-              {`${TODO_MARKERS[todo.status] ?? '[ ]'} ${todo.content}`}
+              {`${TODO_MARKERS[todo.status] ?? '○'} ${todo.content}`}
             </text>
           ))}
         </box>
@@ -300,20 +304,29 @@ function ErrorRow({ error }: { error: string }) {
 }
 
 function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, embedded }: { call: ToolCall; showDetails: boolean; awaitingPermission: boolean; syntax: SyntaxStyle; width: number; embedded: boolean }) {
-  const theme = useTheme(), [expanded, setExpanded] = useState(false);
+  const theme = useTheme(), [expanded, setExpanded] = useState(false), [fullOutput, setFullOutput] = useState(false);
   const open = expanded || showDetails, row = toolRow(call);
   const output = terminalText(call.output ?? (call.status === 'pending' ? 'Waiting to start…' : call.status === 'running' ? 'Running…' : 'No output.'), true);
+  const preview = collapseToolOutput(output, 10, outputBudget(10, width - 8));
+  const result = <box flexDirection="column" flexShrink={0}><text fg={toHex(row.failed || row.denied ? theme.error : theme.textMuted)} wrapMode="word"><em>{fullOutput ? output : preview.output}</em></text>{preview.overflow && <Button onPress={() => setFullOutput(value => !value)}>{fullOutput ? 'Less output' : 'Full output'}</Button>}</box>;
+  if (call.name === 'todo_write') {
+    const todos = parseTodos(call.args.todos);
+    return <box paddingLeft={3} flexDirection="column" flexShrink={0}>
+      <text fg={toHex(theme.textMuted)}>{row.failed ? 'Task update failed' : row.denied ? 'Task update declined' : row.completed ? 'Tasks updated' : 'Update tasks'}</text>
+      {todos.map(todo => <text key={todo.id ?? todo.content} fg={toHex(todo.status === 'in_progress' ? theme.primary : theme.textMuted)} wrapMode="word">{`${TODO_MARKERS[todo.status] ?? '○'} ${terminalText(todo.content)}`}</text>)}
+      {row.error && <text fg={toHex(theme.error)} wrapMode="word">{terminalText(row.error, true)}</text>}
+    </box>;
+  }
   if(call.shunt||call.routing||call.name==='bulk_read'||call.name==='code_write')return <box flexDirection="column" flexShrink={0}>
     <InlineToolRow row={row} awaitingPermission={awaitingPermission} margin={0}/>
-    {call.output&&<box paddingLeft={4}><scrollbox onMouseScroll={embedded ? event => event.stopPropagation() : undefined} height={Math.min(10,Math.max(1,Math.ceil(output.length/Math.max(20,width-8)),output.split('\n').length))}><text fg={toHex(row.failed||row.denied?theme.error:theme.textMuted)} wrapMode="word"><em>{output}</em></text></scrollbox></box>}
+    {call.output && <box paddingLeft={4} flexShrink={0}>{result}</box>}
   </box>;
   return <box flexDirection="column" flexShrink={0}>
     <box onMouseDown={() => setExpanded(!expanded)} flexDirection="row"><text fg={toHex(theme.textMuted)}>{open ? '▾' : '▸'}</text><InlineToolRow row={row} awaitingPermission={awaitingPermission} margin={0} /></box>
     {call.waitingForWorkspace && <text fg={toHex(theme.textMuted)} wrapMode="word"><em>{terminalText(call.waitingForWorkspace)}</em></text>}
     {open && <box paddingLeft={4} flexDirection="column" flexShrink={0}>
       {call.intercepted && <text fg={toHex(theme.warning)}>{`Modified by ${terminalText(call.intercepted.by)}: ${terminalText(call.intercepted.reason)}`}</text>}
-      <text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(JSON.stringify(call.args), true).slice(0, 500)}</text>
-      {row.shape === 'block' ? <BlockToolRow row={row} syntax={syntax} width={width - 8} /> : <scrollbox onMouseScroll={embedded ? event => event.stopPropagation() : undefined} height={Math.min(10, Math.max(1, output.split('\n').length))}><text fg={toHex(theme.textMuted)} wrapMode="word"><em>{output}</em></text></scrollbox>}
+      {row.shape === 'block' ? <BlockToolRow row={row} syntax={syntax} width={width - 8} /> : result}
     </box>}
   </box>;
 }
@@ -321,7 +334,7 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, em
 function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, actors, linked, embedded }: { actors: ReturnType<typeof workerLabels>; linked: ReturnType<typeof visibleDelegations>; controller?: TerminalController; steps: Message[]; detail: SessionDetail; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; onInspect?: (steps: Message[]) => void; embedded: boolean }) {
   const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
   const calls = steps.flatMap(message => message.toolCalls ?? []);
-  const thinking = steps.filter(message => message.reasoning);
+  const thinking = steps.slice(1).filter(message => message.reasoning);
   if (!calls.length && !thinking.length) return null;
   const current = calls.findLast(call => call.status === 'running' || call.status === 'pending');
   const tasks = detail.delegations?.filter(task => task.parentTurnId === steps[0]?.turnId && task.status === 'running') ?? [];
@@ -330,9 +343,9 @@ function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, ac
   const open = live || expanded || settings.toolDetails || settings.showThinking;
   const summary = calls.some(call => call.name === 'delegate') ? `${calls.filter(call => call.name === 'delegate').length} ${detail.session.architecture?.kind === 'expert-fusion' ? 'experts' : 'workers'}${calls.some(call => call.name !== 'delegate') ? ` · ${calls.filter(call => call.name !== 'delegate').length} steps` : ''}` : label;
   return <box marginTop={1} flexDirection="column" flexShrink={0}>
-    <box flexDirection="row"><Button onPress={() => { if (!live) setExpanded(!expanded); }}>{`${open ? '▾' : '▸'} ${terminalText(summary).slice(0, width - 25)}${issues ? ` · ${issues} issues` : ''}`}</Button></box>
-    {open && steps.map(message => <box key={message.id} flexDirection="column" flexShrink={0}>
-      {message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && message === steps.at(-1) && !message.content, ...reasoningSummary(message.reasoning) }} />}
+    {!live && <box flexDirection="row"><Button onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${terminalText(summary).slice(0, Math.max(15, width - 8))}${issues ? ` · ${issues} issues` : ''}`}</Button></box>}
+    {open && steps.map((message, index) => <box key={message.id} flexDirection="column" flexShrink={0}>
+      {index > 0 && message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && message === steps.at(-1) && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning) }} />}
       {message.toolCalls?.map(call => {
         const task = linked.find(task => task.id === call.delegationId && task.parentMessageId === message.id && task.toolCallId === call.id);
         const actor = actors.get(`${message.id}:${call.id}`);
@@ -346,35 +359,41 @@ function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, ac
 export const Transcript = memo(function Transcript({ detail, width, active = true, embedded = false, onInspect, onUsage, controller }: { detail: SessionDetail; width: number; controller?: TerminalController; active?: boolean; embedded?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
   const theme = useTheme(), config = useConfig(), syntax = useSyntax(theme), scroll = useRef<ScrollBoxRenderable>(null);
   const acceleration = useMemo(() => { const native = new MacOSScrollAccel(); return { tick: () => (config.scroll_acceleration.enabled ? native.tick() : 1) * config.scroll_speed, reset: () => native.reset() }; }, [config.scroll_speed, config.scroll_acceleration.enabled]);
-  const [limit, setLimit] = useState(120);
+  const [limit, setLimit] = useState(120), [following, setFollowing] = useState(true);
+  const follow = (value: boolean) => { if (scroll.current) scroll.current.stickyScroll = value; setFollowing(value); };
+  const latest = () => { follow(true); scroll.current?.scrollTo(Infinity); };
+  const resumeAtBottom = () => { const view = scroll.current; if (view && view.scrollTop + view.viewport.height >= view.scrollHeight - 1) follow(true); };
   const groups = useMemo(() => conversationGroups(detail), [detail.messages, detail.session.status]);
   const actors = useMemo(() => workerLabels(detail), [detail.messages, detail.delegations]);
   const linked = useMemo(() => visibleDelegations(detail), [detail.messages, detail.delegations]);
   const visible = groups.slice(-limit);
-  useEffect(() => { setLimit(120); scroll.current?.scrollTo(Infinity); }, [detail.session.id]);
+  useEffect(() => { setLimit(120); latest(); }, [detail.session.id]);
   useKeyboard(key => {
     if (!active || key.defaultPrevented) return;
     const amount = key.name === 'pageup' ? -1 : key.name === 'pagedown' ? 1 : 0;
-    if (amount) { key.preventDefault(); key.stopPropagation(); scroll.current?.scrollBy(amount, 'viewport'); }
-    if (key.ctrl && key.name === 'home') { key.preventDefault(); key.stopPropagation(); setLimit(count => count + 120); scroll.current?.scrollTo(0); }
-    if ((key.ctrl && key.name === 'end') || (key.ctrl && key.name === 'g')) { key.preventDefault(); key.stopPropagation(); scroll.current?.scrollTo(Infinity); }
+    if (amount) { key.preventDefault(); key.stopPropagation(); if (amount < 0) follow(false); scroll.current?.scrollBy(amount, 'viewport'); if (amount > 0) resumeAtBottom(); }
+    if (key.ctrl && key.name === 'home') { key.preventDefault(); key.stopPropagation(); follow(false); setLimit(count => count + 120); scroll.current?.scrollTo(0); }
+    if ((key.ctrl && key.name === 'end') || (key.ctrl && key.name === 'g')) { key.preventDefault(); key.stopPropagation(); latest(); }
   });
-  return <scrollbox ref={scroll} onMouseScroll={embedded ? event => event.stopPropagation() : undefined} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>
+  const contents = <>
     {groups.length > limit && <Button onPress={() => setLimit(count => count + 120)}>Load earlier messages</Button>}
     {!groups.length && <box flexGrow={1} marginTop={2} paddingLeft={2} flexDirection="column"><Brand /><text marginTop={1} fg={toHex(theme.text)}><strong>A fresh start.</strong></text><text fg={toHex(theme.textMuted)}>Give Litespeed a task in this workspace.</text><text fg={toHex(theme.textMuted)}>{terminalText(detail.session.workspace)}</text></box>}
     {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
-      if (message.role === 'user') return <UserRow key={message.id} message={message} first={index === 0} />;
+      if (message.role === 'user') return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />;
       if (message.role === 'system') return <box key={message.id} marginTop={1} paddingLeft={2} flexShrink={0}><text fg={toHex(theme.textMuted)}>{terminalText(message.content, true)}</text></box>;
       const usageMessage = steps.findLast(step => step.turnUsage) ?? steps.at(-1) ?? message;
       return <box key={message.id} flexDirection="column" flexShrink={0}>
-        {message.content.trim() && detail.session.architecture && controller && <text paddingLeft={3} marginTop={1} fg={toHex(theme.textMuted)}>Driver</text>}
+        {(message.content.trim() || message.reasoning) && detail.session.architecture && controller && <text paddingLeft={3} marginTop={1} fg={toHex(theme.textMuted)}>Driver</text>}
+        {message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning) }} />}
         {message.content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(message.content, true)} syntax={syntax.normal} />}
         <WorkLog actors={actors} linked={linked} steps={steps} detail={detail} live={live} syntax={syntax} width={width} onInspect={onInspect} controller={controller} embedded={embedded} />
         {message.error && <ErrorRow error={terminalText(message.error, true)} />}
         {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
       </box>;
     })}
-  </scrollbox>;
+  </>;
+  if (embedded) return <box flexDirection="column" flexShrink={0}>{contents}</box>;
+  return <box width={width} flexGrow={1} minHeight={1} flexDirection="column"><scrollbox ref={scroll} onMouseScroll={event => { if (event.scroll?.direction === 'up') follow(false); else if (event.scroll?.direction === 'down') queueMicrotask(resumeAtBottom); }} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll={following} stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>{contents}</scrollbox>{!following && <Button onPress={latest}>↓ Latest · Ctrl+G</Button>}</box>;
 });
 
 /** Right-aligned interrupt affordance: `esc interrupt`, escalating after the

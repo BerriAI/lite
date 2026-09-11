@@ -45,6 +45,23 @@ const mock=createServer(async(req,res)=>{
       if(res.destroyed)return;
     }
     if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('TUI_FLOW_')){
+    const child=prompt.includes('TUI_FLOW_CHILD'), count=data.messages.filter((m:any)=>m.role==='tool').length;
+    const pause=()=>new Promise(resolve=>setTimeout(resolve,200));
+    const say=async(text:string)=>{for(const part of text.match(/.{1,24}|\n/g)||[]){if(res.destroyed)return;emit({content:part});await pause();}};
+    const call=(name:string,args:any)=>{toolCall=true;emit({tool_calls:[{index:0,id:`flow-${child?'child':'driver'}-${count}`,type:'function',function:{name,arguments:JSON.stringify(args)}}]});};
+    const todos=(stage:number)=>({todos:(child?['Inspect project files','Update the project note','Report the result']:['Review the project','Check the Sidekick change']).map((content,index)=>({id:String(index),content,status:index<stage?'completed':index===stage?'in_progress':'pending'}))});
+    if(count===0){emit({reasoning_content:child?'**Sidekick reasoning**\n\nI will inspect the project before writing.':'**Driver reasoning**\n\nI will plan the change before handing it off.'});await pause();await pause();await say(child?'Sidekick begins the inspection.':'Driver explains the plan.');call('todo_write',todos(0));}
+    else if(child){
+      if(count===1)call('read_file',{path:'README.md'});
+      else if(count===2)call('todo_write',todos(1));
+      else if(count===3){await say(Array.from({length:18},(_,i)=>`Inspection line ${i+1}: the project note will describe the result.\n`).join(''));call('write_file',{path:'sidekick-note.txt',content:'Project inspection complete.\nThe note records the observed result.\nNo configuration changes are needed.\n'});}
+      else if(count===4)call('todo_write',todos(3));
+      else await say('Sidekick finished the project note.');
+    }else if(count===1){await say('Driver hands the note to Sidekick.');call('sidekick',{description:'Update the project note',prompt:'TUI_FLOW_CHILD inspect the project and write its note.'});}
+    else if(count===2){await say('Driver checks the Sidekick result.');call('bash',{command:'cat sidekick-note.txt'});}
+    else if(count===3)call('todo_write',todos(2));
+    else await say('Driver report: the project note is verified.');
   }else if(prompt.includes('DELEGATE_CHILD')){
     if(data.messages.at(-1)?.role!=='tool'){
       const name=prompt.includes('FORCE_WRITE')?'write_file':prompt.includes('FORCE_NESTED')?'task':prompt.includes('FORCE_QUESTION')?'ask_user':'read_file';

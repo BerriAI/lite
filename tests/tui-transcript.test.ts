@@ -83,7 +83,7 @@ describe('reasoningSummary', () => {
 describe('inlineArgs', () => {
   it('keeps primitives, drops objects, honors excludes', () => {
     expect(inlineArgs({ path: 'a.ts', offset: 5, deep: { x: 1 }, flag: true }, ['path']))
-      .toBe('[offset=5, flag=true]');
+      .toBe('· offset 5 · flag yes');
     expect(inlineArgs({})).toBe('');
   });
 });
@@ -150,7 +150,7 @@ describe('toolRow', () => {
 
   it('shows edit_file replace_all in the inline label', () => {
     const row = toolRow(call({ name: 'edit_file', status: 'running', args: { path: 'a.ts', replace_all: true, old_string: 'x', new_string: 'y' } }));
-    expect(row.text).toBe('Edit a.ts [replace_all=true]');
+    expect(row.text).toBe('Edit a.ts · replace all yes');
   });
 
   it('labels search tools with match counts once complete', () => {
@@ -166,7 +166,7 @@ describe('toolRow', () => {
 
   it('labels read/web tools', () => {
     expect(toolRow(call({ name: 'read_file', args: { path: 'a.ts', offset: 10, limit: 50 } })).text)
-      .toBe('Read a.ts [offset=10, limit=50]');
+      .toBe('Read a.ts · offset 10 · limit 50');
     expect(toolRow(call({ name: 'web_fetch', args: { url: 'https://x.dev' } })).text).toBe('WebFetch https://x.dev');
     expect(toolRow(call({ name: 'web_search', args: { query: 'docs' } })).text).toBe('Web Search "docs"');
   });
@@ -207,7 +207,7 @@ describe('toolRow', () => {
   it('falls back to a generic inline row for unknown tools', () => {
     const row = toolRow(call({ name: 'view_image', args: { path: 'x.png', zoom: 2, meta: { a: 1 } } }));
     expect(row.icon).toBe('⚙');
-    expect(row.text).toBe('view_image [path=x.png, zoom=2]');
+    expect(row.text).toBe('view_image · path x.png · zoom 2');
   });
 
   it('flags denied and failed statuses', () => {
