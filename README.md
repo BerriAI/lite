@@ -50,7 +50,7 @@ Choose any connected model for each role. An optional **Planner model** handles 
 
 ## Additional options
 
-**Shunt (proposed)** would send large reads and predictable file generation to an efficient model, keeping the main agent focused on reasoning and review. It would be off by default and configurable in both clients. It is not shipped yet; see the [research, measured results, and integration proposal](docs/design-shunt.md).
+**Shunt (proposed)** would send large reads and predictable file generation to a separate Shunt model you choose, keeping the main agent focused on reasoning and review. It would be off by default, with its own model picker in both clients, independent of your driver and other agents. It is not shipped yet; see the [research, measured results, and integration proposal](docs/design-shunt.md).
 
 ## Guides
 

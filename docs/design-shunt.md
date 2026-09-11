@@ -1,10 +1,12 @@
 # Shunt for Litespeed
 
-Status: research and implementation proposal. The feature is not implemented in Litespeed and no production settings have changed. The proposed option is off by default. Product decisions in the decision register remain open.
+Status: research and implementation proposal. The feature is not implemented in Litespeed and no production settings have changed. The option will be off by default, with its own user-selected Shunt model independent of the architecture's models. Other product decisions in the decision register remain open.
 
 ## Recommendation
 
 Implement Shunt as an optional facility for large reads and predictable file generation, separate from the selected multi-model architecture. Preserve the public mechanism: a size gate redirects an untargeted read; an agent supplies a focused question; a fresh reader receives the source; only its answer returns to the requesting agent. A separate writer receives a specification and reference, generates a file, and returns a small receipt after a successful write.
+
+The user has selected a dedicated Shunt model role: choose it independently of the driver, Sidekick, Team workers, Expert, and Planner. Enabling Shunt requires an explicit model selection; it never inherits an architecture model. Users may deliberately select the same underlying model for two roles, but their configuration, requests, context, and usage attribution remain separate. Shunt is also available with the Single architecture.
 
 Use Litespeed’s existing gateway connection, file permissions, history, usage accounting, and conversation UI. This is a recommended adaptation, not an identical Portal backend. Literal compatibility with the public plugin would instead require Portal, its authenticated CLI, and configured AiKA modes. Both approaches are possible; the transport choice needs a maintainer decision.
 
@@ -52,6 +54,8 @@ Claude’s current hook reference documents the older top-level `block` result a
 The `bulk-read` script requires a question and at least one path. It checks all paths before invocation. Each source is placed between `<file path="...">` and `</file>` delimiters, followed by the question. Paths and content are not XML-escaped; these are prompt delimiters, not an XML security boundary. Files are streamed to a temporary message file and removed on exit. There is no retrieval index, automatic chunking, previous-turn replay, or summary cache. A follow-up explicitly resends the files. [Reader implementation](https://github.com/spotify/portal-ai-plugins/blob/3c24ca30ff63e1f5bbad1c43fe5324daff579123/plugins/shunt/scripts/bulk-read).
 
 The published reader prompt asks for concise, question-specific bullets with exact identifiers and nested details. The article’s example model is Gemini 2.5 Flash at temperature 0.2. The native research bridge uses that model route and the prompt from the current plugin README. This does not demonstrate the author’s hosted mode has exactly those settings today. [Mode setup examples](https://github.com/spotify/portal-ai-plugins/blob/3c24ca30ff63e1f5bbad1c43fe5324daff579123/plugins/shunt/README.md), [bridge prompt constants](../research/shunt/gateway-bridge.mjs).
+
+Upstream uses independently configured Portal reader and writer modes; both examples choose Gemini 2.5 Flash. References to a “worker” in the source and experimental results mean these Shunt model calls, not Litespeed's existing Sidekick or Team workers. Exposing one dedicated Shunt model picker for both modes is the proposed Litespeed configuration.
 
 Only returned text reaches the calling agent. The script’s stderr displays an approximate input count computed from message bytes divided by four; this is not provider-reported billing. Source bytes still reach the worker’s provider, and sending them again can incur more worker usage.
 
@@ -153,13 +157,13 @@ type ShuntSelection = {
 };
 ```
 
-This minimal shape assumes one explicitly selected model for both reader and writer. Separate models, separate feature switches, fallback policy, and inheritance scope should only enter the schema if those choices are accepted. Absence means off for every existing session, imported session, and workspace preference. Enabling is an idle-only configuration change, revision checked and captured when a turn is accepted, matching architecture/planner behavior. No project file may silently enable an additional provider route.
+This shape uses the independently selected Shunt model for both reader and writer. It must not resolve through an architecture's worker model or change when the driver, Sidekick, Team, Expert, or Planner selection changes. Separate reader/writer model pickers, separate feature switches, fallback policy, and caller eligibility should only enter the schema if those choices are accepted. Absence means off for every existing session, imported session, and workspace preference. Enabling is an idle-only configuration change, revision checked and captured when a turn is accepted, matching architecture/planner behavior. No project file may silently enable an additional provider route.
 
 Remember the selection per workspace for future sessions; existing sessions retain their own configuration. Session fork, export/import, queue acceptance, and provider removal must all have explicit rules. Recommended import behavior is to retain descriptive provenance but start Shunt off until a local model is chosen, following the existing conservative architecture import behavior. Removal of the chosen provider disables new invocations with a clear configuration message; it never chooses a substitute silently.
 
 Litespeed’s provider abstraction currently does not expose temperature or per-call output limits. Add capability-aware support for the worker call, with 0.2 where supported. Do not send unsupported parameters to reasoning/subscription routes or silently represent a provider default as 0.2. For close model reproduction, validate the chosen gateway route and prompt contract. The first recommended scope is OpenAI-compatible gateways and native Anthropic; subscription-route support needs its own capability checks before being offered. [Provider options and adapters](../server/providers.ts).
 
-Proposed operational defaults to review: threshold 350 logical lines; 180-second overall delegation deadline; no independent retry loop beyond the provider’s bounded transient retries, which share that deadline; at most one outstanding Shunt request per calling agent initially. Use the lesser of the configured byte ceiling and the selected model’s usable context after prompt/output reserve. A 256 KiB aggregate source ceiling is a conservative initial native bound; oversized calls return a split-request instruction, never a silent partial summary. Provider output limits must distinguish concise reader answers from file generation.
+Proposed operational defaults to review: threshold 350 logical lines; ten minutes without progress, matching the requested harness behavior, rather than the upstream 180-second overall deadline; no independent retry loop beyond the provider’s bounded transient retries; at most one outstanding Shunt request per calling agent initially. Use the lesser of the configured byte ceiling and the selected model’s usable context after prompt/output reserve. A 256 KiB aggregate source ceiling is a conservative initial native bound; oversized calls return a split-request instruction, never a silent partial summary. Provider output limits must distinguish concise reader answers from file generation.
 
 These bounds and line handling are intentional differences from the Bash plugin. They require approval along with the routing policy, rather than being advertised as exact upstream behavior.
 
@@ -173,7 +177,7 @@ Proposed web control, using the existing model picker typography and switch:
 Additional options
 
 Shunt                                           Off
-Use an efficient model for large reads and predictable files.
+Choose a separate model for large reads and predictable files.
 
 When enabled:
 Shunt model              [Choose a model          ▾]
@@ -196,7 +200,7 @@ Shunt writer · Gemini 2.5 Flash · Generating config…
 
 Each invocation has its own stable ID, caller, model, assignment, status, and source list. Show distinct rows for concurrent calls rather than a single shared “worker” status. These are one-shot tool operations, so they should be labeled Shunt reader/writer rather than Sidekick or Expert. The transcript expands inline once, stays anchored to its initiating round, and follows the existing live-tool grouping and scroll behavior. Raw worker source is not duplicated in the parent transcript; users inspect files or diffs through existing controls. Generated source shown in a human diff must remain separate from model context serialization.
 
-Only the final turn shows usage totals; the existing breakdown can expose driver and Shunt separately. Avoid “saved 90%” or a running savings counter because the counterfactual was not observed. An actual timeout/error replaces the running status with a concrete recovery action. Switching the option while busy follows the existing idle-only model configuration rule.
+Only the final turn shows usage totals; the existing breakdown can expose driver, architecture agents, and Shunt separately, even when roles use the same underlying model. Avoid “saved 90%” or a running savings counter because the counterfactual was not observed. An actual timeout/error replaces the running status with a concrete recovery action. Switching the option while busy follows the existing idle-only model configuration rule.
 
 ### Files affected by implementation
 
@@ -224,7 +228,7 @@ Implementation should proceed in four reviewable stages: shared contract and def
 | Writer | New file, replacement, missing directory, conflict during generation, partial/empty/fenced response, disk failure, cancellation before/after response, history recovery, undo/redo, diff evidence and no false success; preserve strict Fusion driver restrictions. |
 | Models and accounting | Native Anthropic and configured OpenAI-compatible routes; unsupported temperature; tool-free worker, context overflow, 401/429/5xx, retries, abort and timeout, missing/cumulative usage, cached tokens and incomplete output. Every request belongs to its turn and operation exactly once. |
 | State | Restart/resume, reload/SSE replay, export/import, fork, workspace preference isolation, missing provider, revision conflicts, queued input, steering and cancellation; no duplicate invocation after reconnect. |
-| Architectures | Single, Sidekick, Team and Expert, each with off/on in both clients. Prove intended inheritance, absence of recursive delegation, per-worker attribution and correct isolated workspace. Add Planner/Plan coverage separately. |
+| Architectures | Single, Sidekick, Team and Expert, each with off/on in both clients. Prove Shunt uses only its explicitly selected model and separate context; architecture/model changes cannot replace it. Cover deliberately selecting the same model for two roles, separate attribution, missing Shunt selection, absence of recursive delegation and correct caller workspace. Add Planner/Plan coverage separately. |
 | Web UI | Enable/save/reload/disable; model picker keyboard/focus; narrow/mobile width; streamed inline results; two concurrent workers; cancel/failure states; no extra modal to inspect results. |
 | TUI | Real PTY setup/model selection, Save/Escape, resize, live reader/writer states, worker identity, scroll anchoring, permissions and cancellation. Screen assertions plus backend effects, not snapshots alone. |
 | Live quality | Paired off/on runs on real small/large files, cross-file questions, test generation, exact editing, debugging, and a task where a plausible summary omits a critical detail. Use independent factual assertions and executable generated-code tests. Reject incorrect answers rather than scoring them as savings. |
@@ -233,13 +237,13 @@ For live release evaluation, pin provider routes, prompts, source revisions, mod
 
 ## Decision register
 
-These are material choices, not changes already made. Defaults explicitly requested are fixed: off initially, available in both clients, and documentation under Additional options.
+These are design decisions, not changes already implemented. Explicit user choices are fixed: off initially, available in both clients, documentation under Additional options, and a dedicated user-selected Shunt model independent of architecture models. D3 is settled; the other recommendations remain for review.
 
 | ID | Maintainer decision | Recommendation and tradeoff |
 | --- | --- | --- |
 | D1 | Literal Portal compatibility or native Litespeed implementation? | Native gateway integration. It avoids Portal login/CLI setup and uses current permissions and usage. It reproduces the workflow rather than the private service. Literal Portal can be a later adapter. |
 | D2 | Reader and writer together, or reader first? | Deliver both before calling the feature complete, but stage the reader first. The writer remains agent-selected, like upstream; it does not silently reroute arbitrary edits. |
-| D3 | One explicit Shunt model, existing worker reuse, or separate reader/writer models? | One explicit model for both. Suggest the current efficient Sidekick/Team worker, but require a selection when unavailable; never silently inherit a strong Expert or assume price from its name. Keep Gemini 2.5 Flash as the reproduction baseline, not a permanent hardcoded product default. |
+| D3 | Settled: dedicated user-selected Shunt model. | An independent optional role with its own model picker, separate from driver, Sidekick, Team, Expert, and Planner. Require explicit selection; never automatically reuse or inherit an architecture model. The picker supplies both reader and writer modes. Users may explicitly choose the same underlying model for another role. Gemini 2.5 Flash remains the reproduction baseline, not a hardcoded product default. |
 | D4 | Copy all routing quirks, or preserve intent with corrected bounds and shell handling? | Correct the known bugs. Keep a configurable 350-line default, allow truly bounded targeted reads, and label shell interception as best effort. Require an explicit direct-read escape for broad reads needed for reasoning; do not pretend a supplied `limit: 2000` is necessarily targeted. |
 | D5 | Which agents can use Shunt? | Root agent, including its Planner when selected, initially. Keep existing cheap workers and persistent Sidekicks unchanged; preserve strict-driver mutation limits. An all-agents option would need explicit inheritance and concurrent workload limits. |
 | D6 | What happens after a worker failure or when exact full context is necessary? | Return a recoverable tool error/hint with no automatic full-file spill into the parent. Permit an explicit per-call direct read under ordinary file permissions, visible in the transcript; keep the feature on. Alternative: automatic raw fallback improves continuity but defeats predictable context control. |
@@ -254,6 +258,6 @@ Place this between “Choose how models work together” and “Guides,” after
 
 > **Additional options**
 >
-> **Shunt** is an optional way to send large reads and predictable file generation to an efficient model while your main agent handles reasoning and review. It is off by default; enable it in **Models → Additional options** and choose its model. It can reduce the context sent to your main model, but adds worker usage and may increase latency. See the Shunt guide for routing, limits, and verification.
+> **Shunt** is an optional way to send large reads and predictable file generation to a separate Shunt model you choose while your main agent handles reasoning and review. It is off by default; enable it in **Models → Additional options** and choose its model independently of your driver and other agents. It can reduce the context sent to your main model, but adds Shunt usage and may increase latency. See the Shunt guide for routing, limits, and verification.
 
 Until then, the branch’s README entry links to this proposal and explicitly identifies it as unshipped.
