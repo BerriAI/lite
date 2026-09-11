@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Check, Copy, X } from 'lucide-react';
 import { useState } from 'react';
 
@@ -12,14 +12,12 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
   const id = useId();
   const ref = useRef<HTMLDivElement>(null), close = useRef(onClose);
   close.current = onClose;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const previous = document.activeElement as HTMLElement;
     const bodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const timer = window.setTimeout(() => {
-      const target = ref.current?.querySelector<HTMLElement>('[autofocus]') ?? ref.current?.querySelector<HTMLElement>('input, textarea, select') ?? ref.current?.querySelector<HTMLElement>('button');
-      target?.focus();
-    }, 40);
+    const target = ref.current?.querySelector<HTMLElement>('[autofocus]') ?? ref.current?.querySelector<HTMLElement>('input, textarea, select') ?? ref.current?.querySelector<HTMLElement>('button');
+    target?.focus();
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') { e.preventDefault(); close.current(); }
       if (e.key === 'Tab') {
@@ -31,7 +29,7 @@ export function Modal({ title, children, onClose, wide = false }: { title: strin
       }
     }
     document.addEventListener('keydown', onKey);
-    return () => { clearTimeout(timer); document.removeEventListener('keydown', onKey); document.body.style.overflow = bodyOverflow; previous?.focus(); };
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = bodyOverflow; previous?.focus(); };
   }, []);
   return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div ref={ref} className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true" aria-labelledby={id} tabIndex={-1}><div className="modal-header"><h2 id={id}>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Close dialog"><X size={18} /></button></div>{children}</div></div>;
 }
