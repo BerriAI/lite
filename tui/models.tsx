@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { Model, ModelReasoning, Session, Settings } from '../shared/types.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { ARCHITECTURES, architectureWorker, selectArchitecture, type ArchitectureKind, type ModelRoute } from '../shared/architectures.js';
+import { SETUP_ARCHITECTURES, modelGuidance } from '../shared/setup.js';
 import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, type MenuItem } from './ui.js';
 
@@ -18,7 +19,7 @@ export function ModelChooser({ controller, settings, value, title, onChange, onC
   if (view === 'custom') return <TextPrompt title="Model ID" placeholder="provider/model-name" onClose={() => setView('models')} onSave={model => { if (model.trim()) onChange({ providerId: provider, model: model.trim() }); }} />;
   const configured = settings.providers.find(item => item.id === provider);
   const all = [...models, ...(configured?.models ?? []).filter(id => !models.some(model => model.id === id)).map(id => ({ id, name: id, providerId: provider }))];
-  return <Menu key={provider} title={title} onClose={onClose} footer={simple ? feedback || error || (loading ? 'Loading your models…' : 'Type to search · Enter starts chatting · Esc change gateway') : undefined} items={[
+  return <Menu key={provider} title={title} onClose={onClose} footer={simple ? feedback || error || (loading ? 'Loading your models…' : 'Type to search · Enter choose · Esc back') : feedback} items={[
     ...(!simple ? [{ id: 'provider', label: `Provider: ${configured?.name ?? provider}`, description: 'Change provider', action: () => setView('providers') },
     { id: 'custom', label: 'Enter a model ID…', description: error || (loading ? 'Loading models…' : undefined), action: () => setView('custom') }] : []),
     ...all.map(model => ({ id: `model:${model.id}`, label: `${model.id === value.model && provider === value.providerId ? '✓ ' : ''}${model.name || model.id}`, description: model.name && model.name !== model.id ? model.id : undefined, action: () => onChange({ providerId: provider, model: model.id }) })),
@@ -50,10 +51,9 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   const name = kind === 'single' ? 'Single model' : ARCHITECTURES.find(item => item.kind === kind)!.name;
   const workerLabel = kind === 'team-fusion' ? 'Worker' : kind === 'expert-fusion' ? 'Expert' : 'Sidekick';
   if (view === 'architecture') return <Menu title="Architecture" search={false} onClose={back} items={[
-    { id: 'single', label: 'Single model', description: 'One model handles the whole task.', action: () => { setKind('single'); back(); } },
-    ...ARCHITECTURES.map(item => ({ id: item.kind, label: item.name, description: item.kind === 'sidekick-fusion' ? 'A driver works with one sidekick that keeps its context.' : item.kind === 'team-fusion' ? 'A strong driver delegates scoped work to cheaper workers.' : 'A cheaper driver calls strong experts, then checks their work.', action: () => { setKind(item.kind); back(); } })),
+    ...SETUP_ARCHITECTURES.map(item => ({ id: item.kind, label: `${item.name}${item.recommended ? ' · Recommended' : ''}`, description: item.description, action: () => { setKind(item.kind); back(); } })),
   ]} />;
-  if (view.startsWith('model:')) return <ModelChooser controller={controller} settings={settings} value={route ?? driver} title={view === 'model:driver' ? kind === 'single' ? 'Model' : 'Driver' : view === 'model:worker' ? workerLabel : 'Planner'} onClose={back} onChange={value => { if (view === 'model:worker') setWorker(value); else if (view === 'model:planner') setPlanner(value); else setDriver(value); back(); }} />;
+  if (view.startsWith('model:')) return <ModelChooser feedback={modelGuidance(kind, view === 'model:worker' ? 'worker' : view === 'model:planner' ? 'planner' : 'driver')} controller={controller} settings={settings} value={route ?? driver} title={view === 'model:driver' ? kind === 'single' ? 'Model' : 'Driver' : view === 'model:worker' ? workerLabel : 'Planner'} onClose={back} onChange={value => { if (view === 'model:worker') setWorker(value); else if (view === 'model:planner') setPlanner(value); else setDriver(value); back(); }} />;
   if (view.startsWith('reasoning:') && route) {
     const key = JSON.stringify([route.providerId, route.model]);
     const supported = catalog.find(item => item.id === route.model)?.reasoningEfforts ?? REASONING_EFFORTS;
@@ -65,7 +65,7 @@ export function ModelSettings({ controller, initial, settings, onClose, onProvid
   ]} />;
   if (view === 'style') return <Menu title="Output style" onClose={back} items={['', ...styles].map(value => ({ id: value || 'default', label: value || 'Default', action: () => { setStyle(value); back(); } }))} />;
   const fields = (id: string, label: string, value: ModelRoute | null): MenuItem[] => [
-    { id: `model:${id}`, label: `${label}: ${value?.model || 'Choose a model'}`, description: value?.providerId, action: () => setView(`model:${id}`) },
+    { id: `model:${id}`, label: `${label}: ${value?.model || 'Choose a model'}`, description: modelGuidance(kind, id as 'driver' | 'worker' | 'planner'), action: () => setView(`model:${id}`) },
     ...(value ? [{ id: `reasoning:${id}`, label: `Reasoning: ${reasoning[JSON.stringify([value.providerId, value.model])] ?? 'Default'}`, action: () => setView(`reasoning:${id}`) }] : []),
   ];
   const save = async () => {

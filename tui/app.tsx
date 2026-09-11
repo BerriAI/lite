@@ -42,26 +42,50 @@ function LoadingScreen() {
   return <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column">{visible && <><Brand /><box marginTop={1} flexDirection="row" gap={1}><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>Connecting to Speedrail…</text></box></>}</box>;
 }
 
-function Composer({ controller, focused, onSubmit, onReference }: { controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void }) {
+function Composer({ controller, focused, onSubmit, onReference, commands }: { commands: {name: string; description: string}[]; controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void }) {
   const theme = useTheme(), editor = useRef<TextareaRenderable>(null);
   const { draft, pending } = useSyncExternalStore(controller.subscribe, controller.getState);
   const { height, width } = useTerminalDimensions(), config = useConfig();
   const editorKeys = useMemo(() => new EditorKeys(config.keybinds), [config.keybinds]);
   useEffect(() => () => editorKeys.dispose(), [editorKeys]);
   useEffect(() => { if (editor.current && editor.current.plainText !== draft.text) editor.current.setText(draft.text); }, [draft.text]);
+  const [selected, setSelected] = useState(0), [dismissed, setDismissed] = useState(false);
+  const token = draft.text.match(/^\/([\w-]*)$/);
+  const matches = focused && token && !dismissed ? commands.filter(item => item.name.startsWith(token[1].toLowerCase())) : [];
+  const highlighted = Math.min(selected, Math.max(0, matches.length - 1));
+  const visibleCount = Math.min(6, Math.max(2, Math.floor(height / 4)));
+  const start = Math.max(0, highlighted - visibleCount + 1);
+  function accept(name: string) {
+    const text = `/${name} `;
+    if (editor.current) { editor.current.setText(text); editor.current.cursorOffset = text.length; }
+    controller.setDraft({...controller.getState().draft, text}); setDismissed(true);
+  }
   const rows = Math.min(Math.max(1, draft.text.split('\n').reduce((count, line) => count + Math.max(1, Math.ceil([...line].length / Math.max(10, width - 6))), 0)), Math.max(1, Math.min(12, Math.floor(height * config.prompt.max_height / 100) - 4)));
-  return <box width={config.prompt.max_width === 'auto' ? '100%' : Math.min(width, config.prompt.max_width)} alignSelf="center" border borderColor={toHex(focused ? theme.primary : theme.border)} height={rows + 2} paddingLeft={1} paddingRight={1} flexShrink={0}>
+  return <box flexDirection="column" flexShrink={0} width={config.prompt.max_width === 'auto' ? '100%' : Math.min(width, config.prompt.max_width)} alignSelf="center">
+    {matches.length > 0 && <box flexDirection="column" paddingLeft={2} paddingRight={2} marginBottom={1} flexShrink={0}>
+      {matches.slice(start, start + visibleCount).map((item, offset) => <box key={item.name} height={1} backgroundColor={start + offset === highlighted ? toHex(theme.backgroundElement) : undefined} onMouseDown={() => accept(item.name)}><text fg={toHex(start + offset === highlighted ? theme.primary : theme.textMuted)}>{terminalText(`${start + offset === highlighted ? '›' : ' '} /${item.name}  ${item.description}`).slice(0, width - 6)}</text></box>)}
+      <text height={1} fg={toHex(theme.textMuted)}>{`↑↓ choose · Tab/Enter complete · Esc dismiss${matches.length > visibleCount ? ` · ${highlighted + 1}/${matches.length}` : ''}`}</text>
+    </box>}
+    <box width={config.prompt.max_width === 'auto' ? '100%' : Math.min(width, config.prompt.max_width)} alignSelf="center" border borderColor={toHex(focused ? theme.primary : theme.border)} height={rows + 2} paddingLeft={1} paddingRight={1} flexShrink={0}>
     <textarea ref={editor} focused={focused} initialValue={draft.text} wrapMode="word"
       placeholder={pending ? `${pending}…` : isRunning(controller.detail) ? 'Queue a follow-up… (Alt+Enter to steer)' : 'Ask Speedrail to do something…'}
       backgroundColor={toHex(theme.background)} textColor={toHex(theme.text)}
       onKeyDown={key => {
         if (!editor.current) return;
+        if (matches.length && !(key.name === 'return' && draft.text === `/${matches[highlighted].name}`) && !key.ctrl && !key.meta && !key.shift && ['up', 'down', 'tab', 'return', 'escape'].includes(key.name)) {
+          key.preventDefault(); key.stopPropagation();
+          if (key.name === 'escape') setDismissed(true);
+          else if (key.name === 'up' || key.name === 'down') setSelected((highlighted + (key.name === 'up' ? -1 : 1) + matches.length) % matches.length);
+          else accept(matches[highlighted].name);
+          return;
+        }
         const reference = /(?:^|\s)@([^\s]*)$/.exec(editor.current.plainText);
         if (key.name === 'tab' && reference) { key.preventDefault(); key.stopPropagation(); controller.setDraft({ ...controller.getState().draft, text: editor.current.plainText }); onReference(reference[1]); return; }
         editorKeys.handle(editor.current, key);
       }}
-      onContentChange={() => { const text = editor.current?.plainText ?? ''; if (text !== controller.getState().draft.text) controller.setDraft({ ...controller.getState().draft, text }); }}
+      onContentChange={() => { const text = editor.current?.plainText ?? ''; setSelected(0); setDismissed(false); if (text !== controller.getState().draft.text) controller.setDraft({ ...controller.getState().draft, text }); }}
       onSubmit={() => { controller.setDraft({ ...controller.getState().draft, text: editor.current?.plainText ?? '' }); onSubmit(); const next = controller.getState().draft.text; if (editor.current && next !== editor.current.plainText) editor.current.setText(next); }} />
+    </box>
   </box>;
 }
 
@@ -242,7 +266,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       {detail.session.goal && ['active', 'blocked'].includes(detail.session.goal.status) && <box height={1} flexShrink={0}><Button onPress={() => setPanel(<GoalPanel controller={controller} onClose={close} />)}>{`Goal ${detail.session.goal.status} · ${detail.session.goal.turns}/${detail.session.goal.maxTurns} turns · ${terminalText(detail.session.goal.text).slice(0, Math.max(10, width - 36))}`}</Button></box>}
       {detail.queue?.items.length ? <box flexDirection="row" height={1}><Button onPress={queue}>{`${detail.queue.items.length} queued · ${detail.queue.paused ? 'paused' : 'will run next'}`}</Button></box> : null}
       {state.draft.attachments.length > 0 && <text fg={toHex(theme.textMuted)}>{state.draft.attachments.map(item => `⌕ ${item.name}`).join('  ')}</text>}
-      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
+      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description}))]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
     </> : state.sync.phase === 'error' ? <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column"><text fg={toHex(theme.error)}>{state.sync.error}</text><Button onPress={() => run(() => controller.open(controller.sessionId))}>Reconnect</Button><Button onPress={palette}>Commands</Button></box> : <LoadingScreen />}
     {(state.notice || pendingLeader || state.sync.connection === 'reconnecting') && <text paddingLeft={1} fg={toHex(theme.warning)}>{terminalText(pendingLeader ? 'Leader…' : state.notice || 'Reconnecting… Showing the last known state.').slice(0, width - 2)}</text>}
     <box height={1} flexDirection="row" flexShrink={0}><Button onPress={palette}>Ctrl+P Commands</Button><Button onPress={permissions}>{detail?.session.permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}</Button><Button onPress={openSettings}>Settings</Button><text fg={toHex(theme.textMuted)}>{state.pending ? `${state.pending}…` : permission || question ? 'Choose an answer above · Esc Esc stop' : 'Enter send · Shift+Enter newline'}</text></box>

@@ -37,7 +37,9 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 700 
     const geometry = await dialog.evaluate(el => { const rect = el.getBoundingClientRect(); const body = el.querySelector('.model-picker-scroll')!; return { top: rect.top, bottom: rect.bottom, overflow: body.scrollHeight - body.clientHeight }; });
     expect(geometry.top).toBeGreaterThanOrEqual(0);
     expect(geometry.bottom).toBeLessThanOrEqual(viewport.height);
-    expect(geometry.overflow).toBeLessThanOrEqual(1);
+    await expect(page.getByRole('button', {name:'Done',exact:true})).toBeInViewport();
+    if (geometry.overflow > 1) await page.getByLabel('Output style', {exact:true}).scrollIntoViewIfNeeded();
+    await expect(page.getByLabel('Output style', {exact:true})).toBeInViewport();
     await page.screenshot({ path: `/tmp/speedrail-model-${viewport.width}.png`, animations: 'disabled' });
     await page.getByRole('button', { name: 'Done', exact: true }).click();
     await page.reload();

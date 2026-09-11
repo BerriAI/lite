@@ -47,10 +47,14 @@ try{
   async function launch(session,cols=100,rows=38){
     await stopTerminal();emulator=new xterm.Terminal({cols,rows,allowProposedApi:true});
     terminal=pty.spawn(process.execPath,['bin/speedrail.mjs','tui','--url',base,'--session',session.id,'--workspace',settings.workspace],{cwd:root,cols,rows,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',SPEEDRAIL_DISABLE_PROJECT_CONFIG:'1',SPEEDRAIL_CONFIG_DIR:config,XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
-    terminal.onData(chunk=>emulator.write(chunk));await waitFor(()=>screen().includes('Ctrl+P Commands'),'ready');
+    const display=emulator;terminal.onData(chunk=>display.write(chunk));await waitFor(()=>screen().includes('Ctrl+P Commands'),'ready');
+    await new Promise(done=>setTimeout(done,100));
   }
   const session=await api('/sessions',{workspace:settings.workspace});await launch(session,80,24);
-  assert(!screen().includes('Connect your LiteLLM gateway'));terminal.write('/setup\r');
+  assert(!screen().includes('Connect your LiteLLM gateway'));
+  terminal.write('/set');await waitFor(()=>screen().includes('/settings')&&screen().includes('/setup'),'slash suggestions');await save('00-slash-commands');
+  terminal.write('\t');await waitFor(()=>screen().includes('/settings '),'Tab completes command');
+  terminal.write('\x15/setup\r');
   await waitFor(()=>screen().includes('Connect your LiteLLM gateway · 1 of 3'),'gateway setup');await save('00-setup-gateway');
   terminal.write('\r');await waitFor(()=>screen().includes('Gateway base URL')&&screen().includes('Enter save'),'gateway URL');terminal.write('\r');await waitFor(()=>screen().includes('LiteLLM API key'),'gateway key');terminal.write('fixture-key');await waitFor(()=>screen().includes('•••'),'masked key');assert(!screen().includes('fixture-key'));terminal.write('\r');
   await waitFor(()=>screen().includes('Set up Speedrail · 2 of 3'),'first-run setup');await save('01-setup-architecture');
@@ -67,6 +71,7 @@ try{
   terminal.write('LIVE_STEPS_BROWSER\r');
   await waitFor(()=>screen().split('\n').filter(line=>line.includes('Read README.md')||line.includes('Read src/hello.ts')).length>=5,'consecutive tools visible without Inspect');
   assert(!screen().includes('Inspect'));
+  await new Promise(done=>setTimeout(done,200));
   const row=screen().split('\n').findIndex(line=>line.includes('Read README.md'))+1;
   terminal.write(`\x1b[<0;10;${row}M\x1b[<0;10;${row}m`);
   await waitFor(()=>screen().includes('A small project for browser tests.'),'tool result opens inline on click');await save('04-inline-tools');
@@ -102,11 +107,14 @@ try{
   await waitFor(()=>screen().includes('LiteLLM API key'),'enter fresh key');terminal.write('wrong-key\r');
   await waitFor(()=>screen().includes('HTTP 401'),'gateway error stays in setup');assert.equal((await api('/settings')).providers.length,0);
   terminal.write('\x1b[H\r');await waitFor(()=>screen().includes('LiteLLM API key'),'correct key');terminal.write('fixture-key\r');
-  await waitFor(()=>screen().includes('Choose a model'),'fresh model chooser');assert(!screen().includes('Provider:'));terminal.write('test-fast');await waitFor(()=>screen().includes('› test-fast'),'gateway model found');await save('09-simple-model-choice');terminal.write('\r');
+  await waitFor(()=>screen().includes('Choose your setup'),'fresh recommended setup');assert(screen().includes('Sidekick Fusion'));assert(screen().includes('Recommended'));await save('09-recommended-setup');
+  terminal.write('\x1b[H\x1b[B\r');await waitFor(()=>screen().includes('powerful reasoning'),'driver chooser');assert(screen().includes('powerful reasoning'));terminal.write('test-model');await waitFor(()=>screen().includes('› test-model'),'driver found');terminal.write('\r');
+  await waitFor(()=>screen().includes('Driver: test-model'),'driver chosen');terminal.write('\x1b[H\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('efficient coding workhorse'),'sidekick guidance');terminal.write('test-fast');await waitFor(()=>screen().includes('› test-fast'),'sidekick found');terminal.write('\r');
+  await waitFor(()=>screen().includes('Sidekick: test-fast'),'sidekick chosen');await save('09-recommended-models');terminal.write('\x1b[F\r');
   await waitFor(async()=>(await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).setupComplete===true,'fresh setup persisted');
   const freshSettings=await api('/settings');assert.equal(freshSettings.providers[0].baseUrl,settings.providers[0].baseUrl+'/setup-auth');assert(!JSON.stringify(freshSettings).includes('fixture-key'));
-  assert.equal(freshSettings.defaultModel,'test-fast');
-  const next=await api('/sessions',{workspace:settings.workspace+'/src'});await launch(next,80,24);await waitFor(()=>screen().includes('A fresh start.'),'next folder opens chat');assert(!screen().includes('Gateway base URL'));assert.equal(next.model,'test-fast');await save('10-next-folder-ready');
+  assert.equal(freshSettings.defaultModel,'test-model');assert.equal((await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).architecture.kind,'sidekick-fusion');
+  const next=await api('/sessions',{workspace:settings.workspace+'/src'});await launch(next,80,24);await waitFor(()=>screen().includes('A fresh start.'),'next folder opens chat');assert(!screen().includes('Gateway base URL'));assert.equal(next.model,'test-model');await save('10-next-folder-ready');
   console.log('Fresh TUI gateway setup passed: blank URL, masked key, failed authentication, model discovery, and saved setup.');
   console.log('TUI interactions passed: first-run setup, saved models, live Allow all, two workers, two experts, Sidekick handoff, and narrow/wide rendering.');
 }finally{await stopTerminal();await browser?.close();server.kill('SIGTERM');await rm(config,{recursive:true,force:true});}

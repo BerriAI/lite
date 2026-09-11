@@ -43,9 +43,11 @@ speedrail --url http://localhost:3210
 
 ## Your first task
 
-1. On first launch, enter your LiteLLM gateway URL and API key, then select a model. Configured launches open chat directly, including in another project.
+1. On first launch, enter your LiteLLM gateway URL and API key, then choose your setup and models. Sidekick Fusion is recommended: a powerful driver plus an efficient coding workhorse. Single model is also available. Configured launches open chat directly, including in another project.
 2. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will handle the next turn.
 3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Consecutive tools stay open while working and collapse at the next text response. Click a tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
+
+Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to complete, and Esc to dismiss. Built-in commands and workspace templates appear together.
 
 Use `/models` to change models or add Sidekick, workers, experts, a separate planner, reasoning, or an output style. `/setup` opens the full guided configuration. **Settings → Providers** supports other APIs and ChatGPT device sign-in; keys stay masked.
 

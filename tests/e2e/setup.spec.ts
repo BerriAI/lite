@@ -73,13 +73,24 @@ test('gateway setup asks for the URL and key, handles failure inline, and then s
     await key.fill('fixture-key');await dialog.getByRole('button',{name:'Connect & continue'}).click();
     await expect(dialog.getByRole('group',{name:'Architecture'})).toHaveCount(0);
     await expect(dialog.getByRole('combobox',{name:'Setup permissions'})).toHaveCount(0);
+    await expect(dialog.getByRole('combobox',{name:'Setup architecture'})).toHaveValue('sidekick-fusion');
+    await expect(dialog.getByText('A powerful reasoning model to plan, delegate, and review.')).toBeVisible();
+    await expect(dialog.getByText('An efficient coding workhorse for implementation and testing.')).toBeVisible();
+    await expect(dialog.getByRole('button',{name:'Start chatting'})).toBeDisabled();
+    await dialog.getByRole('button',{name:'Driver model',exact:true}).click();
+    await dialog.getByRole('option',{name:'test-model',exact:true}).click();
+    await dialog.getByRole('button',{name:'Sidekick model',exact:true}).click();
     await dialog.getByRole('option',{name:'test-fast',exact:true}).click();
+    await page.screenshot({path:testInfo.outputPath('recommended-setup-mobile.png')});
+    await expect(dialog.getByRole('button',{name:'Start chatting'})).toBeInViewport();
     await dialog.getByRole('button',{name:'Start chatting'}).click();
+    const preferences=await (await request.get(`/api/workspace-preferences?workspace=${encodeURIComponent(settings.workspace)}`)).json();
+    expect(preferences.architecture).toMatchObject({kind:'sidekick-fusion',sidekick:{model:'test-fast'}});
     await expect(dialog).toHaveCount(0);
     const saved=await (await request.get('/api/settings')).json();
     expect(saved.providers[0].baseUrl).toBe(settings.providers[0].baseUrl+'/setup-auth');expect(JSON.stringify(saved)).not.toContain('fixture-key');
-    expect(saved.defaultModel).toBe('test-fast');
-    const next=await (await request.post('/api/sessions',{data:{workspace:settings.workspace+'/src'}})).json();expect(next.model).toBe('test-fast');
+    expect(saved.defaultModel).toBe('test-model');
+    const next=await (await request.post('/api/sessions',{data:{workspace:settings.workspace+'/src'}})).json();expect(next.model).toBe('test-model');
     await page.reload();await expect(dialog).toHaveCount(0);
   } finally {
     await request.patch('/api/settings',{data:{providers:settings.providers,defaultProvider:settings.defaultProvider,defaultModel:settings.defaultModel}});

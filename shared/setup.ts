@@ -1,13 +1,23 @@
 import type { Model, Settings } from './types.js';
-import { ARCHITECTURES } from './architectures.js';
+import { ARCHITECTURES, type ArchitectureKind } from './architectures.js';
 
 /** Keep the first-run explanations identical in both clients. */
 export const SETUP_ARCHITECTURES = [
-  { kind: 'single' as const, name: 'Single model', description: 'One model does everything. The simplest way to start.' },
-  { ...ARCHITECTURES[0], description: 'A driver plans and reviews. One sidekick does the work and remembers context.' },
-  { ...ARCHITECTURES[1], description: 'A driver splits work among parallel workers. Use a faster, cheaper worker model.' },
-  { ...ARCHITECTURES[2], description: 'A lighter driver calls stronger experts for hard tasks, then checks their work.' },
+  { kind: 'single' as const, name: 'Single model', recommended: false, description: 'One model does everything. The simplest way to start.' },
+  { ...ARCHITECTURES[0], recommended: true, description: 'A driver plans and reviews. One sidekick does the work and remembers context.' },
+  { ...ARCHITECTURES[1], recommended: false, description: 'A driver splits work among parallel workers. Use a faster, cheaper worker model.' },
+  { ...ARCHITECTURES[2], recommended: false, description: 'A lighter driver calls stronger experts for hard tasks, then checks their work.' },
 ];
+export function modelGuidance(kind: 'single' | ArchitectureKind, role: 'driver' | 'worker' | 'planner') {
+  if (role === 'planner') return 'A strong reasoning model for planning before implementation.';
+  if (kind === 'single') return 'A capable coding model that can plan, implement, and test.';
+  if (role === 'driver') return kind === 'expert-fusion'
+    ? 'An efficient coding model to coordinate experts and check results.'
+    : 'A powerful reasoning model to plan, delegate, and review.';
+  return kind === 'expert-fusion'
+    ? 'A powerful model for difficult reasoning and implementation.'
+    : 'An efficient coding workhorse for implementation and testing.';
+}
 export const SETUP_PERMISSIONS = 'Ask first lets you review actions. Allow all tools runs without routine approval prompts. Explicit project rules still apply.';
 
 export const GATEWAY_URL_HINT = 'The base URL of your LiteLLM gateway, with or without /v1.';

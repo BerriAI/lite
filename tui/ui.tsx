@@ -1,5 +1,5 @@
 /** @jsxImportSource @opentui/react */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { useKeyboard, useTerminalDimensions } from '@opentui/react';
 import type { TextareaRenderable } from '@opentui/core';
 import { terminalText } from './protocol.js';
@@ -24,13 +24,14 @@ export function Dialog({ title, children, footer = 'Esc back', onClose, width: p
 }
 
 export interface MenuItem { id: string; label: string; description?: string; disabled?: boolean; separatorBefore?: boolean; action: () => void }
-export function Menu({ title, items, onClose, search = true, footer }: { title: string; items: MenuItem[]; onClose: () => void; search?: boolean; footer?: string }) {
+interface MenuProps { title: string; items: MenuItem[]; onClose: () => void; search?: boolean; footer?: string }
+export function Menu(props: MenuProps) { return <MenuContent key={props.title} {...props} />; }
+function MenuContent({ title, items, onClose, search = true, footer }: MenuProps) {
   const theme = useTheme(), { height, width } = useTerminalDimensions();
   const [query, setQuery] = useState(''), [index, setIndex] = useState(0);
   const position = useRef(0), searchText = useRef('');
   const move = (value: number) => { position.current = value; setIndex(value); };
   const searchFor = (value: string) => { searchText.current = value; setQuery(value); move(0); };
-  useEffect(() => { searchFor(''); }, [title]);
   const filtered = items.filter(item => `${item.label} ${item.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
   const selected = Math.min(index, Math.max(0, filtered.length - 1));
   const size = (item: MenuItem) => 1 + Number(Boolean(item.description)) + Number(Boolean(item.separatorBefore));

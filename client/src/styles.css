@@ -74,7 +74,8 @@ kbd { border: 1px solid var(--border); background: var(--surface); border-radius
 .sidebar { width: 244px; min-width: 244px; height: 100%; background: var(--sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: relative; z-index: 30; }
 .sidebar-brand { display: flex; align-items: center; justify-content: space-between; padding: 26px 23px 26px; height: 90px; }
 .brand { display: flex; align-items: center; gap: 8px; padding: 0; }
-.brand > span:last-child { font-size: 26px; font-weight: 680; letter-spacing: -1.2px; line-height: 1; }
+.recommended-label { margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--blue); }
+.model-role-hint { margin: 6px 0 0; }
 .brand-period { color: var(--blue); }
 .local-label { border: 1px solid var(--border-strong); color: var(--muted); font-size: 8px; padding: 3px 5px; border-radius: 4px; letter-spacing: 1.1px; line-height: 1; }
 .speedrail-logo { display: inline-flex; color: var(--blue); width: 36px; height: 30px; flex-shrink: 0; }
@@ -1023,3 +1024,7 @@ fieldset.model-picker { padding: 22px 24px; gap: 22px; overflow: visible; }
 .setup-gateway input:focus { outline: 2px solid var(--blue); outline-offset: 2px; }
 .setup-gateway p { margin: 0; }
 .setup-gateway .text-button { justify-self: start; }
+
+.setup-architecture { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; color: var(--secondary); font-size: 12px; }
+.setup-architecture select { width: 100%; border: 1px solid var(--border-strong); border-radius: 7px; padding: 10px 12px; background: var(--surface); color: var(--text); font: inherit; }
+.setup-links { display: flex; flex-wrap: wrap; gap: 8px 18px; }

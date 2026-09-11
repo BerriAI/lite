@@ -60,3 +60,18 @@ test('escape closes the popover and an unknown /path is sent literally', async (
   await expect.poll(async () => (await detail(request, session)).messages.length).toBeGreaterThan(0);
   expect((await detail(request, session)).messages[0].content).toBe('/tmp/nothing hello');
 });
+
+test('built-in slash commands complete with Tab and execute locally without a provider turn', async ({page,request}) => {
+  const session=await create(request);await page.goto(`/#session/${session.id}`);
+  await composer(page).pressSequentially('/mod');
+  await expect(page.getByRole('option',{name:/models/})).toBeVisible();
+  await composer(page).press('Tab');await expect(composer(page)).toHaveValue('/models ');
+  await composer(page).press('Enter');
+  const dialog=page.getByRole('dialog',{name:'Choose a model'});await expect(dialog).toBeVisible();
+  expect((await detail(request,session)).messages).toHaveLength(0);
+  await dialog.getByRole('button',{name:'Done',exact:true}).click();
+  await composer(page).fill('/plan');await page.getByRole('button',{name:'Send message',exact:true}).click();
+  await expect(page.getByRole('combobox',{name:'Agent mode'})).toHaveValue('plan');
+  expect((await detail(request,session)).messages).toHaveLength(0);
+  await expect(page.getByRole('button',{name:'Speedrail home',exact:true})).toHaveText('');
+});

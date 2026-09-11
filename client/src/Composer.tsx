@@ -14,6 +14,7 @@ export interface Selection { modelReasoning?: ModelReasoning; providerId: string
 interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;
+  onCommand?: (content: string) => boolean;
   onQueue?: (content: string, attachments: Attachment[]) => Promise<boolean>;
   onSteer?: (content: string) => Promise<boolean>;
   queue?: QueueState; queueBusy?: boolean;
@@ -25,7 +26,7 @@ interface Props {
   selectionDisabled?: boolean;
   onPermissionMode?: (mode: PermissionMode) => void;
 }
-export function Composer({ settings, selection, onSelection, onSend, onQueue, onSteer, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, selectionDisabled, onPermissionMode }: Props) {
+export function Composer({ settings, selection, onSelection, onSend, onCommand, onQueue, onSteer, queue, queueBusy, onQueueAction, onCancel, running, disabled, welcome, workspace, text, setText, attachments, setAttachments, draftNotice, onSettings, selectionDisabled, onPermissionMode }: Props) {
   const [modelOpen, setModelOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [contextQuery, setContextQuery] = useState('');
@@ -61,6 +62,7 @@ export function Composer({ settings, selection, onSelection, onSend, onQueue, on
     return () => { live = false; clearTimeout(timer); };
   }, [contextOpen, contextQuery, workspace]);
   async function send() {
+    if (!disabled && !sending && onCommand?.(text)) return;
     if ((running && !queueMode) || disabled || sending || adding.current || queueBusy || (queueMode && queueFull) || (!text.trim() && !attachments.length)) return;
     setError('');
     if (!queueMode && (!selection.model || !selection.providerId)) { setModelOpen(true); return; }

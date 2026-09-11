@@ -1,17 +1,13 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { REASONING_EFFORTS, type Model, type ReasoningEffort, type Settings } from '../../shared/types';
-import { ARCHITECTURES, architectureWorker, selectArchitecture, type ArchitectureKind, type ModelRoute } from '../../shared/architectures';
+import { architectureWorker, selectArchitecture, type ArchitectureKind, type ModelRoute } from '../../shared/architectures';
+import { SETUP_ARCHITECTURES, modelGuidance } from '../../shared/setup';
 import type { Selection } from './Composer';
 import { api, errorMessage, query } from './api';
 import { Modal, SpeedRail } from './ui';
 
-const arrangements = [
-  { kind: 'single' as const, name: 'Single model', description: 'One model handles the whole task.' },
-  { ...ARCHITECTURES[0], description: 'A driver works with one sidekick that keeps its context.' },
-  { ...ARCHITECTURES[1], description: 'A strong driver delegates scoped work to cheaper workers.' },
-  { ...ARCHITECTURES[2], description: 'A cheaper driver calls strong experts, then checks their work.' },
-];
+const arrangements = SETUP_ARCHITECTURES;
 type View = 'single' | ArchitectureKind;
 type Role = 'model' | 'worker' | 'planner';
 
@@ -26,8 +22,8 @@ function moveOption(event: KeyboardEvent, selector = '[role="option"]') {
 }
 
 /** A model menu belongs to its role. Search never changes a different slot. */
-export function ModelField({ simple = false, label, value, settings, selection, onChange, onReasoning, open, onOpen }: {
-  simple?: boolean; label: string; value: ModelRoute | null; settings: Settings; selection: Selection;
+export function ModelField({ simple = false, hint, label, value, settings, selection, onChange, onReasoning, open, onOpen }: {
+  simple?: boolean; hint?: string; label: string; value: ModelRoute | null; settings: Settings; selection: Selection;
   onChange: (route: ModelRoute) => void; onReasoning: (route: ModelRoute, effort: string) => void;
   open: boolean; onOpen: (open: boolean) => void;
 }) {
@@ -71,6 +67,7 @@ export function ModelField({ simple = false, label, value, settings, selection, 
         {effort && !efforts.includes(effort) && <option value={effort}>{effort} · unsupported</option>}
       </select>}
     </div>
+    {hint && <p className="field-hint model-role-hint">{hint}</p>}
     {open && <div id={`${id}-menu`} className="model-select-menu" onKeyDown={event => moveOption(event)}>
       {settings.providers.length > 1 && <label className="model-provider">Provider<select aria-label={`${label} provider`} value={providerId} onChange={event => { setProviderId(event.target.value); setSearch(''); }}>{settings.providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select></label>}
       <div className="model-search"><Search size={15} /><input autoFocus aria-label={`Search ${label.toLowerCase()} models`} placeholder="Search models or enter an ID…" value={search} onChange={event => setSearch(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && search.trim()) { event.preventDefault(); choose(filtered.length === 1 ? filtered[0].id : search.trim()); } }} /></div>
@@ -108,7 +105,7 @@ export function ModelPicker({ disabled, settings, selection, onChange, onClose, 
     onChange({ ...selection, modelReasoning });
   }
   function field(role: Role, label: string, value: ModelRoute | null) {
-    return <ModelField label={label} value={value} settings={settings} selection={selection} onReasoning={reasoning} open={open === role} onOpen={next => setOpen(next ? role : null)} onChange={value => {
+    return <ModelField hint={modelGuidance(view, role === 'model' ? 'driver' : role)} label={label} value={value} settings={settings} selection={selection} onReasoning={reasoning} open={open === role} onOpen={next => setOpen(next ? role : null)} onChange={value => {
       if (role === 'planner') onChange({ ...selection, planner: value });
       else if (role === 'worker' && view !== 'single') onChange({ ...selection, architecture: selectArchitecture(view, value) });
       else onChange({ ...selection, ...value });
@@ -119,7 +116,7 @@ export function ModelPicker({ disabled, settings, selection, onChange, onClose, 
       <div className="architecture-field" onKeyDown={event => { if (event.key === 'Escape' && open === 'architecture') { event.stopPropagation(); setOpen(null); architectureTrigger.current?.focus(); } }}>
         <label id={`${architectureId}-label`}>Architecture</label>
         <button ref={architectureTrigger} className="architecture-select" aria-label="Architecture" aria-haspopup="listbox" aria-controls={architectureId} aria-expanded={open === 'architecture'} onClick={() => setOpen(open === 'architecture' ? null : 'architecture')}><span><strong>{arrangement.name}</strong><small>{arrangement.description}</small></span><ChevronDown size={16} /></button>
-        {open === 'architecture' && <div className="architecture-options" id={architectureId} role="listbox" aria-labelledby={`${architectureId}-label`} onKeyDown={event => moveOption(event)}>{arrangements.map(item => <button autoFocus={item.kind === view} role="option" aria-selected={view === item.kind} key={item.kind} onClick={() => chooseArchitecture(item.kind)}><span><strong>{item.name}</strong><small>{item.description}</small></span>{view === item.kind && <Check size={15} />}</button>)}</div>}
+        {open === 'architecture' && <div className="architecture-options" id={architectureId} role="listbox" aria-labelledby={`${architectureId}-label`} onKeyDown={event => moveOption(event)}>{arrangements.map(item => <button autoFocus={item.kind === view} role="option" aria-selected={view === item.kind} key={item.kind} onClick={() => chooseArchitecture(item.kind)}><span><strong>{item.name}{item.recommended && <span className="recommended-label">Recommended</span>}</strong><small>{item.description}</small></span>{view === item.kind && <Check size={15} />}</button>)}</div>}
       </div>
       <section className="model-roles" aria-label="Models">
         <div className="model-column-head"><span>Model</span><span>Reasoning</span></div>

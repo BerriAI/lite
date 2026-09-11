@@ -77,6 +77,7 @@ beforeEach(() => {
   TestEventSource.instances = [];
   vi.stubGlobal('EventSource', TestEventSource);
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  Element.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener() {}, removeEventListener() {} })));
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 });
@@ -90,12 +91,12 @@ describe('composer slash-command autocomplete', () => {
     const server = await mountApp();
     await fill('/');
     expect(popover()).not.toBeNull();
-    expect(options()).toEqual(['/deploy', '/review']);
+    expect(options()).toEqual(expect.arrayContaining(['/models', '/setup', '/deploy', '/review']));
     expect(input().getAttribute('aria-activedescendant')).toBe('command-option-0');
     await fill('/re');
     expect(options()).toEqual(['/review']);
     await fill('/');
-    await key('ArrowDown');
+    for (let index=0;index<options().indexOf('/review');index++) await key('ArrowDown');
     expect(element('#command-popover [aria-selected="true"] strong').textContent).toBe('/review');
     await key('Enter');
     expect(input().value).toBe('/review ');

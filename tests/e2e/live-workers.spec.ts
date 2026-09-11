@@ -79,7 +79,7 @@ test('tool rounds remain visible and compact until prose collapses their combine
   } finally { await request.post(`/api/sessions/${session.id}/cancel`); await request.post('/fixture/delegations/release'); }
 });
 
-test('workspace panel opens by default on desktop and remembers being closed', async ({ page, request }) => {
+test('workspace panel can close during a visit and reopens when entering the session again', async ({ page, request }) => {
   const session = await (await request.post('/api/sessions', { data: {} })).json();
   await page.goto(`/#session/${session.id}`);
   const panel = page.locator('.workspace-panel');
@@ -87,8 +87,8 @@ test('workspace panel opens by default on desktop and remembers being closed', a
   await page.getByRole('button', { name: 'Hide workspace panel', exact: true }).click();
   await expect(panel).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Show workspace panel', exact: true })).toBeVisible();
-  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Hide workspace panel', exact: true })).toBeVisible();
+  await expect(panel).toBeVisible();
 });
 
 test('narrowing the window closes the workspace overlay without changing the desktop preference', async ({ page, request }) => {

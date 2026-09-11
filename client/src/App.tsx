@@ -1,5 +1,5 @@
 import { workerLabels } from './worker-presentation';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type SyntheticEvent } from 'react';
 import { Archive, ArchiveRestore, ArrowDownToLine, ArrowRight, Check, ChevronDown, CircleHelp, Command, Download, FileCode2, Folder, GitFork, Hammer, Menu, MessageSquare, MoreHorizontal, PanelLeftClose, PanelRight, Pencil, Plus, Redo2, Search, Settings2, Shield, Sparkles, Target, Terminal, Trash2, Undo2, Upload, WandSparkles, X } from 'lucide-react';
 import type { Attachment, QueueState, RunEvent, Session, SessionDetail, Settings as SettingsType } from '../../shared/types';
 import { api, applyEvent, errorMessage, patch, post, query, reconcileSession, useSessionDraft, visibleDelegations } from './api';
@@ -7,6 +7,7 @@ import { TaskCard, delegationPath } from './TaskCard';
 import type { DelegationSummary } from '../../shared/delegation';
 import { needsSetup } from '../../shared/setup';
 import { Onboarding } from './Onboarding';
+import { ModelPicker } from './ModelPicker';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
 import type { ApplyProfileRequest, ProfileChoice } from '../../shared/profiles';
@@ -80,6 +81,7 @@ export default function App() {
   const [toast, setToast] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [modelsOpen, setModelsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopWorkspaceOpen, setDesktopWorkspaceOpen] = useState(() => { if (activeId) return true; try { return localStorage.getItem('speedrail.workspace-panel-open') !== 'false'; } catch { return true; } });
   const [compactWorkspace, setCompactWorkspace] = useState(() => window.innerWidth <= 1000);
@@ -623,6 +625,27 @@ export default function App() {
       const session = await post<Session>('/sessions/import', data); navigate(session.id); await refreshSessions(); setToast('Session imported');
     });
   }
+  const builtins = [
+    { name: 'models', description: 'Choose models and how they work together', disabled: selectionDisabled, run: () => setModelsOpen(true) },
+    { name: 'setup', description: 'Connect a gateway and choose your setup', disabled: selectionDisabled, run: () => setSetup({selection, id:activeId, revision:detail?.session.configRevision ?? 0, workspace}) },
+    { name: 'settings', description: 'Providers, preferences, and permissions', run: () => setSettingsOpen(true) },
+    { name: 'new', description: 'Start a new session', run: newSession },
+    { name: 'plan', description: 'Switch to read-only planning', disabled: selectionDisabled, run: () => void changeSelection({...selection, mode:'plan'}) },
+    { name: 'build', description: 'Switch to implementation', disabled: selectionDisabled, run: () => void changeSelection({...selection, mode:'build'}) },
+    { name: 'workspace', description: 'Toggle files, changes, and plan', disabled: !activeId, run: () => setWorkspaceOpen(value => !value) },
+    { name: 'stop', description: 'Stop the running response and pause the queue', disabled: !running, run: () => { if (activeId) void stopResponse(activeId); } },
+    { name: 'export', description: 'Download this session as JSON', disabled: !activeId, run: () => void exportSession() },
+    { name: 'import', description: 'Import a saved session', run: () => importInput.current?.click() },
+    { name: 'help', description: 'Browse actions and project commands', run: () => setPaletteOpen(true) },
+  ];
+  const composerCommands = [...builtins, ...commands.filter(command => !builtins.some(item => item.name === command.name))];
+  function runCommand(content: string) {
+    const match = content.trim().match(/^\/([\w-]+)$/);
+    const command = match && builtins.find(item => item.name === match[1]);
+    if (!command) return false;
+    if (command.disabled) { setToast('That command is unavailable right now.'); return true; }
+    setText(''); command.run(); return true;
+  }
   const visibleSessions = sessions.filter(s => s.title.toLowerCase().includes(search.toLowerCase())).sort((a, b) => b.updatedAt - a.updatedAt);
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const groups = [
@@ -633,7 +656,7 @@ export default function App() {
   return <div className={`app ${sidebarOpen ? 'sidebar-is-open' : ''}`}>
     <a className="skip-link" href="#main-content">Skip to conversation</a>
     {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
-    <aside ref={sidebarRef} className="sidebar" aria-label="Session navigation"><div className="sidebar-brand"><button className="brand" onClick={newSession} aria-label="Speedrail home"><Logo /><span>speedrail<span className="brand-period">.</span></span></button><button className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={17} /></button><span className="local-label">LOCAL</span></div>
+    <aside ref={sidebarRef} className="sidebar" aria-label="Session navigation"><div className="sidebar-brand"><button className="brand" onClick={newSession} aria-label="Speedrail home"><Logo /></button><button className="icon-button sidebar-close" aria-label="Close navigation" onClick={() => setSidebarOpen(false)}><PanelLeftClose size={17} /></button></div>
       <div className="sidebar-top"><button className="new-session" onClick={newSession}><Plus size={17} /><span>New session</span><kbd>⌘ N</kbd></button></div>
       <div className="sessions-heading"><span>{archived ? 'Archived sessions' : 'Your sessions'}</span><button className={`icon-button ${archived ? 'selected' : ''}`} aria-label={archived ? 'Show recent sessions' : 'Show archived sessions'} title={archived ? 'Show recent sessions' : 'Show archived sessions'} onClick={() => setArchived(v => !v)}><Archive size={14} /></button></div>
       {sessions.length > 5 || search ? <div className="session-search"><Search size={13} /><input aria-label="Filter sessions" placeholder="Filter sessions…" value={search} onChange={e => setSearch(e.target.value)} />{search && <button aria-label="Clear session search" onClick={() => setSearch('')}><X size={12} /></button>}</div> : null}
@@ -653,10 +676,10 @@ export default function App() {
             const task = delegations.find(item => item.id === tool.delegationId && item.toolCallId === tool.id && item.parentMessageId === message.id);
             return task || actors.has(`${message.id}:${tool.id}`) ? <TaskCard task={task} tool={tool} label={actors.get(`${message.id}:${tool.id}`)} awaitingApproval={detail.permissions.some(request => request.toolCallId === tool.id)} expanded={expanded} onCancel={() => { if (task) void cancelTask(task); }} cancelling={Boolean(task && cancellingTasks.has(task.id))} error={task && taskErrors.get(task.id)} /> : null;
           }} onDecide={(id, decision) => void act(async () => { await post(`/sessions/${activeId}/permissions/${id}`, { decision }); await refreshDetail(activeId); })} onFork={messageId => void fork(messageId)} renderQuestion={request => <QuestionCard key={request.id} request={request} draft={questionDrafts.get(request.id) ?? emptyQuestionDraft()} onChange={value => changeQuestionDraft(request.id, value)} onAnswer={answer => answerQuestion(request, answer)} onStop={() => void stopResponse(request.sessionId)} busy={answering.has(request.id)} disabled={busy || historyBusy || Boolean(history?.pendingRecovery)} error={questionErrors.get(request.id)} />} /> : <EmptyState title="This session couldn’t be opened">Choose another session, or start a fresh one.<button className="button secondary" onClick={newSession}><Plus size={15} />New session</button></EmptyState>}
-          {detail && <div className="chat-composer">{history?.pendingRecovery && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={commands} text={text} setText={setText}><Composer key={activeId} onPermissionMode={mode => void changePermissionMode(mode)} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} onSteer={content => steerMessage(content)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
+          {detail && <div className="chat-composer">{history?.pendingRecovery && <TurnHistory history={history} disabled={historyDisabled} busy={historyBusy} running={running} preparing={submissionBusy || queueBusy} onAction={askHistory} />}<CommandArea key={activeId} commands={composerCommands} text={text} setText={setText}><Composer onCommand={runCommand} key={activeId} onPermissionMode={mode => void changePermissionMode(mode)} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onQueue={(content, files) => queueMessage(expandSlashCommand(content, commands), files)} onSteer={content => steerMessage(content)} queue={detail.queue} queueBusy={queueBusy} onQueueAction={(action, queueId) => void queueAction(action, queueId)} onCancel={() => void stopResponse(activeId)} running={running} disabled={composerDisabled} workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>}
           {terminalOpen && detail && <div className="terminal-dock"><Suspense fallback={<div className="app-loading"><SpeedRail compact active /><p>Opening terminal…</p></div>}><SessionTerminal key={activeId} sessionId={activeId} onClose={() => setTerminalOpen(false)} /></Suspense></div>}
         </> : <div className="welcome"><h1><Logo /><span>Speedrail<span className="brand-period">.</span></span></h1>
-          <div className="welcome-input"><CommandArea commands={commands} text={text} setText={setText}><Composer settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>
+          <div className="welcome-input"><CommandArea commands={composerCommands} text={text} setText={setText}><Composer onCommand={runCommand} settings={settings} selection={selection} onSelection={v => void changeSelection(v)} selectionDisabled={selectionDisabled} onSend={(content, files) => send(expandSlashCommand(content, commands), files)} onCancel={() => {}} running={false} disabled={composerDisabled} welcome workspace={workspace} text={text} setText={setText} attachments={attachments} setAttachments={setAttachments} draftNotice={draftNotice} onSettings={() => setSettingsOpen(true)} /></CommandArea></div>
           <div className="suggestions">{suggestions.map(({ Icon, label, description, prompt }) => <button key={label} onClick={() => { setText(prompt); document.getElementById('message-input')?.focus(); }}><span className="suggestion-icon"><Icon size={17} /></span><span><strong>{label}</strong><small>{description}</small></span><ArrowRight className="suggestion-arrow" size={14} /></button>)}</div>
           {(!provider?.configured && provider?.baseUrl && !/localhost|127\.0\.0\.1/.test(provider.baseUrl)) && <button className="setup-hint" onClick={() => setSettingsOpen(true)}><Shield size={13} />Connect your provider to get started<ArrowRight size={13} /></button>}
         </div>}
@@ -665,6 +688,7 @@ export default function App() {
     <input type="file" accept="application/json,.json" hidden tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
     {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {contextSession && contextSession === activeId && !running && latestContext && <Modal title="Context details" onClose={() => setContextSession(null)}><div className="context-dialog"><ContextIndicator context={latestContext} /></div></Modal>}
+    {modelsOpen && settings && <ModelPicker settings={settings} selection={selection} disabled={selectionDisabled} onChange={value => void changeSelection(value)} onClose={() => setModelsOpen(false)} onSettings={() => setSettingsOpen(true)} workspace={workspace} />}
     {setup && settings && <Onboarding key={`${setup.id}:${setup.workspace}`} selection={setup.selection} settings={settings} quick={setup.quick} onSave={saveSetup} onSettings={saveSettings} onClose={() => setSetup(null)} renderProviders={close => <Settings settings={settings} onClose={close} onSave={saveSettings} />} />}
     {settingsOpen && settings && <Settings settings={settings} profilesDisabled={selectionDisabled} onProfiles={() => { setSidebarOpen(false); openProfiles(); }} profiles={profileDialog && profileDialog.id === activeId ? <ProfilePicker embedded key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeSettings} onApply={applyProfile} /> : null} onClose={closeSettings} onSave={saveSettings} />}
     {paletteOpen && <CommandPalette sessions={sessions} commands={commands} onClose={closePalette} onSession={navigate} onPrompt={p => { setText(p); setPaletteOpen(false); setTimeout(() => document.getElementById('message-input')?.focus(), 50); }} actions={[{ name: 'New session', description: 'Start with a clean slate', Icon: Plus, run: newSession, shortcut: '⌘ N' }, { name: 'Settings', description: 'Models, providers, and workspace', Icon: Settings2, run: () => setSettingsOpen(true) }, { name: 'Toggle workspace', description: 'Files, Git changes, and plan', Icon: PanelRight, run: () => setWorkspaceOpen(v => !v) }, { name: 'Import session', description: 'Restore a conversation from JSON', Icon: Upload, run: () => importInput.current?.click() }, ...(activeId ? [{ name: 'Export session', description: 'Save this conversation as JSON', Icon: Download, run: () => void exportSession() }] : [])]} />}
@@ -679,12 +703,19 @@ export default function App() {
   </div>;
 }
 
-function CommandArea({ commands, text, setText, children }: { commands: SlashCommand[]; text: string; setText: (value: string) => void; children: ReactNode }) {
+function CommandArea({ commands, text, setText, children }: { commands: {name: string; description: string}[]; text: string; setText: (value: string) => void; children: ReactNode }) {
   const [caret, setCaret] = useState(0);
+  const acceptedCaret = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (acceptedCaret.current === null) return;
+    const input = document.getElementById('message-input') as HTMLTextAreaElement | null;
+    input?.setSelectionRange(acceptedCaret.current, acceptedCaret.current);
+    acceptedCaret.current = null;
+  }, [text]);
   const [selected, setSelected] = useState(0);
   const [dismissed, setDismissed] = useState(false);
   const token = text.match(/^\/([\w-]*)/);
-  const matches = token && caret >= 1 && caret <= token[0].length && !dismissed ? commands.filter(c => c.name.toLowerCase().startsWith(token[1].toLowerCase())).slice(0, 8) : [];
+  const matches = token && caret >= 1 && caret <= token[0].length && !dismissed ? commands.filter(c => c.name.toLowerCase().startsWith(token[1].toLowerCase())) : [];
   const open = matches.length > 0;
   const highlighted = open ? Math.min(selected, matches.length - 1) : -1;
   const exact = text.match(/^\/(\S+)(?:\s|$)/);
@@ -694,14 +725,16 @@ function CommandArea({ commands, text, setText, children }: { commands: SlashCom
     if (!input) return;
     if (open) { input.setAttribute('aria-expanded', 'true'); input.setAttribute('aria-controls', 'command-popover'); input.setAttribute('aria-activedescendant', `command-option-${highlighted}`); }
     else { input.removeAttribute('aria-expanded'); input.removeAttribute('aria-controls'); input.removeAttribute('aria-activedescendant'); }
+    if (open) document.getElementById(`command-option-${highlighted}`)?.scrollIntoView({block:"nearest"});
   }, [open, highlighted]);
   function sync(e: SyntheticEvent) { const target = e.target as HTMLElement; if (target instanceof HTMLTextAreaElement && target.id === 'message-input') setCaret(target.selectionStart ?? 0); }
-  function accept(command: SlashCommand) {
+  function accept(command: {name: string}) {
     const rest = text.slice(token?.[0].length ?? 0).replace(/^ /, '');
+    acceptedCaret.current = command.name.length + 2;
     setText(`/${command.name} ${rest}`);
     setSelected(0); setCaret(command.name.length + 2);
     const input = document.getElementById('message-input') as HTMLTextAreaElement | null;
-    if (input) { input.focus(); setTimeout(() => input.setSelectionRange(command.name.length + 2, command.name.length + 2), 0); }
+    input?.focus();
   }
   function keydown(e: ReactKeyboardEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement;
@@ -712,7 +745,7 @@ function CommandArea({ commands, text, setText, children }: { commands: SlashCom
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setDismissed(true); }
   }
   return <div className="command-area" onKeyDownCapture={keydown} onKeyUp={sync} onClick={sync} onInput={e => { sync(e); setDismissed(false); setSelected(0); }}>
-    {open && <div className="command-popover" id="command-popover" role="listbox" aria-label="Workspace commands">{matches.map((c, i) => <button key={c.name} id={`command-option-${i}`} role="option" aria-selected={i === highlighted} tabIndex={-1} className={i === highlighted ? 'selected' : ''} onMouseMove={() => setSelected(i)} onMouseDown={e => e.preventDefault()} onClick={() => accept(c)}><strong>/{c.name}</strong><small>{c.description}</small></button>)}</div>}
+    {open && <div className="command-popover" id="command-popover" role="listbox" aria-label="Slash commands">{matches.map((c, i) => <button key={c.name} id={`command-option-${i}`} role="option" aria-selected={i === highlighted} tabIndex={-1} className={i === highlighted ? 'selected' : ''} onMouseMove={() => setSelected(i)} onMouseDown={e => e.preventDefault()} onClick={() => accept(c)}><strong>/{c.name}</strong><small>{c.description}</small></button>)}</div>}
     {children}
     {active && <div className="command-hint" role="status">Command: {active.name} — {active.description}</div>}
   </div>;
