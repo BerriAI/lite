@@ -37,15 +37,18 @@ async function send(page: Page, session: Session, text: string) {
   await page.getByRole('button', { name: 'Send message', exact: true }).click(); expect((await accepted).status()).toBe(202);
 }
 
-test('a mutation turn with no checks shows the receipts row and appended notice', async ({ page, request }) => {
+test('unchecked changes show one concise verification notice with expandable details', async ({ page, request }) => {
   const session = await create(request); await open(page, session);
   await send(page, session, 'RECEIPTS_BROWSER please write the demo file');
   const result = await done(request, session);
   const final = result.messages.at(-1)!;
-  expect(final.content).toContain('[Receipts: 1 file(s) changed, no checks were run.]');
+  expect(final.content).toContain('Changes haven’t been checked: No verification commands were recorded after these changes.');
   expect(final.receipts?.filesChanged).toEqual(['receipts-demo.txt']);
-  await expect(page.locator('.receipts-row')).toContainText('receipts-demo.txt');
-  await expect(page.locator('.receipts-row')).toContainText(/No checks run/i);
+  await expect(page.locator('.receipts-row summary')).toHaveText('Changes haven’t been checked');
+  await expect(page.locator('.assistant-message .markdown')).not.toContainText('Changes haven’t been checked');
+  await expect(page.getByText('Files changed: receipts-demo.txt', { exact: true })).not.toBeVisible();
+  await page.locator('.receipts-row summary').click();
+  await expect(page.getByText('Files changed: receipts-demo.txt', { exact: true })).toBeVisible();
 });
 
 test('a session goal continues turns automatically and completes with a banner', async ({ page, request }) => {
@@ -71,4 +74,28 @@ test('a blocked goal stops continuing and the banner can be cleared', async ({ p
   await expect(page.locator('.goal-banner')).toContainText(/blocked/i);
   await page.locator('.goal-banner').getByRole('button', { name: /Clear goal/ }).click();
   await expect(page.locator('.goal-banner')).toHaveCount(0);
+});
+
+test('historical failed command dumps become a single expandable verification notice', async ({ page, request }) => {
+  const session = await create(request);
+  await request.post(`/api/sessions/${session.id}/messages`, { data: { content: 'Reply with hello' } });
+  await done(request, session);
+  const commands = ['npx vitest run | tail -18', 'npm test', "python3 - <<'PY'\nprint('historical edit script')\nPY\nnpm run typecheck"];
+  await page.route(`**/api/sessions/${session.id}`, async route => {
+    const response = await route.fetch(), data = await response.json();
+    const final = data.messages.findLast((message: { role: string }) => message.role === 'assistant');
+    final.content = `The change is ready.\n\n[Receipts: 3 check(s) still failing: ${commands.join(', ')}.]`;
+    final.receipts = { filesChanged: [], commandsRun: commands, checksRun: commands, checksFailed: commands, unresolvedChecks: commands, filesChangedAfterLastCheck: [], unreadFilesChanged: [] };
+    await route.fulfill({ response, json: data });
+  });
+  await open(page, session);
+  await expect(page.locator('.assistant-message .message-body > .markdown')).toHaveText('The change is ready.');
+  const row = page.locator('.receipts-row');
+  await expect(row.locator('summary')).toHaveText('Verification needs review');
+  await expect(row.locator('pre').last()).not.toBeVisible();
+  await row.locator('summary').click();
+  await expect(row).toContainText('3 earlier verification attempts failed or timed out without a recorded successful rerun.');
+  await expect(row.locator('pre').last()).toBeVisible();
+  await expect(row.locator('pre').last()).toHaveText(commands[2]);
+  await page.screenshot({ path: 'test-results/verification-details.png', fullPage: true });
 });

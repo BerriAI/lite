@@ -106,29 +106,32 @@ try{
     if(label==='Sidekick'){
       await waitFor(()=>screen().includes('Driver wants to ask Sidekick'),'sidekick permission');terminal.write('1');
       await waitFor(()=>screen().includes('wants to write a file'),'sidekick action');
-      await waitFor(()=>screen().includes('Sidekick ·'),'sidekick handoff visible');
-      await waitFor(()=>screen().includes('Write sidekick-note.txt'),'sidekick card opens its bound invocation by default');await save('07-sidekick');clickLine('▾ Sidekick ·');
+      await waitFor(()=>screen().split('\n').some(line=>line.trim()==='Sidekick'),'sidekick identity visible');
+      await waitFor(()=>screen().includes('Write sidekick-note.txt'),'sidekick card opens its bound invocation by default');await save('07-sidekick');clickLine('▾',screen().split('\n').findIndex(line=>line.trim()==='Sidekick')+1);
       await waitFor(()=>!screen().includes('Write sidekick-note.txt'),'sidekick card collapses without resolving its permission');terminal.write('4');
     }else{
-      await waitFor(()=>screen().includes(label+' 1 ·')&&screen().includes(label+' 2 ·'),'both worker cards');
+      await waitFor(()=>screen().split('\n').some(line=>line.trim()===label+' 1')&&screen().split('\n').some(line=>line.trim()===label+' 2'),'both worker cards');
       await waitFor(()=>screen().includes('beta is inspecting its assignment.'),'worker card opens its bound child transcript by default');
       assert(!screen().includes('A small project for browser tests.'));
-      let card=screen().split('\n').findIndex(line=>line.includes(label+' 2 ·'));
+      let card=screen().split('\n').findIndex(line=>line.trim()===label+' 2');
       await waitFor(()=>screen().split('\n').some((line,index)=>index>card&&line.includes('1 step')),'child work log is visible');
-      await new Promise(done=>setTimeout(done,150));card=screen().split('\n').findIndex(line=>line.includes(label+' 2 ·'));clickLine('1 step',card+1);
+      await new Promise(done=>setTimeout(done,150));card=screen().split('\n').findIndex(line=>line.trim()===label+' 2');clickLine('▸ 1 step',card+1);
       await waitFor(()=>screen().includes('Read README.md'),'child work log opens');clickLine('Read README.md',card+1);
       await waitFor(()=>screen().includes('A small project for browser tests.'),'child tool result opens inline');await save('05-'+label.toLowerCase()+'s');
       terminal.write('\x1b[5~');await new Promise(done=>setTimeout(done,150));
       assert(screen().includes('beta is inspecting its assignment.'),'Page Up reads the shared conversation');
       terminal.write('\x07');await new Promise(done=>setTimeout(done,150));
-      card=screen().split('\n').findIndex(line=>line.includes(label+' 2 ·'));clickLine('Read README.md',card+1);
+      card=screen().split('\n').findIndex(line=>line.trim()===label+' 2');clickLine('Read README.md',card+1);
       await waitFor(()=>!screen().includes('A small project for browser tests.'),'child tool result collapses');
       terminal.resize(80,24);emulator.resize(80,24);await new Promise(done=>setTimeout(done,300));await save('06-'+label.toLowerCase()+'s-narrow-expanded');
       terminal.resize(100,38);emulator.resize(100,38);
       await fetch(base+'/fixture/delegations/release',{method:'POST'});
-      await waitFor(()=>screen().includes('Driver report: both assignments are complete.'),'driver receives completed workers');clickLine('2 '+label.toLowerCase()+'s');
-      await waitFor(()=>screen().includes(label+' 2 ·'),'completed parent activity reopens');
-      await waitFor(()=>screen().includes('beta final report: inspection complete.'),'completed child transcript keeps its final update');clickLine(label+' 2 ·');
+      await waitFor(()=>screen().includes('Driver report: both assignments are complete.'),'driver receives completed workers');
+      await waitFor(()=>screen().split('\n').some(line=>line.trim()===label+' 2'),'completed worker identity remains visible');
+      card=screen().split('\n').findIndex(line=>line.trim()===label+' 2');
+      clickLine('▸ 1 step',card+1);
+      await waitFor(()=>screen().includes('beta is inspecting its assignment.'),'completed worker reopens directly');
+      await waitFor(()=>screen().includes('beta final report: inspection complete.'),'completed child transcript keeps its final update');clickLine('▾ 1 step',screen().split('\n').findIndex(line=>line.trim()===label+' 2')+1);
       await waitFor(()=>!screen().includes('beta is inspecting its assignment.'),'worker card collapses without stopping work');
     }
     await fetch(base+'/fixture/delegations/release',{method:'POST'});

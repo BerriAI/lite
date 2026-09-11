@@ -144,7 +144,7 @@ describe('receiptsNotice', () => {
     expect(receiptsNotice({ ...base, filesChanged: ['a.ts'], checksRun: ['npm test'] })).toBeNull();
   });
   it('reports missing checks and post-check edits', () => {
-    expect(receiptsNotice({ ...base, filesChanged: ['a.ts', 'b.ts'] })).toBe('\n\n[Receipts: 2 file(s) changed, no checks were run.]');
-    expect(receiptsNotice({ ...base, filesChanged: ['a.ts'], checksRun: ['npm test'], filesChangedAfterLastCheck: ['a.ts'] })).toBe('\n\n[Receipts: 1 file(s) changed, 1 changed after the last check.]');
+    expect(receiptsNotice({ ...base, filesChanged: ['a.ts', 'b.ts'] })).toBe('\n\nChanges haven’t been checked: No verification commands were recorded after these changes.');
+    expect(receiptsNotice({ ...base, filesChanged: ['a.ts'], checksRun: ['npm test'], filesChangedAfterLastCheck: ['a.ts'] })).toBe('\n\nChanges need another check: Files were edited after the last verification command.');
   });
 });

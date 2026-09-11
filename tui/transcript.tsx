@@ -14,7 +14,7 @@ import {
   outputBudget, scannerFrame, TODO_MARKERS, parseTodos, type ToolRowModel,
   SCANNER_INTERVAL_MS, SPINNER_FRAMES, SPINNER_INTERVAL_MS,
 } from './transcriptModel.js';
-import { conversationGroups, usageLabel } from './conversation.js';
+import { activityActors, activitySections, conversationGroups, usageLabel, type ActivityEntry } from './conversation.js';
 import { Button } from './ui.js';
 import { terminalText } from './protocol.js';
 import { toolRow, reasoningSummary } from './transcriptModel.js';
@@ -22,8 +22,7 @@ import { useConfig, useTheme } from './context.js';
 import type { TerminalController } from './controller.js';
 import { Brand } from './brand.js';
 import { WorkerCard } from './workerCard.js';
-import { workerLabels } from '../shared/worker-presentation.js';
-import { visibleDelegations } from '../shared/events.js';
+import { verificationSummary, withoutVerificationNotice } from '../shared/verification.js';
 
 /** Heavy left rail used by user messages, block tools, and error boxes. */
 export const RAIL_BORDER = {
@@ -331,28 +330,43 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, em
   </box>;
 }
 
-function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, actors, linked, embedded }: { actors: ReturnType<typeof workerLabels>; linked: ReturnType<typeof visibleDelegations>; controller?: TerminalController; steps: Message[]; detail: SessionDetail; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; onInspect?: (steps: Message[]) => void; embedded: boolean }) {
+function DriverActivity({ entries, detail, live, heading, syntax, width, embedded }: { entries: ActivityEntry[]; detail: SessionDetail; live: boolean; heading: boolean; syntax: ReturnType<typeof useSyntax>; width: number; embedded: boolean }) {
   const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
-  const calls = steps.flatMap(message => message.toolCalls ?? []);
-  const thinking = steps.slice(1).filter(message => message.reasoning);
-  if (!calls.length && !thinking.length) return null;
-  const current = calls.findLast(call => call.status === 'running' || call.status === 'pending');
-  const tasks = detail.delegations?.filter(task => task.parentTurnId === steps[0]?.turnId && task.status === 'running') ?? [];
+  const calls = entries.flatMap(entry => entry.call ? [entry.call] : []);
   const issues = calls.filter(call => call.status === 'error' || call.status === 'denied').length;
-  const label = live && !detail.permissions.length && !detail.questions?.length ? tasks.length > 1 ? `${tasks.length} workers running` : tasks.length === 1 ? `${tasks[0].role || 'Research'} · ${tasks[0].activity || tasks[0].description}` : current ? toolRow(current).text || current.name : 'Thinking' : calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process';
   const open = live || expanded || settings.toolDetails || settings.showThinking;
-  const summary = calls.some(call => call.name === 'delegate') ? `${calls.filter(call => call.name === 'delegate').length} ${detail.session.architecture?.kind === 'expert-fusion' ? 'experts' : 'workers'}${calls.some(call => call.name !== 'delegate') ? ` · ${calls.filter(call => call.name !== 'delegate').length} steps` : ''}` : label;
   return <box marginTop={1} flexDirection="column" flexShrink={0}>
-    {!live && <box flexDirection="row"><Button onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${terminalText(summary).slice(0, Math.max(15, width - 8))}${issues ? ` · ${issues} issues` : ''}`}</Button></box>}
-    {open && steps.map((message, index) => <box key={message.id} flexDirection="column" flexShrink={0}>
-      {index > 0 && message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && message === steps.at(-1) && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning) }} />}
-      {message.toolCalls?.map(call => {
-        const task = linked.find(task => task.id === call.delegationId && task.parentMessageId === message.id && task.toolCallId === call.id);
-        const actor = actors.get(`${message.id}:${call.id}`);
-        if (controller && (task || actor)) return <WorkerCard key={call.id} task={task} call={call} label={actor || 'Research'} controller={controller} width={width - 6} needsApproval={detail.permissions.some(item => item.toolCallId === call.id)} renderTranscript={(child, childWidth) => <Transcript detail={child} width={childWidth} active={false} embedded />} />;
-        return <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} embedded={embedded} />;
-      })}
-    </box>)}
+    {heading && <text paddingLeft={3} fg={toHex(theme.textMuted)}>Driver</text>}
+    {!live && <Button onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${calls.length ? `${calls.length} ${calls.length === 1 ? 'step' : 'steps'}` : 'Thought process'}${issues ? ` · ${issues} issues` : ''}`}</Button>}
+    {open && entries.map(({ message, call }) => call
+      ? <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} embedded={embedded} />
+      : <ReasoningRow key={message.id} subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning!) }} />)}
+  </box>;
+}
+
+function WorkLog({ steps, detail, actors, live, syntax, width, controller, embedded }: { controller?: TerminalController; steps: Message[]; detail: SessionDetail; actors: ReturnType<typeof activityActors>; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; embedded: boolean }) {
+  const settings = useTranscriptSettings();
+  const sections = activitySections(steps, actors);
+  const firstHasHeading = Boolean(steps[0]?.content.trim() || steps[0]?.reasoning);
+  return <>{sections.map((section, index) => section.kind === 'worker' && controller
+    ? <WorkerCard key={section.id} task={section.task} call={section.call} label={section.label} controller={controller} width={width - 6} defaultOpen={live || settings.toolDetails || settings.showThinking} needsApproval={detail.permissions.some(item => item.toolCallId === section.call.id)} renderTranscript={(child, childWidth) => <Transcript detail={child} width={childWidth} active={false} embedded />} />
+    : <DriverActivity key={section.id} entries={section.kind === 'driver' ? section.entries : [{ message: section.message, call: section.call }]} detail={detail} live={live && index === sections.length - 1} heading={!embedded && Boolean(detail.session.architecture) && (index > 0 || !firstHasHeading)} syntax={syntax} width={width} embedded={embedded} />)}</>;
+}
+
+function VerificationRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
+  const theme = useTheme(), [open, setOpen] = useState(false);
+  const summary = verificationSummary(receipts);
+  if (!summary) return null;
+  const unresolved = receipts.unresolvedChecks ?? receipts.checksFailed;
+  const commands = unresolved.length ? unresolved : receipts.checksRun;
+  return <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
+    <Button onPress={() => setOpen(!open)}><span fg={toHex(summary.attention ? theme.warning : theme.textMuted)}>{`${open ? '▾' : '▸'} ${summary.title}`}</span></Button>
+    {open && <box paddingLeft={2} flexDirection="column" flexShrink={0}>
+      <text fg={toHex(theme.textMuted)} wrapMode="word">{summary.description}</text>
+      {receipts.filesChangedAfterLastCheck.length > 0 && <text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Edited after checks: ${receipts.filesChangedAfterLastCheck.join(', ')}`)}</text>}
+      {commands.map((command, index) => <text key={index} marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(command, true)}</text>)}
+      {receipts.filesChanged.length > 0 && <text marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Files changed: ${receipts.filesChanged.join(', ')}`)}</text>}
+    </box>}
   </box>;
 }
 
@@ -364,8 +378,7 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
   const latest = () => { follow(true); scroll.current?.scrollTo(Infinity); };
   const resumeAtBottom = () => { const view = scroll.current; if (view && view.scrollTop + view.viewport.height >= view.scrollHeight - 1) follow(true); };
   const groups = useMemo(() => conversationGroups(detail), [detail.messages, detail.session.status]);
-  const actors = useMemo(() => workerLabels(detail), [detail.messages, detail.delegations]);
-  const linked = useMemo(() => visibleDelegations(detail), [detail.messages, detail.delegations]);
+  const actors = useMemo(() => activityActors(detail), [detail.messages, detail.delegations, detail.session.id, detail.session.architecture]);
   const visible = groups.slice(-limit);
   useEffect(() => { setLimit(120); latest(); }, [detail.session.id]);
   useKeyboard(key => {
@@ -382,12 +395,14 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
       if (message.role === 'user') return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />;
       if (message.role === 'system') return <box key={message.id} marginTop={1} paddingLeft={2} flexShrink={0}><text fg={toHex(theme.textMuted)}>{terminalText(message.content, true)}</text></box>;
       const usageMessage = steps.findLast(step => step.turnUsage) ?? steps.at(-1) ?? message;
+      const content = withoutVerificationNotice(message.content, message.receipts);
       return <box key={message.id} flexDirection="column" flexShrink={0}>
         {(message.content.trim() || message.reasoning) && detail.session.architecture && controller && <text paddingLeft={3} marginTop={1} fg={toHex(theme.textMuted)}>Driver</text>}
         {message.reasoning && <ReasoningRow subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning) }} />}
-        {message.content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(message.content, true)} syntax={syntax.normal} />}
-        <WorkLog actors={actors} linked={linked} steps={steps} detail={detail} live={live} syntax={syntax} width={width} onInspect={onInspect} controller={controller} embedded={embedded} />
+        {content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(content, true)} syntax={syntax.normal} />}
+        <WorkLog steps={steps} detail={detail} actors={actors} live={live} syntax={syntax} width={width} controller={controller} embedded={embedded} />
         {message.error && <ErrorRow error={terminalText(message.error, true)} />}
+        {message.receipts && <VerificationRow receipts={message.receipts} />}
         {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
       </box>;
     })}

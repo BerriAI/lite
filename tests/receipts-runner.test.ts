@@ -37,7 +37,7 @@ describe('end-of-turn evidence receipts in the Runner', () => {
     await run(session.id, 'Create a file');
     expect(await readFile(join(directory, 'made.txt'), 'utf8')).toBe('evidence');
     const final = finalAssistant(session.id);
-    expect(final.content).toBe('File written.\n\n[Receipts: 1 file(s) changed, no checks were run.]');
+    expect(final.content).toBe('File written.\n\nChanges haven’t been checked: No verification commands were recorded after these changes.');
     expect(final.receipts).toEqual({ filesChanged: ['made.txt'], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: ['made.txt'] });
     // Receipts survive persistence and reach the session detail projection.
     expect((await api(`/sessions/${session.id}`)).body.messages.at(-1).receipts.filesChanged).toEqual(['made.txt']);
@@ -72,7 +72,7 @@ describe('end-of-turn evidence receipts in the Runner', () => {
     };
     await run(session.id, 'Check then edit');
     const final = finalAssistant(session.id);
-    expect(final.content).toBe('Tweaked.\n\n[Receipts: 1 file(s) changed, 1 changed after the last check.]');
+    expect(final.content).toBe('Tweaked.\n\nChanges need another check: Files were edited after the last verification command.');
     expect(final.receipts?.filesChangedAfterLastCheck).toEqual(['late.txt']);
   });
 

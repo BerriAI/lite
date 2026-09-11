@@ -350,6 +350,11 @@ summary::-webkit-details-marker { display: none; }
 .message-actions .icon-button { width: 25px; height: 25px; }
 .usage { color: var(--faint); font-size: 9px; margin-left: 7px; }
 .receipts-row { margin-top: 13px; color: var(--secondary); font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
+.receipts-row summary { cursor: pointer; display: flex; align-items: center; gap: 5px; list-style: none; }
+.receipts-row[open] > summary svg { transform: rotate(90deg); }
+.receipts-row.needs-review summary { color: var(--amber); }
+.receipts-row p { margin: 6px 0; }
+.receipts-row pre { white-space: pre-wrap; font: inherit; font-family: var(--mono); margin: 8px 0; }
 .context-estimate { margin-top: 13px; color: var(--secondary); max-width: 100%; }
 .context-estimate > summary { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; min-height: 28px; list-style: none; cursor: pointer; font-size: 10px; line-height: 1.6; }
 .context-estimate > summary span { min-width: 0; overflow-wrap: anywhere; }

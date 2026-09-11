@@ -90,6 +90,16 @@ try{
   assert(!frames.some(frame=>frame.text.includes('Sidekick · Thinking')),'task progress does not repeat the thinking indicator');
   assert(frames.every(frame=>(frame.text.match(/Thinking…/g)??[]).length<=1),'one thinking indicator during this sequential handoff');
   assert(screen().includes('Driver · 2/2 done')&&screen().includes('Sidekick · 3/3 done'),'task completion remains visible');
+  const lines=screen().split('\n'), actor=lines.findIndex(line=>/^\s*Sidekick\s*(?:│.*)?$/.test(line));
+  assert(actor>=0&&lines[actor+1].includes('▸ 5 steps · completed'),'Sidekick identity stays above its collapsed steps');
+  assert(lines.slice(actor+2).some(line=>/^\s*Driver\s*(?:│.*)?$/.test(line)),'Driver is labeled again after the handoff');
+  assert(!lines[actor+1].includes('Sidekick'),'the activity row does not repeat the agent name');
+  const verification=lines.findIndex(line=>line.includes('Changes haven’t been checked'));
+  assert(verification>=0&&!screen().includes('No verification commands'),'verification details start collapsed');
+  const column=lines[verification].indexOf('Changes haven’t been checked')+2;
+  terminal.write(`\x1b[<0;${column};${verification+1}M\x1b[<0;${column};${verification+1}m`);
+  await waitFor(()=>screen().includes('No verification commands were recorded'),'verification opens inline');await save('verification-details');
+
  }
  await writeFile(join(artifacts,'frames.jsonl'),frames.map(frame=>JSON.stringify(frame)).join('\n'));
  console.log('Captured '+frames.length+' frames across real driver/Sidekick tools, tasks, approvals, and streamed text.');

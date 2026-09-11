@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Message, SessionDetail } from '../shared/types.js';
-import { conversationGroups, usageLabel, usageDetails } from '../tui/conversation.js';
+import { activityActors, activitySections, conversationGroups, usageLabel, usageDetails } from '../tui/conversation.js';
 const message = (id: string, extra: Partial<Message>): Message => ({ id, sessionId: 'root', role: 'assistant', content: id, createdAt: 1, ...extra });
 function detail(messages: Message[], status = 'idle'): SessionDetail { return { session: { id: 'root', status, model: 'new-model', mode: 'plan' }, messages, permissions: [], todos: [] } as unknown as SessionDetail; }
 describe('terminal conversation parity', () => {
@@ -25,5 +25,30 @@ describe('terminal conversation parity', () => {
     expect(usageDetails(m, m.turnUsage)).toContain('expert · fixture/strong');
     expect(usageDetails(m, m.turnUsage)).toContain('Usage not reported');
     expect(usageDetails(m, m.turnUsage)).not.toContain('$0');
+  });
+});
+
+describe('agent activity sections', () => {
+  it('preserves Driver → Sidekick → Driver order within one consecutive group of tools', () => {
+    const before = { id: 'read', name: 'read_file', args: { path: 'a.ts' }, status: 'completed' as const };
+    const sidekick = { id: 'child', name: 'sidekick', args: {}, status: 'completed' as const };
+    const after = { id: 'check', name: 'bash', args: { command: 'npm test' }, status: 'completed' as const };
+    const steps = [message('a', { content: '', reasoning: 'Driver first reasoning.', toolCalls: [before, sidekick] }), message('b', { content: '', reasoning: 'Driver reviews the result.', toolCalls: [after] })];
+    const sections = activitySections(steps, activityActors(detail(steps)));
+    expect(sections.map(section => section.kind)).toEqual(['driver', 'worker', 'driver']);
+    expect(sections[1]).toMatchObject({ label: 'Sidekick', call: sidekick });
+    expect(sections[0]).toMatchObject({ entries: [{ call: before }] });
+    expect(sections[2]).toMatchObject({ entries: [{ message: steps[1] }, { call: after }] });
+    expect(sections.flatMap(section => section.kind === 'driver' ? section.entries.filter(entry => !entry.call) : [])).toHaveLength(1);
+  });
+  it.each(['team-fusion', 'expert-fusion'] as const)('keeps separate numbered agents before, during and after %s assignments', kind => {
+    const steps = [message('a', { content: '', toolCalls: [1, 2].map(n => ({ id: `worker-${n}`, name: 'delegate', args: {}, status: 'pending' })) })];
+    const session = detail(steps);
+    session.session.architecture = { kind, ...(kind === 'team-fusion' ? { worker: { providerId: 'fixture', model: 'fast' } } : { expert: { providerId: 'fixture', model: 'strong' } }) } as SessionDetail['session']['architecture'];
+    const expected = kind === 'team-fusion' ? ['Worker 1', 'Worker 2'] : ['Expert 1', 'Expert 2'];
+    for (const status of ['pending', 'running', 'completed'] as const) {
+      for (const call of steps[0].toolCalls!) call.status = status;
+      expect(activitySections(steps, activityActors(session)).map(section => section.kind === 'worker' && section.label)).toEqual(expected);
+    }
   });
 });

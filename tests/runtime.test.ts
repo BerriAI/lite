@@ -130,7 +130,8 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
       expect(response.ok, JSON.stringify(result)).toBe(true);
       return result;
     };
-    expect(await api('/health')).toEqual({ ok: true, name: 'litespeed', version: '0.1.0' });
+    const packageVersion = JSON.parse(await readFile(join(project, 'package.json'), 'utf8')).version;
+    expect(await api('/health')).toEqual({ ok: true, name: 'litespeed', version: packageVersion });
     expect(await (await fetch(app.base + '/')).text()).toContain('<div id="root">');
     const initial = await api('/settings');
     expect(initial.providers).toEqual([]);
@@ -171,7 +172,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(providerCalls).toHaveLength(2);
     const completed = await api(sessionPath);
     // A mutation turn with no checks gets the host receipts notice appended.
-    expect(completed.messages.at(-1).content).toBe('Runtime complete.\n\n[Receipts: 1 file(s) changed, no checks were run.]');
+    expect(completed.messages.at(-1).content).toBe('Runtime complete.\n\nChanges haven’t been checked: No verification commands were recorded after these changes.');
     expect(completed.history).toMatchObject({ hasCheckpoints: true, canUndo: true, canRedo: false });
     expect(completed.history.undoId).toEqual(expect.any(String));
     expect(completed.history.pendingRecovery).toBeUndefined();

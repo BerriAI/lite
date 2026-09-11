@@ -1,5 +1,6 @@
 import type { Message, ToolCall } from '../shared/types.js';
 import { checkCommandKey, checkFailed, isCheckCommand, type TurnReceipts } from '../shared/receipts.js';
+export { verificationNotice as receiptsNotice } from '../shared/verification.js';
 
 /** Pure end-of-turn accounting from tool receipts. Walks the assistant
  * messages AFTER the accepted user turn (sinceMessageId; from the start when
@@ -62,14 +63,4 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
   // Empty when no checks ran: that turn is already fully described by "no checks were run".
   const filesChangedAfterLastCheck = lastCheck < 0 ? [] : filesChanged.filter(path => lastChange.get(path)! > lastCheck);
   return { filesChanged, commandsRun, checksRun, checksFailed, unresolvedChecks: [...unresolvedChecks.values()], filesChangedAfterLastCheck, unreadFilesChanged: filesChanged.filter(path => unread.has(path)) };
-}
-
-/** The short host line appended to a mutating turn's final assistant message
- * when the work is unverified; null when nothing needs saying (no mutation, or
- * checks ran after the last change). Observation only, never a gate. */
-export function receiptsNotice(receipts: TurnReceipts): string | null {
-  if (receipts.unresolvedChecks?.length) return `\n\n[Receipts: ${receipts.unresolvedChecks.length} check(s) still failing: ${receipts.unresolvedChecks.join(', ')}.]`;
-  if (!receipts.filesChanged.length || (receipts.checksRun.length !== 0 && !receipts.filesChangedAfterLastCheck.length)) return null;
-  const detail = receipts.checksRun.length === 0 ? ', no checks were run' : `, ${receipts.filesChangedAfterLastCheck.length} changed after the last check`;
-  return `\n\n[Receipts: ${receipts.filesChanged.length} file(s) changed${detail}.]`;
 }

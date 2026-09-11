@@ -8,33 +8,38 @@ import { toHex } from './theme.js';
 import { terminalText } from './protocol.js';
 import { Button } from './ui.js';
 
-type TranscriptRenderer = (detail: DelegationDetail, width: number) => ReactNode;
+type Props = { task?: DelegationSummary; call: ToolCall; label: string; controller?: TerminalController; width: number; needsApproval: boolean; defaultOpen?: boolean; renderTranscript: (detail: DelegationDetail, width: number) => ReactNode };
 
-function WorkerTranscript({ task, controller, width, renderTranscript }: { task: DelegationSummary; controller: TerminalController; width: number; renderTranscript: TranscriptRenderer }) {
-  const theme = useTheme();
-  const { detail, error, retry } = useInvocation(controller.client, task);
-  return <box flexDirection="column" flexShrink={0}>
-    {error && <><text fg={toHex(theme.warning)} wrapMode="word">{terminalText(error, true)}</text><Button onPress={retry}>Retry transcript</Button></>}
-    {!detail && !error && <text fg={toHex(theme.textMuted)}>Connecting to transcript…</text>}
-    {detail && renderTranscript(detail, Math.max(24, width - 2))}
-  </box>;
-}
-
-export function WorkerCard({ task, call, label, controller, width, needsApproval, renderTranscript }: { task?: DelegationSummary; call: ToolCall; label: string; controller?: TerminalController; width: number; needsApproval: boolean; renderTranscript: TranscriptRenderer }) {
-  // WorkLog mounts cards only while its response activity is visible, matching
-  // the web client where a visible work log opens its bound task transcript.
-  const theme = useTheme(), [expanded, setExpanded] = useState(true);
+function WorkerActivity({ detail, error, retry, task, call, label, controller, width, needsApproval, defaultOpen = false, renderTranscript }: Props & { detail?: DelegationDetail | null; error?: string; retry?: () => void }) {
+  const theme = useTheme(), [expanded, setExpanded] = useState<boolean | null>(null);
+  const open = expanded ?? defaultOpen;
   const status = task ? task.status === 'running' ? 'Working' : task.status.replaceAll('_', ' ') : needsApproval ? 'Needs approval' : call.status === 'pending' ? 'Queued' : call.status === 'running' ? 'Starting' : call.status;
   const description = task?.description || String(call.args.description || 'Assignment');
-  return <box border={['left']} borderColor={toHex(theme.primary)} paddingLeft={1} marginTop={0} marginBottom={1} flexDirection="column" flexShrink={0}>
-    <box flexDirection="row">
-      <Button onPress={() => setExpanded(open => !open)}>{`${expanded ? '▾' : '▸'} ${label} · ${terminalText(status)}`}</Button>
-      <box flexGrow={1} />
-      {task?.status === 'running' && controller && <Button onPress={() => { void controller.action('Stopping worker', () => controller.client.api(`/sessions/${task.parentSessionId}/delegations/${task.id}/cancel`, {})); }}>Stop {label}</Button>}
+  const count = detail?.messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
+  const summary = count === undefined ? description : count ? `${count} ${count === 1 ? 'step' : 'steps'}` : 'Response';
+  return <box marginTop={1} marginBottom={1} flexDirection="column" flexShrink={0}>
+    <text paddingLeft={3} fg={toHex(theme.textMuted)}>{terminalText(label)}</text>
+    <box border={['left']} borderColor={toHex(theme.primary)} paddingLeft={1} flexDirection="column" flexShrink={0}>
+      <box flexDirection="row">
+        <Button onPress={() => setExpanded(!open)}>{`${open ? '▾' : '▸'} ${terminalText(summary)} · ${terminalText(status)}`}</Button>
+        <box flexGrow={1} />
+        {task?.status === 'running' && controller && <Button onPress={() => { void controller.action('Stopping worker', () => controller.client.api(`/sessions/${task.parentSessionId}/delegations/${task.id}/cancel`, {})); }}>Stop {label}</Button>}
+      </box>
+      {open && <>
+        <text fg={toHex(theme.text)} wrapMode="word">{terminalText(description)}</text>
+        {error && <><text fg={toHex(theme.warning)} wrapMode="word">{terminalText(error, true)}</text>{retry && <Button onPress={retry}>Retry transcript</Button>}</>}
+        {task && !detail && !error && <text fg={toHex(theme.textMuted)}>Connecting to transcript…</text>}
+        {detail && renderTranscript(detail, Math.max(24, width - 2))}
+        {!task && <text fg={toHex(call.status === 'error' ? theme.error : theme.textMuted)} wrapMode="word">{terminalText(call.output || (needsApproval ? 'Waiting for your approval.' : call.status === 'running' ? 'Starting this assignment…' : 'Waiting to start.'), true)}</text>}
+      </>}
+      {task?.error && <text fg={toHex(theme.error)} wrapMode="word">{terminalText(task.error, true)}</text>}
     </box>
-    <text fg={toHex(theme.text)} wrapMode="word">{terminalText(description)}</text>
-    {expanded && task && controller ? <WorkerTranscript key={`${task.id}:${task.parentMessageId}:${task.toolCallId}`} task={task} controller={controller} width={width} renderTranscript={renderTranscript} /> : null}
-    {expanded && !task ? <text fg={toHex(call.status === 'error' ? theme.error : theme.textMuted)} wrapMode="word">{terminalText(call.output || (needsApproval ? 'Waiting for your approval.' : call.status === 'running' ? 'Starting this assignment…' : 'Waiting to start.'), true)}</text> : null}
-    {task?.error && <text fg={toHex(theme.error)} wrapMode="word">{terminalText(task.error, true)}</text>}
   </box>;
+}
+function BoundWorkerActivity(props: Props & { task: DelegationSummary; controller: TerminalController }) {
+  const invocation = useInvocation(props.controller.client, props.task);
+  return <WorkerActivity {...props} {...invocation} />;
+}
+export function WorkerCard(props: Props) {
+  return props.task && props.controller ? <BoundWorkerActivity {...props} task={props.task} controller={props.controller} /> : <WorkerActivity {...props} />;
 }

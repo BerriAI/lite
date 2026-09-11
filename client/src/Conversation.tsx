@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm';
 import { ArrowDown, Check, ChevronRight, Clock3, File, GitFork, Shield, Terminal, X } from 'lucide-react';
 import type { Message, PermissionRequest, SessionDetail, ToolCall, Usage } from '../../shared/types';
 import { CopyButton, Logo, LiteSpeed } from './ui';
+import { verificationNotice, verificationSummary, withoutVerificationNotice } from '../../shared/verification';
 
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
   return <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
@@ -78,14 +79,18 @@ export function Conversation({ detail, connection, onDecide, onAllowAll, onFork,
     {connection !== 'connected' && <div className="connection-status" role="status"><Clock3 size={13} />{connection === 'reconnecting' ? 'Reconnecting to your session… Your run continues on the server.' : 'Connecting to live updates…'}</div>}
   </div></div>{!atBottom && <button className="scroll-bottom" aria-label="Jump to latest" title="Jump to latest" onClick={() => { scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' }); setAtBottom(true); }}><ArrowDown size={16} /></button>}</div>;
 }
-/** Compact host-computed evidence line for a mutating turn, attached under the
- * final assistant message like the context-estimate row. Rendered only when
- * files changed; the copy mirrors the appended [Receipts: …] content notice. */
 function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> }) {
-  const checks = receipts.checksRun.length === 0 ? '· No checks run'
-    : receipts.filesChangedAfterLastCheck.length ? `· ${receipts.filesChangedAfterLastCheck.length} file${receipts.filesChangedAfterLastCheck.length === 1 ? '' : 's'} changed after last check`
-    : `· Checks: ${receipts.checksRun.at(-1)} ${(receipts.unresolvedChecks ?? receipts.checksFailed).includes(receipts.checksRun.at(-1)!) ? '✗' : '✓'}`;
-  return <div className="receipts-row" title="Host-computed from tool receipts, not model claims">Changed: {receipts.filesChanged.join(', ')} {checks}</div>;
+  const summary = verificationSummary(receipts);
+  if (!summary) return null;
+  const unresolved = receipts.unresolvedChecks ?? receipts.checksFailed;
+  const commands = unresolved.length ? unresolved : receipts.checksRun;
+  return <details className={`receipts-row${summary.attention ? ' needs-review' : ''}`}>
+    <summary><ChevronRight size={12} />{summary.title}</summary>
+    <p>{summary.description}</p>
+    {receipts.filesChangedAfterLastCheck.length > 0 && <p>Edited after checks: {receipts.filesChangedAfterLastCheck.join(', ')}</p>}
+    {commands.map((command, index) => <pre key={index}>{command}</pre>)}
+    {receipts.filesChanged.length > 0 && <p>Files changed: {receipts.filesChanged.join(', ')}</p>}
+  </details>;
 }
 /** Show work live, then fold the completed block when prose continues. */
 function WorkLog({ workerNoun, messages, live, renderTask, workActivity, expanded, onExpand }: { expanded: boolean; onExpand: (open: boolean) => void; messages: Message[]; live: boolean; workerNoun: string; workActivity?: string|false; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode }) {
@@ -127,17 +132,18 @@ function MessageView({ driver, workerNoun, message, running, grouped, tail, live
   if (steering) message = { ...message, content: message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '') };
   if (message.role === 'system' && !steering) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
+  const content = assistant ? withoutVerificationNotice(message.content, message.receipts) : message.content;
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : inline ? 'Assignment from driver' : 'Your message'}>
     {assistant && !grouped && <div className="message-byline"><Logo small /><span>Litespeed</span></div>}
     <div className="message-body">{assistant && driver && (message.content || !message.toolCalls?.some(tool => tool.name === 'delegate' || tool.name === 'sidekick')) && <div className="driver-identity">Driver</div>}{steering && <span className="steering-label">Steering</span>}
-      {message.content && (inline && !assistant ? <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={message.content} /></div></details> : <div className="markdown"><Markdown content={message.content} /></div>)}
+      {content && (inline && !assistant ? <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={content} /></div></details> : <div className="markdown"><Markdown content={content} /></div>)}
       {assistant && <WorkLog workerNoun={workerNoun} expanded={expanded} onExpand={onExpand} messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}
 
       {message.error && <div className="inline-alert" role="alert">{message.error}</div>}
-      {assistant && message.receipts && message.receipts.filesChanged.length > 0 && <ReceiptsRow receipts={message.receipts} />}
+      {assistant && message.receipts && <ReceiptsRow receipts={message.receipts} />}
     </div>
-    {assistant && tail && !live && !inline && <div className="message-actions"><CopyButton text={message.content} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={steps.at(-1)?.turnUsage} />}</div>}
+    {assistant && tail && !live && !inline && <div className="message-actions"><CopyButton text={content + (message.receipts ? verificationNotice(message.receipts) ?? '' : '')} />{!readOnly && <button className="icon-button" onClick={onFork} disabled={disabled} aria-label="Fork session at this message" title="Fork from here"><GitFork size={13} /></button>}{runUsage && <UsageDetails usage={runUsage} family={steps.at(-1)?.turnUsage} />}</div>}
   </article>;
 }
 

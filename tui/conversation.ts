@@ -1,12 +1,42 @@
 import { usagePhase } from '../shared/usage.js';
-import type { Message, SessionDetail, Usage } from '../shared/types.js';
+import type { DelegationSummary, Message, SessionDetail, ToolCall, Usage } from '../shared/types.js';
 import { conversationBlocks } from '../shared/conversation-blocks.js';
+import { workerLabels } from '../shared/worker-presentation.js';
+import { visibleDelegations } from '../shared/events.js';
 import { formatDuration } from './transcriptModel.js';
 
 export function conversationGroups(detail: SessionDetail) {
   const busy = detail.session.status === 'running' || detail.session.status === 'waiting';
   const groups = conversationBlocks(detail.messages);
   return groups.map((group, index) => ({ ...group, live: busy && group.closesTranscript && index === groups.length - 1, footer: group.endsRun && !(busy && group.closesTranscript) }));
+}
+
+export type ActivityEntry = { message: Message; call?: ToolCall };
+export type ActivitySection = { kind: 'driver'; id: string; entries: ActivityEntry[] } | { kind: 'worker'; id: string; message: Message; call: ToolCall; label: string; task?: DelegationSummary };
+export function activityActors(detail: SessionDetail) {
+  const actors = new Map([...workerLabels(detail)].map(([key, label]) => [key, { label, task: undefined as DelegationSummary | undefined }]));
+  for (const task of visibleDelegations(detail)) {
+    const key = `${task.parentMessageId}:${task.toolCallId}`;
+    actors.set(key, { label: actors.get(key)?.label ?? 'Research', task });
+  }
+  return actors;
+}
+export function activitySections(steps: Message[], actors: ReturnType<typeof activityActors>): ActivitySection[] {
+  const sections: ActivitySection[] = [];
+  const append = (entry: ActivityEntry) => {
+    let section = sections.at(-1);
+    if (section?.kind !== 'driver') { section = { kind: 'driver', id: entry.call?.id ?? entry.message.id, entries: [] }; sections.push(section); }
+    section.entries.push(entry);
+  };
+  for (const [index, message] of steps.entries()) {
+    if (index > 0 && message.reasoning) append({ message });
+    for (const call of message.toolCalls ?? []) {
+      const actor = actors.get(`${message.id}:${call.id}`);
+      if (actor) sections.push({ kind: 'worker', id: call.id, message, call, ...actor });
+      else append({ message, call });
+    }
+  }
+  return sections;
 }
 export function usageLabel(message: Message, usage?: Usage) {
   const family = message.turnUsage;
