@@ -299,7 +299,7 @@ function ErrorRow({ error }: { error: string }) {
   );
 }
 
-function ToolActivity({ call, showDetails, awaitingPermission, syntax, width }: { call: ToolCall; showDetails: boolean; awaitingPermission: boolean; syntax: SyntaxStyle; width: number }) {
+function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, embedded }: { call: ToolCall; showDetails: boolean; awaitingPermission: boolean; syntax: SyntaxStyle; width: number; embedded: boolean }) {
   const theme = useTheme(), [expanded, setExpanded] = useState(false);
   const open = expanded || showDetails, row = toolRow(call);
   const output = terminalText(call.output ?? (call.status === 'pending' ? 'Waiting to start…' : call.status === 'running' ? 'Running…' : 'No output.'), true);
@@ -309,12 +309,12 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width }: 
     {open && <box paddingLeft={4} flexDirection="column" flexShrink={0}>
       {call.intercepted && <text fg={toHex(theme.warning)}>{`Modified by ${terminalText(call.intercepted.by)}: ${terminalText(call.intercepted.reason)}`}</text>}
       <text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(JSON.stringify(call.args), true).slice(0, 500)}</text>
-      {row.shape === 'block' ? <BlockToolRow row={row} syntax={syntax} width={width - 8} /> : <scrollbox height={Math.min(10, Math.max(1, output.split('\n').length))}><text fg={toHex(theme.textMuted)} wrapMode="word"><em>{output}</em></text></scrollbox>}
+      {row.shape === 'block' ? <BlockToolRow row={row} syntax={syntax} width={width - 8} /> : <scrollbox onMouseScroll={embedded ? event => event.stopPropagation() : undefined} height={Math.min(10, Math.max(1, output.split('\n').length))}><text fg={toHex(theme.textMuted)} wrapMode="word"><em>{output}</em></text></scrollbox>}
     </box>}
   </box>;
 }
 
-function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, actors, linked }: { actors: ReturnType<typeof workerLabels>; linked: ReturnType<typeof visibleDelegations>; controller?: TerminalController; steps: Message[]; detail: SessionDetail; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; onInspect?: (steps: Message[]) => void }) {
+function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, actors, linked, embedded }: { actors: ReturnType<typeof workerLabels>; linked: ReturnType<typeof visibleDelegations>; controller?: TerminalController; steps: Message[]; detail: SessionDetail; live: boolean; syntax: ReturnType<typeof useSyntax>; width: number; onInspect?: (steps: Message[]) => void; embedded: boolean }) {
   const theme = useTheme(), settings = useTranscriptSettings(), [expanded, setExpanded] = useState(false);
   const calls = steps.flatMap(message => message.toolCalls ?? []);
   const thinking = steps.filter(message => message.reasoning);
@@ -332,14 +332,14 @@ function WorkLog({ steps, detail, live, syntax, width, onInspect, controller, ac
       {message.toolCalls?.map(call => {
         const task = linked.find(task => task.id === call.delegationId && task.parentMessageId === message.id && task.toolCallId === call.id);
         const actor = actors.get(`${message.id}:${call.id}`);
-        if (task || actor) return <WorkerCard key={call.id} task={task} call={call} label={actor || 'Research'} controller={controller} width={width - 6} needsApproval={detail.permissions.some(item => item.toolCallId === call.id)} />;
-        return <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} />;
+        if (controller && (task || actor)) return <WorkerCard key={call.id} task={task} call={call} label={actor || 'Research'} controller={controller} width={width - 6} needsApproval={detail.permissions.some(item => item.toolCallId === call.id)} renderTranscript={(child, childWidth) => <Transcript detail={child} width={childWidth} active={false} embedded />} />;
+        return <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} embedded={embedded} />;
       })}
     </box>)}
   </box>;
 }
 
-export const Transcript = memo(function Transcript({ detail, width, active = true, onInspect, onUsage, controller }: { detail: SessionDetail; width: number; controller?: TerminalController; active?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
+export const Transcript = memo(function Transcript({ detail, width, active = true, embedded = false, onInspect, onUsage, controller }: { detail: SessionDetail; width: number; controller?: TerminalController; active?: boolean; embedded?: boolean; onInspect?: (steps: Message[]) => void; onUsage?: (message: Message, usage?: Usage) => void }) {
   const theme = useTheme(), config = useConfig(), syntax = useSyntax(theme), scroll = useRef<ScrollBoxRenderable>(null);
   const acceleration = useMemo(() => { const native = new MacOSScrollAccel(); return { tick: () => (config.scroll_acceleration.enabled ? native.tick() : 1) * config.scroll_speed, reset: () => native.reset() }; }, [config.scroll_speed, config.scroll_acceleration.enabled]);
   const [limit, setLimit] = useState(120);
@@ -355,7 +355,7 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
     if (key.ctrl && key.name === 'home') { key.preventDefault(); key.stopPropagation(); setLimit(count => count + 120); scroll.current?.scrollTo(0); }
     if ((key.ctrl && key.name === 'end') || (key.ctrl && key.name === 'g')) { key.preventDefault(); key.stopPropagation(); scroll.current?.scrollTo(Infinity); }
   });
-  return <scrollbox ref={scroll} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>
+  return <scrollbox ref={scroll} onMouseScroll={embedded ? event => event.stopPropagation() : undefined} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>
     {groups.length > limit && <Button onPress={() => setLimit(count => count + 120)}>Load earlier messages</Button>}
     {!groups.length && <box flexGrow={1} marginTop={2} paddingLeft={2} flexDirection="column"><Brand /><text marginTop={1} fg={toHex(theme.text)}><strong>A fresh start.</strong></text><text fg={toHex(theme.textMuted)}>Give Litespeed a task in this workspace.</text><text fg={toHex(theme.textMuted)}>{terminalText(detail.session.workspace)}</text></box>}
     {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
@@ -365,7 +365,7 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
       return <box key={message.id} flexDirection="column" flexShrink={0}>
         {message.content.trim() && detail.session.architecture && controller && <text paddingLeft={3} marginTop={1} fg={toHex(theme.textMuted)}>Driver</text>}
         {message.content.trim() && <TextRow compact={Boolean(detail.session.architecture)} text={terminalText(message.content, true)} syntax={syntax.normal} />}
-        <WorkLog actors={actors} linked={linked} steps={steps} detail={detail} live={live} syntax={syntax} width={width} onInspect={onInspect} controller={controller} />
+        <WorkLog actors={actors} linked={linked} steps={steps} detail={detail} live={live} syntax={syntax} width={width} onInspect={onInspect} controller={controller} embedded={embedded} />
         {message.error && <ErrorRow error={terminalText(message.error, true)} />}
         {footer && (runUsage || message.context) && <box marginTop={1} paddingLeft={2} flexShrink={0}><Button onPress={() => onUsage?.(usageMessage, runUsage)}>{usageLabel(usageMessage, runUsage)}</Button></box>}
       </box>;
