@@ -11,7 +11,8 @@ const source = resolve(import.meta.dirname, '..');
 const install = await mkdtemp(join(tmpdir(), 'litespeed-production-tui-'));
 const emulator = new xterm.Terminal({ cols: 100, rows: 30, allowProposedApi: true });
 const screen = () => Array.from({ length: emulator.rows }, (_, i) => emulator.buffer.active.getLine(i)?.translateToString(true) ?? '').join('\n');
-let terminal, serverPid, base;
+let terminal, serverPid, base, raw = '';
+const promptCount = () => raw.split('LITESPEED_SMOKE_SHELL>').length - 1;
 const delay = ms => new Promise(done => setTimeout(done, ms));
 const waitFor = async (predicate, label) => { const end = Date.now() + 20000; while (Date.now() < end) { if (await predicate()) return; await delay(80); } throw new Error(`${label}\n${screen()}`); };
 try {
@@ -29,7 +30,7 @@ try {
   delete env.LITESPEED_URL; delete env.LITESPEED_TUI_CONFIG; delete env.LITESPEED_CONFIG_DIR; delete env.LITESPEED_WORKSPACE;
   terminal = pty.spawn('/bin/bash', ['--noprofile', '--norc', '-i'], { cwd: join(install, 'workspace'), cols: 100, rows: 30, name: 'xterm-256color', env: { ...env, PS1: 'LITESPEED_SMOKE_SHELL> ' } });
   const exited = new Promise(done => terminal.onExit(done));
-  terminal.onData(data => { const match = /Stop it with: kill (\d+)/.exec(data); if (match) serverPid = Number(match[1]); emulator.write(data); });
+  terminal.onData(data => { raw += data; const match = /Stop it with: kill (\d+)/.exec(data); if (match) serverPid = Number(match[1]); emulator.write(data); });
   await waitFor(() => screen().includes('LITESPEED_SMOKE_SHELL>'), 'Invoking shell did not open');
   terminal.write('litespeed\r');
   await waitFor(() => screen().includes('A fresh start.') && screen().includes('Ctrl+P Commands'), 'Production TUI did not open');
@@ -44,10 +45,13 @@ try {
   await waitFor(() => screen().includes('Stopped') && screen().includes('LITESPEED_SMOKE_SHELL>'), 'Suspend did not return to invoking shell');
   terminal.write('fg\r');
   await waitFor(() => screen().includes('A fresh start.') && screen().includes('Ctrl+P Commands'), 'Foreground did not restore terminal');
-  terminal.write('\x03'); await delay(100); terminal.write('\x03');
-  await waitFor(() => screen().includes('LITESPEED_SMOKE_SHELL>') && !screen().includes('Ctrl+P Commands'), 'Quit did not restore invoking shell');
+  const promptsBeforeQuit = promptCount();
+  terminal.write('\x03');
+  await waitFor(() => screen().includes('Ctrl+C again to exit'), 'First quit key was not handled');
+  terminal.write('\x03');
+  await waitFor(() => promptCount() > promptsBeforeQuit && screen().includes('LITESPEED_SMOKE_SHELL>') && !screen().includes('Ctrl+P Commands'), 'Quit did not restore invoking shell');
   terminal.write('exit\r');
-  const result = await Promise.race([exited, delay(5000).then(() => { throw new Error('Production TUI did not exit'); })]);
+  const result = await Promise.race([exited, delay(5000).then(() => { throw new Error(`Invoking shell did not exit after TUI shutdown\n${screen()}`); })]);
   assert.equal(result.exitCode, 0);
   assert((await fetch(`${base}/api/health`)).ok, 'leaving the TUI preserves the backend');
   console.log('Production TUI passed: bare litespeed on PATH, automatic backend startup, caller workspace, suspend/foreground, clean exit, and backend ownership.');
