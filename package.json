@@ -2,6 +2,7 @@
   "name": "@litellm/speedrail",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "Speedrail — a local coding agent with multi-model workflows for your terminal and browser.",
   "repository": { "type": "git", "url": "git+https://github.com/BerriAI/speedrail.git" },

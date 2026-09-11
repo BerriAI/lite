@@ -8,6 +8,10 @@ File restoration refuses conflicting external edits. If an operation was only pa
 
 Checkpoints retain up to 20 turns and 32 MiB per session. Older checkpoints can expire; oversized turns explicitly report that undo is unavailable. Imports and forks copy conversation only, not ownership of another session’s file changes. Older sessions without checkpoints keep their legacy session-wide recorded-file restoration action. Foreground command history observes bounded UTF-8 source files (up to 2 MiB per file, 12 MiB per observation, and 10,000 entries). Changed binary/large files and incomplete scans produce a specific history notice. Generated/dependency directories, background commands, terminal input, MCP, network, Git metadata, and database effects are outside this file-history guarantee. Commands are never replayed by Undo/Redo.
 
+## Export limits
+
+A session export is a conversation copy, not a complete backup of your installation. It does not preserve worker transcripts, file checkpoints, provider configuration, or saved keys. The current importer accepts request bodies up to 12 MiB, at most 10,000 messages, and 500,000 characters per message; an exported session can exceed those limits. Keep the original local data until you have verified that an export imports successfully. For a full local backup, stop the server and copy its entire data directory together with the workspace files.
+
 ## Safety and local data
 
 - The server binds to loopback and rejects foreign Host/Origin and cross-site requests. Do not expose it through a reverse proxy or tunnel without an independent authentication boundary.

@@ -33,9 +33,9 @@ That directory becomes your workspace. Speedrail starts its local backend automa
 
 Speedrail has its own command, separate from the [LiteLLM gateway CLI](https://docs.litellm.ai/docs/proxy/management_cli). If you used an earlier version of this agent, follow the [upgrade guide](docs/upgrading.md) to carry over saved sessions and configuration.
 
-1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then pick a model. You can start chatting immediately. Speedrail remembers the connection and model; running `speedrail` in another project opens chat directly.
-2. Use **Models** or `/models` to add a Sidekick, workers, or experts. **Ask first** is the default; **Allow all tools** is available in permissions. The full setup is available from the web sidebar or `/setup`.
-3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. **Ctrl+P** opens terminal commands and navigation.
+1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then choose your setup and models. **Sidekick Fusion is recommended:** pick a powerful driver and an efficient coding workhorse as its Sidekick. Choose **Single model** if you prefer one model for everything. Speedrail remembers the connection and model; running `speedrail` in another project opens chat directly.
+2. Use **Models** or `/models` to change your arrangement. **Ask first** is the default; **Allow all tools** is available in permissions. The full setup is available from the web sidebar or `/setup`.
+3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. Type `/` for command suggestions in either client; use **↑/↓**, **Tab** or **Enter** to complete, and **Esc** to dismiss. **Ctrl+P** opens terminal commands and navigation.
 
 See the [terminal guide](docs/tui.md) for shortcuts, resuming sessions, and configuration.
 
@@ -50,7 +50,7 @@ For a web-only session, run `speedrail serve`. For development, use `npm run dev
 | Architecture | How it works |
 | --- | --- |
 | **Single model** | One model investigates, implements, and checks the task. |
-| **Sidekick Fusion** | A strong driver plans and reviews; a cheaper sidekick keeps context across handoffs. |
+| **Sidekick Fusion** · Recommended | A strong driver plans and reviews; a cheaper sidekick keeps context across handoffs. |
 | **Team Fusion** | A strong driver assigns fresh cheaper workers, runs independent work in parallel, and verifies the combined result. |
 | **Expert Fusion** | A cheaper driver coordinates fresh strong experts and verifies their work. Independent assignments can run in parallel. |
 
@@ -66,3 +66,7 @@ Choose any connected model for each role. An optional **Planner model** handles 
 - [Feature coverage and known gaps](docs/coverage.md) · [Development and tests](docs/development.md)
 
 Approved commands run with your local user’s capabilities; permissions are not a sandbox. Keep the server local. Provider keys stay server-side, and provider usage may incur charges.
+
+## License
+
+Speedrail is licensed under [Apache-2.0](LICENSE). Bundled themes and fonts retain their original licenses; see [third-party notices](THIRD_PARTY_NOTICES.md).

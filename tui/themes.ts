@@ -1,3 +1,4 @@
+// Theme definitions include MIT-licensed OpenCode assets; see THIRD_PARTY_NOTICES.md.
 /** Built-in theme catalog for the terminal client. Generated data: each entry is
  * a raw ThemeJson (defs + theme token map) resolved by tui/theme.ts. The
  * default theme is `speedrail`. */
