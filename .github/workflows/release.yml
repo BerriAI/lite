@@ -32,6 +32,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test:tui:startup
+      - run: npm run test:tui:flow
       - run: node scripts/release/package.mjs
       - run: node scripts/release/smoke.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
