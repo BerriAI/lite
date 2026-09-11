@@ -392,6 +392,12 @@ describe('grep', () => {
 });
 
 describe('bash', () => {
+  it('preserves a test runner failure when output is piped through tail', async () => {
+    await put('package.json', JSON.stringify({ scripts: { test: 'node -e "process.exit(7)"' } }));
+    expect(await tool('bash', { command: 'npm test 2>&1 | tail -8' })).toMatch(/Exit code: 7\s*$/);
+    await put('package.json', JSON.stringify({ scripts: { test: 'node -e "process.exit(0)"' } }));
+    expect(await tool('bash', { command: 'npm test 2>&1 | tail -20' })).toMatch(/Exit code: 0\s*$/);
+  });
   it('runs real shell commands in the workspace with stdout, stderr and exit status', async () => {
     const result = await tool('bash', { command: 'printf "$PWD"; printf "error text" >&2; exit 7' });
     expect(result).toContain(workspace);

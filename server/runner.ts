@@ -1360,6 +1360,7 @@ export class Runner {
     const failureStreaks=new Map<string,number>();
     const seenCalls=new Set<string>();
     const signature=(call:ToolCall)=>canonical({name:call.name,args:call.args});
+    const failureKey=(call:ToolCall)=>call.name==='code_write'&&call.args.target?`file:${call.args.target}`:(call.name==='write_file'||call.name==='edit_file')?`file:${call.args.path}`:signature(call);
     for (let step = 0; !signal.aborted; step++) {
       // A strict driver only sees source-edit tools after a recorded takeover.
       // Recompute each request so approval never advertises permission early.
@@ -1526,7 +1527,13 @@ export class Runner {
       if (!message.toolCalls?.length && (run.steering?.length??0)>(run.steeringDelivered??0))continue;
       if (!message.toolCalls?.length) {
         const evidence=computeReceipts(run.child?this.store.messages(id):this.delegations.evidence(id),run.turnId);
-        if(run.toolFailures?.size||evidence.unresolvedChecks?.length) {run.blocked=true;run.failure='Some attempted actions or checks remain unresolved. Review the recorded evidence before treating this work as complete.';}
+        if(run.toolFailures?.size||evidence.unresolvedChecks?.length) {
+          run.blocked=true;
+          const recorded=this.store.messages(id);
+          const failedCalls=recorded.slice(recorded.findIndex(item=>item.id===run.turnId)+1).flatMap(item=>item.toolCalls??[]).filter(item=>item.status==='error'&&run.toolFailures?.has(failureKey(item)));
+          const details=[...(evidence.unresolvedChecks??[]).map(command=>`Check did not pass: ${command}`),...(run.toolFailures?.size?failedCalls.slice(-3).map(item=>`${item.name}: ${item.output || 'Action failed.'}`):[])];
+          run.failure=utf8Bounded(`Some attempted actions or checks remain unresolved.\n${details.join('\n')}`,4000);
+        }
         if(run.unresolvedWorkers?.size) {run.blocked=true;message.content+=`\n\n[${run.unresolvedWorkers.size} worker assignment(s) remain unresolved.]`;}
         if(strictDriver&&evidence.filesChanged.length) {
           const own=computeReceipts(this.store.messages(id),run.turnId);
@@ -1614,7 +1621,10 @@ export class Runner {
           }
           else if (call.name==='sidekick'||call.name==='delegate') {
             const input=sidekickTaskInput(call.args);
-            if(call.args.repairOf!==undefined&&(typeof call.args.repairOf!=='string'||!run.unresolvedWorkers?.has(call.args.repairOf)))throw conflict('repairOf must name an unresolved worker invocation from this turn.');
+            if(call.args.repairOf!==undefined) {
+              const prior=typeof call.args.repairOf==='string'?this.delegations.list(id).find(task=>task.id===call.args.repairOf&&task.parentTurnId===run.turnId):undefined;
+              if(!prior||!(prior.status==='completed'||run.unresolvedWorkers?.has(prior.id)))throw conflict('repairOf must name a finished worker invocation from this turn. Omit it for a new assignment.');
+            }
             if(!(await this.approve(session,call,run))) { call.status='denied';output=call.ruleMatch?.decision==='deny'?this.ruleDenial(call.ruleMatch):'The user denied or cancelled the sidekick task. Do not retry it or bypass this decision.'; }
             else if (!(await preToolVeto())) {
               const settled=await this.sidekick(id,run,message,call,input,()=>{questionStarted=true;},parallel?.workspaces.get(call.id));
@@ -1714,8 +1724,8 @@ export class Runner {
         if(call.status==='denied'&&(run.steering?.length??0)>(run.steeringDelivered??0)) {deferredForSteering=true;output='This action was not executed because new user steering arrived. Read the note before choosing the next action.';}
         if((call.status==='denied'&&!deferredForSteering)||(call.status==='error'&&!call.shunt&&!run.child?.role&&!session.architecture))run.blocked=true;
         if(run.child?.role||session.architecture||call.shunt||run.toolFailures?.size) {
-          const key=call.name==='code_write'&&call.args.target?`file:${call.args.target}`:(call.name==='write_file'||call.name==='edit_file')?`file:${call.args.path}`:signature(call);
-          if(call.status==='error'&&!isReadOnlyTool(call.name)&&(call.name!=='code_write'||Boolean(call.args.target)))(run.toolFailures??=new Set()).add(key);
+          const key=failureKey(call);
+          if(call.status==='error'&&!['sidekick','delegate'].includes(call.name)&&!isReadOnlyTool(call.name)&&(call.name!=='code_write'||Boolean(call.args.target)))(run.toolFailures??=new Set()).add(key);
           else if(call.status==='completed')run.toolFailures?.delete(key);
         }
         // Storm accounting: any success clears every failure streak; a failure

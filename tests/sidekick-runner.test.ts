@@ -152,20 +152,81 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(calls.filter(side)).toHaveLength(0);
   });
 
-  it('a repaired command failure remains in evidence but no longer fails the worker', async()=>{
+  it.each([
+    ['npm test', 'npm test'],
+    ['npm test 2>&1 | tail -18', 'npm test 2>&1 | tail -20'],
+  ])('a repaired command failure remains in evidence but no longer fails the worker: %s', async(failed,retry)=>{
     let steps=0;
     respond=(body,res)=>{
       if(side(body)) {
-        if(steps++===0)tools(res,[{name:'bash',args:{command:'npm test'}}]);
+        if(steps++===0)tools(res,[{name:'bash',args:{command:failed}}]);
         else if(steps===2)tools(res,[{name:'write_file',args:{path:'package.json',content:JSON.stringify({scripts:{test:'node -e "process.exit(0)"'}})}}]);
-        else if(steps===3)tools(res,[{name:'bash',args:{command:'npm test'}}]);
+        else if(steps===3)tools(res,[{name:'bash',args:{command:retry}}]);
         else text(res,'Fixed the test script and reran npm test successfully.');
       }else if(body.messages.some((m:any)=>m.role==='tool'))text(res);else tools(res,[{name:'sidekick',args:{description:'Repair tests',prompt:'Run and repair npm test'}}]);
     };
     await writeFile(join(directory,'package.json'), JSON.stringify({scripts:{test:'node -e "process.exit(1)"'}}));
     const session=await create();await run(session.id);
     expect(runner.delegations.list(session.id)[0].status).toBe('completed');
-    expect(store.messages(session.id).at(-1)?.receipts).toMatchObject({checksFailed:['npm test'],unresolvedChecks:[],checksRun:['npm test','npm test']});
+    expect(store.messages(session.id).at(-1)?.receipts).toMatchObject({checksFailed:[failed],unresolvedChecks:[],checksRun:[failed,retry]});
+  });
+
+  it.each(['sidekick-fusion', 'team-fusion', 'expert-fusion'] as const)('finishes %s after retrying a timed-out test with a different tail length', async kind=>{
+    let step=0;
+    respond=(body,res)=>{
+      if(side(body)) {
+        if(step++===0)tools(res,[{name:'bash',args:{command:'npm test 2>&1 | tail -18',timeout_ms:25}}]);
+        else if(step===2)tools(res,[{name:'bash',args:{command:'npm test 2>&1 | tail -20',timeout_ms:3000}}]);
+        else text(res,'Tests passed on retry.');
+      }else if(body.messages.some((m:any)=>m.role==='tool'))text(res);else tools(res,[{name:kind==='sidekick-fusion'?'sidekick':'delegate',args:{description:'Run tests',prompt:'Run tests and retry with enough time.'}}]);
+    };
+    await writeFile(join(directory,'package.json'),JSON.stringify({scripts:{test:'node -e "setTimeout(()=>{},100)"'}}));
+    const architecture=kind==='sidekick-fusion'?ARCHITECTURE:kind==='team-fusion'?{kind,worker:ARCHITECTURE.sidekick}:{kind,expert:ARCHITECTURE.sidekick};
+    const session=await create({architecture});await run(session.id);
+    const task=runner.delegations.list(session.id)[0], child=runner.delegations.transcript(session.id,task.id);
+    expect(task.status).toBe('completed');
+    expect(child.messages.flatMap(m=>m.toolCalls??[]).map(t=>t.output)).toEqual(expect.arrayContaining([expect.stringContaining('Command timed out.'),expect.stringContaining('Exit code: 0')]));
+  });
+
+  it('accepts repairOf for a completed assignment that failed driver review', async()=>{
+    let id='';
+    respond=(body,res)=>{
+      if(side(body)){text(res,'Work returned for review.');return;}
+      const tasks=runner.delegations.list(id);
+      if(!tasks.length)tools(res,[{name:'sidekick',args:{description:'First pass',prompt:'first'}}]);
+      else if(tasks.length===1)tools(res,[{name:'sidekick',args:{description:'Review corrections',prompt:'Fix issues found in review.',repairOf:tasks[0].id}}]);
+      else text(res,'Review corrections complete.');
+    };
+    const session=await create();id=session.id;await run(id);
+    expect(runner.delegations.list(id).map(task=>task.status)).toEqual(['completed','completed']);
+    expect(store.messages(id).flatMap(m=>m.toolCalls??[]).every(t=>t.status==='completed')).toBe(true);
+  });
+
+  it('rejects an unknown repairOf without making a later valid assignment fail', async()=>{
+    respond=(body,res)=>{
+      if(side(body)){text(res,'Completed the assignment.');return;}
+      const count=body.messages.filter((m:any)=>m.role==='tool').length;
+      if(count===0)tools(res,[{name:'sidekick',args:{description:'Invalid repair',prompt:'repair',repairOf:'not-an-invocation'}}]);
+      else if(count===1)tools(res,[{name:'sidekick',args:{description:'New assignment',prompt:'Do the work.'}}]);
+      else text(res,'Done.');
+    };
+    const session=await create();store.saveQueue(session.id,{items:[],paused:false});await run(session.id);
+    expect(runner.delegations.list(session.id).map(task=>task.status)).toEqual(['completed']);
+    const messages=store.messages(session.id), calls=messages.flatMap(m=>m.toolCalls??[]);
+    expect(calls[0]).toMatchObject({status:'error',output:expect.stringContaining('Omit it for a new assignment')});
+    expect(calls[1].status).toBe('completed');
+    expect(messages.at(-1)?.content).toBe('Done.');
+    expect(store.queue(session.id).paused).toBe(false);
+  });
+
+  it('reports the specific check when a worker returns with a failing test', async()=>{
+    await writeFile(join(directory,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(1)"'}}));
+    respond=(body,res)=>{
+      if(side(body))body.messages.some((m:any)=>m.role==='tool')?text(res,'Tests passed.'):tools(res,[{name:'bash',args:{command:'npm test | tail -8'}}]);
+      else body.messages.some((m:any)=>m.role==='tool')?text(res):tools(res,[{name:'sidekick',args:{description:'Check',prompt:'Run npm test.'}}]);
+    };
+    const session=await create();await run(session.id);
+    expect(runner.delegations.list(session.id)[0]).toMatchObject({status:'failed',error:expect.stringContaining('Check did not pass: npm test | tail -8')});
   });
 
   it.each(['repair', 'takeover'] as const)('resolves a failed Expert invocation through explicit %s and root verification', async recovery => {

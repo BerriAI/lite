@@ -1,5 +1,6 @@
 import { LEGACY_NAMES } from '../bin/legacy.mjs';
 import { shellInspection } from './shell-inspection.js';
+import { isCheckCommand } from '../shared/receipts.js';
 import { constants, openSync, closeSync, fstatSync, readSync, realpathSync, lstatSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
@@ -110,7 +111,7 @@ export const webSearchTool: ToolDefinition = definition('web_search',
 // RULE_TOOLS schema stay valid.
 export const sidekickTool: ToolDefinition = definition('sidekick',
   'Hand a task to your persistent sidekick: a second agent on a cheaper model that keeps ONE continuous transcript across all your calls in this session. It remembers everything from earlier calls, so follow-ups can be brief — do not re-explain established context. It can read and edit files, run commands (with the same user approval you would need), search the web, and manage todos; it cannot ask the user questions or delegate further. Delegate exploration, code writing, tests, and bug-fixing to it by default; keep planning, ambiguity, and final review for yourself. Its report is its own claim — verify what matters.',
-  { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 }, repairOf: {type:'string',description:'Failed invocation ID this task repairs, when applicable.'} }, ['description', 'prompt']);
+  { description: { type: 'string', maxLength: 200 }, prompt: { type: 'string', maxLength: 16384 }, repairOf: {type:'string',description:'Finished invocation ID from this turn that this task repairs, including completed work with issues found during review. Omit for a new assignment.'} }, ['description', 'prompt']);
 
 /** The narrow slice of Store that tool_output_page needs. */
 export interface ToolOutputReader { toolOutput(sessionId: string, callId: string): { content: string; sha256: string } | undefined }
@@ -1458,7 +1459,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       const timeout = numberArg(args, 'timeout_ms', 30_000, 120_000);
       const result = inspection
         ? await runInspection(inspection, cwd, context.workspace, context.signal, timeout)
-        : await runProcess(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', ['-c', command], cwd, context.signal, timeout, shellEnvironment());
+        : await runProcess(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', [...(isCheckCommand(command) ? ['-o', 'pipefail'] : []), '-c', command], cwd, context.signal, timeout, shellEnvironment());
       const status = result.cancelled ? 'Command cancelled.' : result.timedOut ? 'Command timed out.' : `Exit code: ${result.code ?? result.signal ?? 'unknown'}`;
       return `${boundedWithReceipt(context, result.output, 30_000)}${result.truncated ? '\n[Process output truncated]' : ''}\n${status}`;
     }

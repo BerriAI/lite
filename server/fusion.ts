@@ -5,7 +5,7 @@ const definition = (name: string, description: string, properties: Record<string
 
 export const delegateTool = definition('delegate',
   'Assign bounded implementation work to a fresh worker. It receives only this brief and workspace access, never a fork of your conversation. Include the outcome, relevant paths, constraints, and acceptance checks in the prompt. Every assignment and repair has a new context. Review its actual changes and run verification after it returns.',
-  { repairOf: {type:'string',description:'Failed invocation ID this assignment repairs, when applicable.'}, description: { type: 'string', description: 'Short activity label.' }, prompt: { type: 'string', description: 'Self-contained assignment, relevant paths, constraints, and acceptance criteria.' } }, ['description', 'prompt']);
+  { repairOf: {type:'string',description:'Finished invocation ID from this turn that this assignment repairs, including completed work with issues found during review. Omit for a new assignment.'}, description: { type: 'string', description: 'Short activity label.' }, prompt: { type: 'string', description: 'Self-contained assignment, relevant paths, constraints, and acceptance criteria.' } }, ['description', 'prompt']);
 export const verifyTool = definition('verify',
   'Run one foreground test, typecheck, lint, or build command in the workspace. This is the driver verification phase. Shell operators, environment assignments, background jobs, and arbitrary scripts are unavailable. Use a supported runner such as npm test, npm run check, npx vitest run, pytest, cargo test, or go test.',
   { command: { type: 'string' }, timeout_ms: { type: 'number' } }, ['command']);

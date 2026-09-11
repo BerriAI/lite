@@ -62,6 +62,27 @@ describe('computeReceipts', () => {
     const messages = [accepted, batch(sessionId, [read('a.ts'), { name: 'grep', args: { pattern: 'x' } }])];
     expect(computeReceipts(messages, accepted.id)).toEqual({ filesChanged: [], commandsRun: [], checksRun: [], checksFailed: [], unresolvedChecks: [], filesChangedAfterLastCheck: [], unreadFilesChanged: [] });
   });
+  it('resolves a timed-out check when its successful retry only changes tail output length', () => {
+    const accepted = user(sessionId);
+    const failed = 'cd /project && npx vitest run 2>&1 | tail -18';
+    const retry = 'cd /project && npx vitest run 2>&1 | tail -20';
+    const receipts = computeReceipts([accepted, batch(sessionId, [bash(failed, 'Command timed out.'), bash(retry, '1814 passed\nExit code: 0')])], accepted.id);
+    expect(receipts.checksFailed).toEqual([failed]);
+    expect(receipts.unresolvedChecks).toEqual([]);
+    expect(receipts.checksRun).toEqual([failed, retry]);
+  });
+  it.each([
+    ['npx vitest run subset.test.ts | tail -20', 'Exit code: 0', undefined],
+    ['npx vitest run | tail -20', 'Exit code: 1', undefined],
+    ['npx vitest run | tail -20', 'No exit status', undefined],
+    ['npx vitest run | tail -20', 'Exit code: 0', 'other-project'],
+    ['npx vitest run | tail -20 other-file', 'Exit code: 0', undefined],
+    ['npx vitest run || true | tail -20', 'Exit code: 0', undefined],
+  ])('retains failure for a different or unproven retry: %s, %s, cwd=%s', (command, output, cwd) => {
+    const accepted = user(sessionId), failed = 'npx vitest run | tail -18';
+    const retry = bash(command, output, { args: { command, cwd } });
+    expect(computeReceipts([accepted, batch(sessionId, [bash(failed, 'Command timed out.'), retry])], accepted.id).unresolvedChecks).toEqual([checkFailed(output) ? command : failed]);
+  });
   it('leaves filesChangedAfterLastCheck empty when no checks ran', () => {
     const accepted = user(sessionId);
     const receipts = computeReceipts([accepted, batch(sessionId, [write('a.ts'), bash('ls', 'a.ts\nExit code: 0')])], accepted.id);

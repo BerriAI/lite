@@ -1,5 +1,5 @@
 import type { Message, ToolCall } from '../shared/types.js';
-import { checkFailed, isCheckCommand, type TurnReceipts } from '../shared/receipts.js';
+import { checkCommandKey, checkFailed, isCheckCommand, type TurnReceipts } from '../shared/receipts.js';
 
 /** Pure end-of-turn accounting from tool receipts. Walks the assistant
  * messages AFTER the accepted user turn (sinceMessageId; from the start when
@@ -15,7 +15,7 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
   const commandsRun: string[] = [];
   const checksRun: string[] = [];
   const checksFailed: string[] = [];
-  const unresolvedChecks = new Set<string>();
+  const unresolvedChecks = new Map<string, string>();
   // Sequence positions let "after the last check" and "read earlier" compare
   // across batches without carrying timestamps (endedAt granularity is ms and
   // ties within a batch are common).
@@ -51,8 +51,9 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
         commandsRun.push(command);
         if (call.name === 'verify' || isCheckCommand(command)) {
           checksRun.push(command);
-          if (checkFailed(result(call))) { checksFailed.push(command); unresolvedChecks.add(command); }
-          else unresolvedChecks.delete(command);
+          const key = JSON.stringify([call.args.cwd ?? '', checkCommandKey(command)]);
+          if (checkFailed(result(call))) { checksFailed.push(command); unresolvedChecks.set(key, command); }
+          else if (/(?:^|\n)Exit code: 0\s*$/.test(result(call))) unresolvedChecks.delete(key);
           lastCheck = seq;
         }
       }
@@ -60,7 +61,7 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
   }
   // Empty when no checks ran: that turn is already fully described by "no checks were run".
   const filesChangedAfterLastCheck = lastCheck < 0 ? [] : filesChanged.filter(path => lastChange.get(path)! > lastCheck);
-  return { filesChanged, commandsRun, checksRun, checksFailed, unresolvedChecks: [...unresolvedChecks], filesChangedAfterLastCheck, unreadFilesChanged: filesChanged.filter(path => unread.has(path)) };
+  return { filesChanged, commandsRun, checksRun, checksFailed, unresolvedChecks: [...unresolvedChecks.values()], filesChangedAfterLastCheck, unreadFilesChanged: filesChanged.filter(path => unread.has(path)) };
 }
 
 /** The short host line appended to a mutating turn's final assistant message

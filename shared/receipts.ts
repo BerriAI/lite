@@ -12,7 +12,7 @@ export interface TurnReceipts {
   checksRun: string[];
   /** checksRun entries whose result reported failure (see checkFailed). */
   checksFailed: string[];
-  /** Failed check commands not superseded by a later successful identical check. */
+  /** Failed checks not superseded by a successful rerun; numeric tail output limits do not change the check. */
   unresolvedChecks?: string[];
   /** Files whose LAST change landed after the LAST completed check — the
    * "you edited after your tests passed" catch. Empty when no checks ran
@@ -39,6 +39,13 @@ const CHECKERS = ['npm test', 'npx vitest', 'npx tsc', 'npx playwright test', 'n
 // Word boundaries on both sides so 'echo test', 'pytest-cov' and 'npm run checkstyle' never match.
 const CHECK_PATTERN = new RegExp(`(?:^|[;&|(\\s])(?:${CHECKERS.map(checker => checker.replace(/ /g, '\\s+')).join('|')})(?=$|[;&|)\\s])`);
 export const isCheckCommand = (command: string): boolean => CHECK_PATTERN.test(command);
+
+/** A numeric tail only changes the displayed output. Keep the check, cwd,
+ * arguments, and shell control flow intact; unfamiliar syntax stays exact. */
+export function checkCommandKey(command: string): string {
+  if (/['"\\`$#\n\r]/.test(command)) return command;
+  return command.trim().replace(/[ \t]+\|[ \t]*tail[ \t]+(?:-\d+|-n[ \t]+\d+|--lines=\d+)[ \t]*$/, '').replace(/[ \t]+2>&1$/, '');
+}
 
 /** A check failed when its result content ends with the bash tool's trailing
  * status line reporting a nonzero exit — 'Exit code: <anything but 0>', which
