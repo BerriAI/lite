@@ -1567,7 +1567,7 @@ export class Runner {
           const recorded=this.store.messages(id);
           const failedCalls=recorded.slice(recorded.findIndex(item=>item.id===run.turnId)+1).flatMap(item=>item.toolCalls??[]).filter(item=>item.status==='error'&&run.toolFailures?.has(failureKey(item)));
           const details=[...(evidence.unresolvedChecks??[]).map(command=>`Check did not pass: ${command}`),...(run.toolFailures?.size?failedCalls.slice(-3).map(item=>`${item.name}: ${item.output || 'Action failed.'}`):[])];
-          run.verificationNote=utf8Bounded(`Some attempted actions or checks remain unresolved.\n${details.join('\n')}`,4000);
+          run.verificationNote=utf8Bounded(details.join('\n'),4000);
         }
         if(run.unresolvedWorkers?.size) {run.blocked=true;message.content+=`\n\n[${run.unresolvedWorkers.size} worker assignment(s) remain unresolved.]`;}
         if(strictDriver&&evidence.filesChanged.length) {

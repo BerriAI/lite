@@ -86,7 +86,7 @@ function ReceiptsRow({ receipts }: { receipts: NonNullable<Message['receipts']> 
   const commands = unresolved.length ? unresolved : receipts.checksRun;
   return <details className={`receipts-row${summary.attention ? ' needs-review' : ''}`}>
     <summary><ChevronRight size={12} />{summary.title}</summary>
-    <p>{summary.description}</p>
+    {summary.description && <p>{summary.description}</p>}
     {receipts.filesChangedAfterLastCheck.length > 0 && <p>Edited after checks: {receipts.filesChangedAfterLastCheck.join(', ')}</p>}
     {commands.map((command, index) => <pre key={index}>{command}</pre>)}
     {receipts.filesChanged.length > 0 && <p>Files changed: {receipts.filesChanged.join(', ')}</p>}

@@ -362,7 +362,7 @@ function VerificationRow({ receipts }: { receipts: NonNullable<Message['receipts
   return <box paddingLeft={3} marginTop={1} flexDirection="column" flexShrink={0}>
     <Button onPress={() => setOpen(!open)}><span fg={toHex(summary.attention ? theme.warning : theme.textMuted)}>{`${open ? '▾' : '▸'} ${summary.title}`}</span></Button>
     {open && <box paddingLeft={2} flexDirection="column" flexShrink={0}>
-      <text fg={toHex(theme.textMuted)} wrapMode="word">{summary.description}</text>
+      {summary.description && <text fg={toHex(theme.textMuted)} wrapMode="word">{summary.description}</text>}
       {receipts.filesChangedAfterLastCheck.length > 0 && <text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Edited after checks: ${receipts.filesChangedAfterLastCheck.join(', ')}`)}</text>}
       {commands.map((command, index) => <text key={index} marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(command, true)}</text>)}
       {receipts.filesChanged.length > 0 && <text marginTop={1} fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(`Files changed: ${receipts.filesChanged.join(', ')}`)}</text>}

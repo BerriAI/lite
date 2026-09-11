@@ -8,10 +8,16 @@ describe('verification presentation', () => {
   it('distinguishes unconfirmed earlier command failures from currently failing tests', () => {
     const command = "python3 - <<'PY'\nprint('edit script')\nPY\nnpm test";
     const receipts = { ...base, checksRun: [command], checksFailed: [command], unresolvedChecks: [command] };
-    expect(verificationSummary(receipts)).toEqual({ title: 'Verification needs review', description: '1 earlier verification attempt failed or timed out without a recorded successful rerun.', attention: true });
+    expect(verificationSummary(receipts)).toEqual({ title: 'Checks need attention', description: '', attention: true });
     expect(verificationNotice(receipts)).not.toContain(command);
     expect(verificationNotice(receipts)).not.toContain('still failing');
     expect(receipts.unresolvedChecks).toEqual([command]);
+  });
+  it.each([1,3])('removes the old attempts wording from saved answers with %i unresolved checks', count => {
+    const receipts={...base,unresolvedChecks:Array.from({length:count},(_,index)=>`npm run test:${index}`)};
+    const previous=`Done.\n\nVerification needs review: ${count} earlier verification ${count===1?'attempt failed or timed out':'attempts failed or timed out'} without a recorded successful rerun.`;
+    expect(withoutVerificationNotice(previous,receipts)).toBe('Done.');
+    expect(verificationNotice(receipts)).toBe('\n\nChecks need attention');
   });
   it('keeps recovered failures out of the current warning and respects older receipt records', () => {
     const receipts = { ...base, filesChanged: ['a.ts'], checksRun: ['npm test', 'npm test'], checksFailed: ['npm test'] };

@@ -111,10 +111,10 @@ test('historical failed command dumps become a single expandable verification no
   await open(page, session);
   await expect(page.locator('.assistant-message .message-body > .markdown')).toHaveText('The change is ready.');
   const row = page.locator('.receipts-row');
-  await expect(row.locator('summary')).toHaveText('Verification needs review');
+  await expect(row.locator('summary')).toHaveText('Checks need attention');
   await expect(row.locator('pre').last()).not.toBeVisible();
   await row.locator('summary').click();
-  await expect(row).toContainText('3 earlier verification attempts failed or timed out without a recorded successful rerun.');
+  await expect(row).not.toContainText('attempt');
   await expect(row.locator('pre').last()).toBeVisible();
   await expect(row.locator('pre').last()).toHaveText(commands[2]);
   await page.screenshot({ path: 'test-results/verification-details.png', fullPage: true });
