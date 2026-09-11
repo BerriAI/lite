@@ -1,14 +1,15 @@
-# Litespeed 0.1.2
+# Litespeed 0.1.3
 
-The first self-contained macOS release supports Apple silicon and Intel Macs. It includes Node, Bun, native terminal dependencies, and the web app. Install once, then run `litespeed` from your project.
+The installer now sets up the `litespeed` command in zsh and Bash. After installing, open a new terminal and run `litespeed` from your project. Existing shell settings are preserved.
 
-- Anthropic conversation history and tool results are cacheable through LiteLLM and native Messages requests. Claude gateway aliases can be configured in both interfaces.
-- Read-only inspection stays available during another task; conflicting writes wait visibly and can be cancelled.
-- Skill browsing and direct skill commands are preserved from the concurrent main-branch change.
-- Background update notices in the browser and terminal, plus `litespeed update`.
-- Verified downloads and atomic version switching. Restart is blocked while tasks, background jobs, or workspace terminals are active.
-- Session data, settings, and keys are stored separately from application versions.
-- Long tasks can compact repeatedly without a fixed model-step ceiling. Memory is enabled unless you have turned it off.
-- Worker failures include their error details. Model and worker timeouts require ten minutes without progress; approval waits pause the worker timer.
+- Optional Shunt uses a separately selected model for large reads and routine generation across all model architectures. Enable it in Advanced settings during setup or in Models; it is off by default.
+- Model choices persist across new sessions and workspaces, including the driver, workers, planner, and Shunt model.
+- Select text to copy automatically in the terminal and browser. The terminal also supports Cmd+C and Ctrl+Shift+C for selections.
+- Inspect delegated transcripts inline in the terminal, with clearer tool details and Shunt activity.
+- Clearer installation instructions explain when to open a new terminal and how to make the command available in the existing one.
 
-See the [installation and update guide](https://github.com/BerriAI/litespeed/blob/main/docs/installing.md). These are terminal/server packages, not a signed or notarized macOS `.app`. Git and other development tools used by your projects are separate.
+Packages include Node, Bun, native terminal dependencies, and the web app for Apple silicon and Intel Macs. Updates preserve saved sessions, settings, and keys.
+
+Install or rerun the [installer](https://github.com/BerriAI/litespeed/releases/latest/download/install.sh) to configure the shell command. Existing installations can also update with `litespeed update`.
+
+See the [installation and update guide](https://github.com/BerriAI/litespeed/blob/main/docs/installing.md) and [Shunt guide](https://github.com/BerriAI/litespeed/blob/main/docs/shunt.md).

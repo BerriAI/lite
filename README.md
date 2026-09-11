@@ -19,7 +19,9 @@ cd /path/to/your/project
 litespeed
 ```
 
-The installer adds `litespeed` to your shell setup (zsh or Bash). To keep using the **current terminal** instead, run `export PATH="$HOME/.local/bin:$PATH"` once. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
+The installer sets up the `litespeed` command for new terminal windows (zsh or Bash). If you use the same terminal window where you installed it, run `export PATH="$HOME/.local/bin:$PATH"` first.
+
+Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
 
 See [installation, updates, and the source-build alternative](docs/installing.md). Packages support Apple silicon and Intel Macs. Git and your project's development tools remain separate.
 
