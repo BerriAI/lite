@@ -20,6 +20,17 @@ it('keeps zero, missing, partial, and inconsistent cache reports distinct',()=>{
   const missing=record('b',100);delete missing.usage;
   expect(aggregateUsage([record('a',100,90),missing]).cachedTokens).toBeUndefined();
 });
+it('excludes requests without usable cache reports from both sides of the percentage',()=>{
+  const missing=record('a',100);delete missing.usage;
+  const records=[record('a',100,90),record('a',10000),missing,record('a',100,101)];
+  const usage=aggregateUsage(records);
+  const message:Message={id:'answer',sessionId:'root',role:'assistant',content:'Partial answer',createdAt:1,turnUsage:usage};
+  expect(cacheHitLabel(records.map(item=>item.usage))).toBe('90% cache hit');
+  expect(usageLabel(message,usage)).toContain('90% cache hit');
+  expect(usageDetails(message,usage)).toContain('90% cache hit · 4 requests (1 unreported)');
+  expect(cacheHitLabel([undefined,{inputTokens:100},{inputTokens:0,cachedTokens:0}])).toBe('Cache unavailable');
+  expect(cacheHitLabel([{inputTokens:100,cachedTokens:0},undefined])).toBe('0% cache hit');
+});
 it('labels family totals with the companion roles that contributed usage',()=>{
   const child={...record('deepseek',900,450),sessionId:'child',role:'sidekick' as const};
   const usage=aggregateUsage([record('astra',100,90),child,{...child,id:'another-request'}]);

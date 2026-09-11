@@ -138,12 +138,13 @@ function MessageView({ driver, workerNoun, message, running, grouped, tail, live
 function UsageDetails({usage,family}:{usage:Usage;family?:Message['turnUsage']}) {
   const complete=!family||family.reportedRequests===family.requests;
   const reported=!family||family.reportedRequests>0;
-  const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number;cached:number;cacheReports:number}>();
+  const rows=new Map<string,{label:string;input:number;output:number;requests:number;reported:number;usage:Usage[]}>();
   for(const record of family?.breakdown??[]) {
     const key=JSON.stringify([record.providerId,record.model,record.role,record.phase]);
-    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${usagePhase(record.phase)}`}`,input:0,output:0,requests:0,reported:0,cached:0,cacheReports:0};
-    row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;if(record.usage.cachedTokens!==undefined){row.cached+=record.usage.cachedTokens;row.cacheReports++;}}rows.set(key,row);
+    const row=rows.get(key)??{label:`${record.role==='lead'?'Driver':record.role[0].toUpperCase()+record.role.slice(1)} · ${record.model}${record.phase==='response'?'':` · ${usagePhase(record.phase)}`}`,input:0,output:0,requests:0,reported:0,usage:[]};
+    row.requests++;if(record.usage){row.reported++;row.input+=record.usage.inputTokens;row.output+=record.usage.outputTokens;row.usage.push(record.usage);}rows.set(key,row);
   }
-  const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{` · ${cacheHitLabel(usage,complete)}`}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;
-  return family?<details className="usage usage-details"><summary title="Cache hit = cached input tokens / total input tokens. Output tokens are excluded.">{summary}</summary><div className="usage-breakdown">{[...rows].map(([key,row])=><div key={key}><strong>{row.label}</strong><span>{row.reported?`${row.input.toLocaleString()} in · ${row.output.toLocaleString()} out`:'Usage not reported'}{` · ${cacheHitLabel({inputTokens:row.input,cachedTokens:row.cached},row.cacheReports===row.requests)}`}{row.reported<row.requests?` · ${row.requests-row.reported} request(s) unreported`:''}</span></div>)}</div></details>:<span className="usage" title="Cache hit = cached input tokens / total input tokens. Output tokens are excluded.">{summary}</span>;
+  const summary=<>{reported?`${(usage.inputTokens+usage.outputTokens).toLocaleString()} tokens${complete?'':' reported'}`:'Usage unavailable'}{` · ${cacheHitLabel(family?.breakdown.map(record=>record.usage)??usage)}`}{usage.durationMs?` · ${(usage.durationMs/1000).toFixed(1)}s`:''}{usage.cost!==undefined?` · $${usage.cost.toFixed(4)}`:''}</>;
+  const cacheHelp='Cache hit = cached input tokens / input tokens for requests reporting both. Missing reports and output tokens are excluded.';
+  return family?<details className="usage usage-details"><summary title={cacheHelp}>{summary}</summary><div className="usage-breakdown">{[...rows].map(([key,row])=><div key={key}><strong>{row.label}</strong><span>{row.reported?`${row.input.toLocaleString()} in · ${row.output.toLocaleString()} out`:'Usage not reported'}{` · ${cacheHitLabel(row.usage)}`}{row.reported<row.requests?` · ${row.requests-row.reported} request(s) unreported`:''}</span></div>)}</div></details>:<span className="usage" title={cacheHelp}>{summary}</span>;
 }

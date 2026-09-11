@@ -45,6 +45,12 @@ const mock=createServer(async(req,res)=>{
       if(res.destroyed)return;
     }
     if(!prompt.includes('EMPTY_BUDGET_SUMMARY'))emit({content:'Earlier context: the user discussed a local fixture project and wants accurate, tested changes. Preserve the latest user request and continue. No tools or tests were run while summarizing.'});
+  }else if(prompt.includes('CACHE_PARTIAL_BROWSER')){
+    if(data.messages.at(-1)?.role==='tool'){
+      emit({content:'Partial answer before the connection dropped.'});
+      await new Promise(resolve=>setTimeout(resolve,50));res.destroy();return;
+    }
+    toolCall=true;emit({tool_calls:[{index:0,id:'cache-read',type:'function',function:{name:'glob',arguments:JSON.stringify({pattern:'*'})}}]});
   }else if(prompt.includes('TUI_FLOW_')){
     const child=prompt.includes('TUI_FLOW_CHILD'), count=data.messages.filter((m:any)=>m.role==='tool').length;
     const pause=()=>new Promise(resolve=>setTimeout(resolve,200));
@@ -183,7 +189,7 @@ const mock=createServer(async(req,res)=>{
     const text=prompt.includes('ask fixture question')?'Your answer is saved. Continuing with your choice.':prompt.includes('create fixture')?'The file operation is complete. Check the activity card for its result.':prompt.includes('Summarize this coding session')?'The user asked for a fixture response. A small test workspace is available. Continue from here.':'Hello from Litespeed.\n\nYour workspace is ready. Here is a small example:\n\n```typescript\nconst answer = 42;\n```';
     for(const part of text.match(/.{1,12}|\n/g)||[]){if(res.destroyed)return;emit({content:part});await new Promise(r=>setTimeout(r,prompt.includes('slow response')?150:15));}
   }
-  emit({},toolCall?'tool_calls':'stop');res.write(`data: ${JSON.stringify({choices:[],usage:{prompt_tokens:25,completion_tokens:35,...(prompt.includes('CACHE_HIT_BROWSER')?{prompt_tokens_details:{cached_tokens:20}}:{})}})}\n\n`);res.end('data: [DONE]\n\n');
+  emit({},toolCall?'tool_calls':'stop');res.write(`data: ${JSON.stringify({choices:[],usage:{prompt_tokens:25,completion_tokens:35,...(/CACHE_(HIT|PARTIAL)_BROWSER/.test(prompt)?{prompt_tokens_details:{cached_tokens:20}}:{})}})}\n\n`);res.end('data: [DONE]\n\n');
 });
 await new Promise<void>(resolve=>mock.listen(0,'127.0.0.1',resolve));
 const store=new Store(join(root,'state'));

@@ -101,6 +101,9 @@ try{
   assert(screen().includes('test-model + sidekick · 660 tokens'),'family usage names both driver and companion');
   terminal.write('CACHE_HIT_BROWSER show reported cache usage\r');
   await waitFor(()=>screen().includes('80% cache hit')&&screen().includes('idle'),'cache hit percentage appears beside tokens');await save('cache-hit');
+  await waitFor(()=>screen().includes('Ask Litespeed to do something…'),'composer is ready after cache response');
+  terminal.write('CACHE_PARTIAL_BROWSER report interrupted usage\r');
+  await waitFor(()=>screen().includes('60 tokens reported · 80% cache hit'),'an interrupted request does not hide previous cache reports');await save('cache-partial');
 
  }
  await writeFile(join(artifacts,'frames.jsonl'),frames.map(frame=>JSON.stringify(frame)).join('\n'));

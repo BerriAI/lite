@@ -12,7 +12,7 @@ Session goals let Litespeed continue an objective across turns with no turn limi
 
 Test and command results appear on their tool calls. A failing test does not mark a finished Sidekick, worker, or expert as failed; the agent explains unresolved work in its response. **Failed**, **Timed out**, and **Cancelled** describe an agent that did not finish, with the actual error or reason shown in its transcript. There is no additional automatic check verdict under the answer.
 
-Token usage includes **cache hit percentage**: provider-reported cached input tokens divided by total input tokens, excluding output tokens. Expand usage for each model's breakdown. Missing, partial, or inconsistent cache reports show **Cache unavailable**, rather than an invented zero.
+Token usage includes **cache hit percentage**: provider-reported cached input tokens divided by input tokens from requests that report both values. Requests with missing or inconsistent cache usage are left out of that calculation. Expand usage for each model's breakdown and the count of requests without token reports. **Cache unavailable** appears only when no usable cache reports remain; reported zero cache hits still show **0%**.
 
 Slow shell commands keep running after the foreground wait (ten seconds by default). The agent receives a job ID and can read output or stop it; the wait is not a deadline to kill a build. Foreground commands finish before the turn closes, and their file changes remain available for Undo. Explicit background jobs can outlive a driver turn; their file effects are not captured for Undo. Jobs have a thirty-minute lifetime cap and do not survive a backend restart. Workers stall after ten minutes without model or tool progress, with approval waits excluded.
 

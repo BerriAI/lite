@@ -44,15 +44,15 @@ export function usageLabel(message: Message, usage?: Usage) {
   const companions = [...new Set(family?.breakdown.filter(item => item.rootSessionId === message.sessionId && item.sessionId !== message.sessionId && item.role !== 'driver' && item.role !== 'lead').map(item => item.role) ?? [])];
   const modelLabel = model ? [model, ...companions].join(' + ') : undefined;
   const reported = !family || family.reportedRequests > 0;
-  const parts = [modelLabel, usage ? reported ? `${(usage.inputTokens + usage.outputTokens).toLocaleString()} tokens${family && family.reportedRequests < family.requests ? ' reported' : ''}` : 'Usage unavailable' : undefined, usage ? cacheHitLabel(usage,!family||family.reportedRequests===family.requests) : undefined, usage?.durationMs ? formatDuration(usage.durationMs) : undefined, usage?.cost !== undefined ? `$${usage.cost.toFixed(4)}` : undefined];
+  const parts = [modelLabel, usage ? reported ? `${(usage.inputTokens + usage.outputTokens).toLocaleString()} tokens${family && family.reportedRequests < family.requests ? ' reported' : ''}` : 'Usage unavailable' : undefined, usage ? cacheHitLabel(family?.breakdown.map(record=>record.usage)??usage) : undefined, usage?.durationMs ? formatDuration(usage.durationMs) : undefined, usage?.cost !== undefined ? `$${usage.cost.toFixed(4)}` : undefined];
   return parts.filter(Boolean).join(' · ');
 }
 export function usageDetails(message: Message, usage?: Usage) {
-  const rows = new Map<string, { label: string; input: number; output: number; count: number; reported: number; cached: number; cacheReports: number }>();
+  const rows = new Map<string, { label: string; input: number; output: number; count: number; reported: number; usage:Usage[] }>();
   for (const record of message.turnUsage?.breakdown ?? []) {
     const key = JSON.stringify([record.role, record.providerId, record.model, record.phase]);
-    const row = rows.get(key) ?? { label: `${record.role === 'lead' ? 'Driver' : record.role} · ${record.providerId}/${record.model} · ${usagePhase(record.phase)}`, input: 0, output: 0, count: 0, reported: 0, cached:0, cacheReports:0 };
-    row.count++; if (record.usage) { row.reported++; row.input += record.usage.inputTokens; row.output += record.usage.outputTokens; if(record.usage.cachedTokens!==undefined){row.cached+=record.usage.cachedTokens;row.cacheReports++;} } rows.set(key, row);
+    const row = rows.get(key) ?? { label: `${record.role === 'lead' ? 'Driver' : record.role} · ${record.providerId}/${record.model} · ${usagePhase(record.phase)}`, input: 0, output: 0, count: 0, reported: 0, usage:[] };
+    row.count++; if (record.usage) { row.reported++; row.input += record.usage.inputTokens; row.output += record.usage.outputTokens; row.usage.push(record.usage); } rows.set(key, row);
   }
-  return [usageLabel(message, usage) || 'Usage not reported.', ...[...rows.values()].map(row => `${row.label}\n${row.reported ? `${row.input.toLocaleString()} input · ${row.output.toLocaleString()} output` : 'Usage not reported'} · ${cacheHitLabel({inputTokens:row.input,cachedTokens:row.cached},row.cacheReports===row.count)} · ${row.count} requests${row.reported < row.count ? ` (${row.count - row.reported} unreported)` : ''}`), 'Cache hit = cached input tokens / total input tokens. Output tokens are excluded.'].join('\n\n');
+  return [usageLabel(message, usage) || 'Usage not reported.', ...[...rows.values()].map(row => `${row.label}\n${row.reported ? `${row.input.toLocaleString()} input · ${row.output.toLocaleString()} output` : 'Usage not reported'} · ${cacheHitLabel(row.usage)} · ${row.count} requests${row.reported < row.count ? ` (${row.count - row.reported} unreported)` : ''}`), 'Cache hit = cached input tokens / input tokens for requests reporting both. Missing reports and output tokens are excluded.'].join('\n\n');
 }

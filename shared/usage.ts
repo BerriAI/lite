@@ -22,9 +22,14 @@ export function aggregateUsage(records: RequestUsage[]): TurnUsage {
   };
 }
 
-export function cacheHitLabel(usage: Pick<Usage,'inputTokens'|'cachedTokens'>, complete = true): string {
-  const {inputTokens,cachedTokens}=usage;
-  if(!complete || !Number.isFinite(inputTokens) || inputTokens<=0 || cachedTokens===undefined || !Number.isFinite(cachedTokens) || cachedTokens<0 || cachedTokens>inputTokens)return 'Cache unavailable';
+type CacheUsage = Pick<Usage,'inputTokens'|'cachedTokens'>;
+export function cacheHitLabel(usage: CacheUsage | readonly (CacheUsage | undefined)[]): string {
+  let inputTokens=0,cachedTokens=0;
+  for(const report of 'inputTokens' in usage ? [usage] : usage) {
+    if(!report || !Number.isFinite(report.inputTokens) || report.inputTokens<0 || report.cachedTokens===undefined || !Number.isFinite(report.cachedTokens) || report.cachedTokens<0 || report.cachedTokens>report.inputTokens)continue;
+    inputTokens+=report.inputTokens;cachedTokens+=report.cachedTokens;
+  }
+  if(inputTokens<=0)return 'Cache unavailable';
   return `${Number((100*cachedTokens/inputTokens).toFixed(1))}% cache hit`;
 }
 

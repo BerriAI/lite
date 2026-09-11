@@ -125,3 +125,20 @@ for(const width of [1280,390])test(`cache hit percentage uses input tokens and s
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   }
 });
+
+for(const width of [1280,390])test(`interrupted requests do not hide reported cache hits at ${width}px`,async({page,request})=>{
+  await page.setViewportSize({width,height:800});
+  const session=await create(request);await open(page,session);
+  await send(page,session,'CACHE_PARTIAL_BROWSER report usage');
+  const result=await done(request,session);
+  expect(result.session.status).toBe('error');
+  expect(result.messages.at(-1)?.turnUsage).toMatchObject({requests:2,reportedRequests:1});
+  for(let reload=0;reload<2;reload++){
+    if(reload)await page.reload();
+    const usage=page.locator('.usage').last();
+    await expect(usage.locator('summary')).toContainText('60 tokens reported · 80% cache hit');
+    await usage.locator('summary').click();
+    await expect(usage.locator('.usage-breakdown')).toContainText('80% cache hit · 1 request(s) unreported');
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  }
+});
