@@ -237,6 +237,11 @@ export class Store {
     this.session(id);
     return (this.db.prepare('SELECT data FROM messages WHERE session_id=? ORDER BY rowid').all(id) as {data:string}[]).map(r => JSON.parse(r.data));
   }
+  messageBytes(id: string): number {
+    this.session(id);
+    const row = this.db.prepare('SELECT coalesce(sum(length(cast(data AS BLOB))),0) AS bytes, count(*) AS count FROM messages WHERE session_id=?').get(id) as {bytes:number;count:number};
+    return row.bytes + 2 + Math.max(0, row.count - 1);
+  }
   saveMessage(message: Message) {
     this.assertChildMutable(message.sessionId);
     this.db.prepare('INSERT INTO messages(id,session_id,data) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(message.id, message.sessionId, JSON.stringify(message));

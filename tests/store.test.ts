@@ -27,6 +27,16 @@ describe('local persistence',()=>{
     store.saveSettings({providers:[{id:'p',name:'Renamed',kind:'openai',baseUrl:'https://example.com',apiKey:''}]});expect(store.publicSettings().providers[0].configured).toBe(false);
   });
   it('recovers sessions interrupted during a response',()=>{const s=store.createSession();store.updateSession(s.id,{status:'running'});store.close();store=new Store(directory);expect(store.session(s.id).status).toBe('idle');});
+  it('counts persisted UTF-8 transcript bytes after updates and replacement without decoding history',()=>{
+    const session=store.createSession();
+    const bytes=()=>Buffer.byteLength(JSON.stringify(store.messages(session.id)));
+    expect(store.messageBytes(session.id)).toBe(bytes());
+    const message:Message={id:'bytes',sessionId:session.id,role:'assistant',content:'🚆 中文 \n "quoted"',createdAt:1};
+    store.saveMessage(message);expect(store.messageBytes(session.id)).toBe(bytes());
+    store.saveMessage({...message,content:message.content.repeat(100)});store.saveMessage({...message,id:'second'});
+    expect(store.messageBytes(session.id)).toBe(bytes());
+    store.replaceMessages(session.id,[]);expect(store.messageBytes(session.id)).toBe(2);
+  });
   it('retains original file snapshots across multiple changes',()=>{const s=store.createSession();store.recordChange(s.id,{path:'a.ts',before:'a',after:'b'});store.recordChange(s.id,{path:'a.ts',before:'b',after:'c'});expect(store.changes(s.id)).toEqual([{path:'a.ts',before:'a',after:'c'}]);});
   it('forks conversation with independent IDs',()=>{const s=store.createSession({title:'Original'});store.saveMessage({id:'old',sessionId:s.id,role:'user',content:'hello',createdAt:1});const f=store.fork(s.id);expect(f.parentId).toBe(s.id);expect(store.messages(f.id)[0].id).not.toBe('old');expect(store.messages(s.id)).toHaveLength(1);});
   it('forks at a parallel tool result without leaving unmatched assistant calls',()=>{

@@ -1332,7 +1332,7 @@ export class Runner {
       try {
         for await (const chunk of streamCompletion({provider,model:session.model,reasoningEffort:session.modelReasoning?.[JSON.stringify([provider.id,session.model])],messages:history,tools,signal,system,onRetry:retry=>{usageRecord=this.startUsage(id,run,provider,session.model,'response');message.activity=`Provider unavailable (HTTP ${retry.status}). Retry ${retry.attempt}/2 in ${Math.ceil(retry.delayMs/1000)}s. Failed attempts may still incur charges.`;this.save(message);}})) {
           if (signal.aborted) break;
-          if(run.child) { const usage=Buffer.byteLength(JSON.stringify(this.store.messages(id)))+Buffer.byteLength(JSON.stringify([...fragments.values()]))+Buffer.byteLength(JSON.stringify(chunk));if(usage>childLimits.transcriptBytes-65536)throw conflict(run.child.role?'The sidekick transcript reached its 16 MiB limit.':'The research transcript reached its 4 MiB limit.'); }
+          if(run.child) { const usage=this.store.messageBytes(id)+Buffer.byteLength(JSON.stringify([...fragments.values()]))+Buffer.byteLength(JSON.stringify(chunk));if(usage>childLimits.transcriptBytes-65536)throw conflict(run.child.role?'The sidekick transcript reached its 16 MiB limit.':'The research transcript reached its 4 MiB limit.'); }
           if (message.activity) { message.activity='';this.save(message); }
           if (chunk.type === 'text') { message.content += chunk.text || ''; this.persist(message); this.bus.emit(id,'delta',{messageId:message.id,delta:chunk.text || ''}); }
           else if (chunk.type === 'reasoning') { message.reasoning = (message.reasoning || '') + (chunk.text || ''); this.persist(message); this.bus.emit(id,'reasoning',{messageId:message.id,delta:chunk.text || ''}); }
