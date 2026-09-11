@@ -201,7 +201,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'permissions', label: 'Permissions', description: 'Ask first or allow all tools, including workers', action: permissions },
     { id: 'settings', label: 'Settings', description: 'Providers, project profiles, permissions, integrations, and usage', action: openSettings },
     { id: 'sessions', label: 'Sessions', description: 'Switch sessions or start a new one', action: () => run(sessions) },
-    { id: 'new', label: 'New session', description: 'Keep this session and its draft', action: () => { close(); run(() => controller.create(detail?.session.workspace ?? process.cwd())); } },
+    ...['new', 'clear', 'reset'].map(id => ({ id, label: 'New session', description: 'Start with empty context; keep this session and its draft', action: () => { close(); run(() => controller.create(detail?.session.workspace ?? process.cwd())); } })),
     { id: 'rename', label: 'Rename session', action: () => prompt('Rename session', detail?.session.title ?? '', title => controller.configure({ title })) },
     { id: 'mode', label: detail?.session.mode === 'plan' ? 'Switch to Build' : 'Switch to Plan', description: 'Plan investigates without changing project files', disabled: busy, action: () => { close(); run(() => controller.configure({ mode: detail?.session.mode === 'plan' ? 'build' : 'plan' })); } },
     { id: 'queue', label: 'Queued messages', description: 'Pause, resume, or remove follow-ups', action: queue },
