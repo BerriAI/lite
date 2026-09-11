@@ -1,0 +1,182 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "generatedAt": "2026-09-11T03:39:22.108Z",
+  "rows": [
+    {
+      "kind": "openai",
+      "variant": "baseline",
+      "step": 0,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10446,
+      "cachedTokens": 0,
+      "outputTokens": 67,
+      "durationMs": 25812,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "baseline",
+      "step": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10546,
+      "cachedTokens": 0,
+      "outputTokens": 66,
+      "durationMs": 46425,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "baseline",
+      "step": 2,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10645,
+      "cachedTokens": 0,
+      "outputTokens": 66,
+      "durationMs": 96861,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "baseline",
+      "step": 3,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10745,
+      "cachedTokens": 0,
+      "outputTokens": 4,
+      "durationMs": 27365,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "fixed",
+      "step": 0,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10445,
+      "cachedTokens": 0,
+      "outputTokens": 71,
+      "durationMs": 10292,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "fixed",
+      "step": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10549,
+      "cachedTokens": 10442,
+      "outputTokens": 64,
+      "durationMs": 35674,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "fixed",
+      "step": 2,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10646,
+      "cachedTokens": 10544,
+      "outputTokens": 64,
+      "durationMs": 1808,
+      "correct": true
+    },
+    {
+      "kind": "openai",
+      "variant": "fixed",
+      "step": 3,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10744,
+      "cachedTokens": 10641,
+      "outputTokens": 4,
+      "durationMs": 43334,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "baseline",
+      "step": 0,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10444,
+      "cachedTokens": 0,
+      "outputTokens": 73,
+      "durationMs": 56280,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "baseline",
+      "step": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10550,
+      "cachedTokens": 0,
+      "outputTokens": 64,
+      "durationMs": 72740,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "baseline",
+      "step": 2,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10647,
+      "cachedTokens": 0,
+      "outputTokens": 64,
+      "durationMs": 1284,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "baseline",
+      "step": 3,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10745,
+      "cachedTokens": 0,
+      "outputTokens": 4,
+      "durationMs": 48385,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "fixed",
+      "step": 0,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10445,
+      "cachedTokens": 0,
+      "outputTokens": 67,
+      "durationMs": 3432,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "fixed",
+      "step": 1,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10545,
+      "cachedTokens": 10442,
+      "outputTokens": 64,
+      "durationMs": 13048,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "fixed",
+      "step": 2,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10642,
+      "cachedTokens": 10540,
+      "outputTokens": 64,
+      "durationMs": 67965,
+      "correct": true
+    },
+    {
+      "kind": "anthropic",
+      "variant": "fixed",
+      "step": 3,
+      "model": "claude-haiku-4-5-20251001",
+      "inputTokens": 10740,
+      "cachedTokens": 10637,
+      "outputTokens": 4,
+      "durationMs": 1415,
+      "correct": true
+    }
+  ]
+}

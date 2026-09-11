@@ -18,3 +18,14 @@ npx tsx research/cache/verify.ts
 The gateway must expose the selected Claude model through both API formats. This harness opts that exact model ID into Anthropic caching, so it also supports an opaque Claude alias. It makes sixteen requests with an approximately 10K-token initial conversation. Shorter prompts, cache expiration, gateway routing, and provider configuration can change the outcome. A gateway that injects conversation cache markers itself may already show hits in the baseline. This experiment measures cache reuse, not dollar savings or a controlled latency benchmark.
 
 Automated coverage also exercises real Runner file reads, growing multi-tool payloads, image attachments, empty tool results, signed thinking, input immutability, non-Anthropic request compatibility, API persistence/validation, browser settings, and the terminal editor. Run `npm run check`, `npm run test:e2e`, and `npm run test:tui:interactions` for those checks.
+
+## Recorded live result
+
+The [recorded run](results.json) completed all sixteen requests correctly through LiteLLM with Claude Haiku 4.5. Each cell below lists the three follow-up requests after the initial cache write.
+
+| API route | Baseline cached input tokens | Fixed cached input tokens | Fixed follow-up input reused |
+| --- | --- | --- | --- |
+| Chat Completions | 0, 0, 0 | 10,442, 10,544, 10,641 | 99.0% |
+| Anthropic Messages | 0, 0, 0 | 10,442, 10,540, 10,637 | 99.0% |
+
+Initial requests had no cache hits, as expected. The small system and tool prefix was below the caching minimum; the long conversation made the missing history marker observable. This confirms cache reuse for these routes and this gateway, not universal savings for every model or session. Latency varied substantially during the run, so it is not a reliable speed comparison.
