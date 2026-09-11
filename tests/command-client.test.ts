@@ -55,6 +55,7 @@ function appServer() {
     else if (path === '/api/settings') data = settings;
     else if (path.startsWith('/api/sessions?')) data = { sessions: [...details.values()].map(value => value.session) };
     else if (path.startsWith('/api/commands?')) data = { commands };
+    else if (path.startsWith('/api/profiles?')) data = { revision: 'catalog-v1', profiles: [], skills: [{ id: 'testing', name: 'Test carefully', description: 'Check regressions.' }], diagnostics: [] };
     else if (path.startsWith('/api/sessions/')) { data = details.get(path.split('/').at(-1)!); if (!data) throw new Error(`Missing fixture for ${path}`); }
     else throw new Error(`Unexpected ${method} ${path}`);
     const response = JSON.stringify(data);
@@ -91,7 +92,7 @@ describe('composer slash-command autocomplete', () => {
     const server = await mountApp();
     await fill('/');
     expect(popover()).not.toBeNull();
-    expect(options()).toEqual(expect.arrayContaining(['/models', '/setup', '/deploy', '/review']));
+    expect(options()).toEqual(expect.arrayContaining(['/models', '/setup', '/skills', '/deploy', '/review', '/testing']));
     expect(input().getAttribute('aria-activedescendant')).toBe('command-option-0');
     await fill('/re');
     expect(options()).toEqual(['/review']);
@@ -162,5 +163,15 @@ describe('slash-command expansion at send', () => {
     await key('Enter');
     expect(server.sent()).toEqual(['/nope hello']);
     expect(document.querySelector('.global-alert')).toBeNull();
+  });
+
+  it('keeps colliding skill ids out of autocomplete so templates and builtins stay first', async () => {
+    await mountApp();
+    await fill('/testing');
+    expect(options()).toEqual(['/testing']);
+    expect(document.querySelector('#command-popover [role="option"]')?.textContent).toContain('Use skill');
+    await fill('/review');
+    expect(options()).toEqual(['/review']);
+    expect(document.querySelector('.command-hint')?.textContent).toContain('Command: review');
   });
 });

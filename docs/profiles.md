@@ -64,6 +64,16 @@ You can select skills with the default profile. Skills alone do not restrict too
 
 Changes to an existing session hold queued work for explicit Resume. An active response, pending question, or history recovery must finish before reconfiguration. Conflicting changes from another client are rejected rather than silently overwriting their selection. Unsent composer drafts remain separate.
 
+## Slash commands (terminal and web)
+
+- **`/skills`** (alias **`/skill`**) opens the project skill browser. Select or uncheck skills, preview instructions, then choose **Use skills**. Up to eight can be active. This keeps the selected profile, model, and mode; applying explicitly reloads the selected instruction snapshot from disk.
+- **`/<skill-id>`**, for example `/verification`, adds that skill to the current session. It does not start a model turn. An already-active skill is a no-op; use the browser to remove or reload it. On the web welcome screen, it selects the skill for the first message.
+- Skill IDs appear in slash autocomplete. Built-ins take precedence over project command templates, which take precedence over skills. A colliding skill is still selectable through `/skills`.
+- Direct invocation is an exact command with no arguments. `/verification some task` is not a skill activation; activate `/verification`, then send your task separately.
+- If the catalog differs from an existing pinned configuration, direct invocation asks you to review it in `/skills` rather than silently reloading instructions or tool restrictions. Running responses and pending configuration operations block activation; queued messages stay paused after changes.
+
+Skills must be registered in `.speedrail/profiles.json` with a corresponding `.speedrail/skills/<id>/SKILL.md` file as shown above. Opening the browser refreshes its catalog; use **Refresh catalog** after adding files while it is open. Merely browsing or adding files never activates them.
+
 ## CLI selection
 
 Run from the project directory against a running Speedrail server:
