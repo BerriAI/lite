@@ -12,14 +12,14 @@ Download the **macOS package** with its runtimes included—no Node or npm setup
 curl -fsSL https://github.com/BerriAI/litespeed/releases/latest/download/install.sh | sh
 ```
 
-Then run it from **the project you want to work on**:
+Open a **new terminal**, then run it from **the project you want to work on**:
 
 ```sh
 cd /path/to/your/project
-~/.local/bin/litespeed
+litespeed
 ```
 
-Use `litespeed` once `~/.local/bin` is on your PATH; the installer prints the setup line if needed. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
+The installer adds `litespeed` to your shell setup (zsh or Bash). To keep using the **current terminal** instead, run `export PATH="$HOME/.local/bin:$PATH"` once. Litespeed starts its local backend automatically. Updates appear in both UIs, or run `litespeed update`. Saved sessions and settings stay outside the application package.
 
 See [installation, updates, and the source-build alternative](docs/installing.md). Packages support Apple silicon and Intel Macs. Git and your project's development tools remain separate.
 

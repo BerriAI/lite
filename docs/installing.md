@@ -8,16 +8,16 @@ Litespeed releases include Node, Bun, the native terminal packages, and the buil
 curl -fsSL https://github.com/BerriAI/litespeed/releases/latest/download/install.sh | sh
 ```
 
-The installer chooses your Mac architecture, verifies the archive checksum, checks that the included runtime starts, and installs into `~/.local/share/litespeed`. It creates `~/.local/bin/litespeed`. Existing unrelated commands or nonempty installation directories are left alone. The installer prints the exact command to start Litespeed; if `~/.local/bin` is not on PATH, it also prints the line to add to your shell configuration.
+The installer chooses your Mac architecture, verifies the archive checksum, checks that the included runtime starts, and installs into `~/.local/share/litespeed`. It creates `~/.local/bin/litespeed`. Existing unrelated commands or nonempty installation directories are left alone. The installer adds that directory to your zsh or Bash startup configuration without replacing your existing settings. Reinstalling does not add the same line twice.
 
-From the project you want to work on:
+Open a new terminal, then run it from the project you want to work on:
 
 ```sh
 cd /path/to/your/project
-~/.local/bin/litespeed
+litespeed
 ```
 
-Once `~/.local/bin` is on PATH, use `litespeed`. The first launch asks for your gateway base URL and API key. For the browser, open `http://localhost:3210`, or run `litespeed serve` for a web-only session.
+To use the current terminal instead, run `export PATH="$HOME/.local/bin:$PATH"` once. An installer launched with `curl … | sh` cannot change its parent terminal’s environment. The first launch asks for your gateway base URL and API key. For the browser, open `http://localhost:3210`, or run `litespeed serve` for a web-only session.
 
 You can also download the archive for your Mac from [Releases](https://github.com/BerriAI/litespeed/releases), alongside its `manifest.json`. Extract it and run `litespeed/runtime/node litespeed/bin/install.mjs /absolute/path/to/archive.tar.gz /absolute/path/to/manifest.json`. These are terminal/server packages, not a signed/notarized `.app` or `.pkg` installer.
 
@@ -41,7 +41,7 @@ Packaged installs store sessions, settings, and provider keys in `~/.local/share
 
 To carry a source installation's data forward, stop its server and set `LITESPEED_DATA_DIR` to the absolute path of its `.litespeed` directory before starting the package. Back up that directory first. Keep the same address/port to retain browser drafts. Do not merge databases or run two servers against one data directory. If your data is still under `.speedrail` or `.lite`, first use the [rename migration](upgrading.md).
 
-The installer supports `LITESPEED_INSTALL_DIR` and `LITESPEED_BIN_DIR` for custom installation paths. It does not automatically replace an npm-linked command elsewhere on PATH. Check `command -v litespeed` and use the printed packaged launcher path until PATH selects it.
+The installer supports `LITESPEED_INSTALL_DIR` and `LITESPEED_BIN_DIR` for custom installation paths. Set `LITESPEED_NO_MODIFY_PATH=1` to leave shell startup files alone. Other shells and unwritable startup files receive manual PATH instructions; `~/.local/bin/litespeed` remains available as a direct fallback. It does not automatically replace an npm-linked command elsewhere on PATH. Check `command -v litespeed` and use the printed packaged launcher path until PATH selects it.
 
 ## Build from source
 

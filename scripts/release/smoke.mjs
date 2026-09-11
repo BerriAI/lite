@@ -16,6 +16,8 @@ const release = JSON.parse(await readFile(join(artifacts, `manifest-${platform}.
 const asset = release.assets[platform], archive = join(artifacts, asset.file);
 const temporary = await realpath(await mkdtemp(join(tmpdir(), 'litespeed-package-smoke-')));
 let server, terminal, provider, held, updatedPid;
+let complete=false;
+process.on('exit',()=>{if(!complete){console.error('Package E2E exited before completing its assertions.');process.exitCode=1;}});
 const delay = ms => new Promise(done => setTimeout(done, ms));
 const emulator = new xterm.Terminal({ cols: 110, rows: 34, allowProposedApi: true });
 const screen = () => Array.from({ length: emulator.rows }, (_, i) => emulator.buffer.active.getLine(i)?.translateToString(true) ?? '').join('\n');
@@ -25,11 +27,15 @@ try {
   execFileSync('/usr/bin/tar', ['-xzf', archive, '-C', temporary]);
   const unpacked = join(temporary, 'litespeed'), home = join(temporary, 'home'), install = join(home, 'app'), bin = join(home, 'bin'), state = join(home, 'state'), workspace = join(temporary, 'project');
   await mkdir(home); await mkdir(workspace); await writeFile(join(workspace, 'keep.txt'), 'user work stays here');
-  const env = { HOME: home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/sh', TERM: 'xterm-256color', LITESPEED_INSTALL_DIR: install, LITESPEED_BIN_DIR: bin, LITESPEED_DATA_DIR: state, LITESPEED_DISABLE_PROJECT_CONFIG: '1', XDG_STATE_HOME: join(home, 'tui'), XDG_CONFIG_HOME: join(home, 'config'), LITESPEED_NO_UPDATE_CHECK: '1' };
+  const env = { HOME: home, ZDOTDIR:home, PATH: '/usr/bin:/bin:/usr/sbin:/sbin', SHELL: '/bin/zsh', TERM: 'xterm-256color', LITESPEED_INSTALL_DIR: install, LITESPEED_BIN_DIR: bin, LITESPEED_DATA_DIR: state, LITESPEED_DISABLE_PROJECT_CONFIG: '1', XDG_STATE_HOME: join(home, 'tui'), XDG_CONFIG_HOME: join(home, 'config'), LITESPEED_NO_UPDATE_CHECK: '1' };
   const metadata = join(temporary, 'manifest.json'); await writeFile(metadata, JSON.stringify(release));
   execFileSync(join(unpacked, 'runtime/node'), [join(unpacked, 'bin/install.mjs'), archive, metadata], { cwd: workspace, env, stdio: 'pipe' });
   const command = join(bin, 'litespeed');
+  console.log('Package installed in isolated home; checking shell PATH.');
+  assert.equal(execFileSync('/bin/zsh',['-lic','litespeed --version'],{cwd:workspace,env,encoding:'utf8'}).trim(),release.version);
+  assert.match(await readFile(join(unpacked,'research/shunt/UPSTREAM-LICENSE'),'utf8'),/Apache License/);
   assert.equal(execFileSync(command, ['--version'], { env, encoding: 'utf8' }).trim(), release.version);
+  console.log('Bare litespeed command works in a fresh shell; starting backend.');
   const probe = createServer(); probe.listen(0, '127.0.0.1'); await once(probe, 'listening'); const port = probe.address().port; await new Promise(done => probe.close(done));
   const base = `http://127.0.0.1:${port}`, api = apiAt(base);
   let nextRelease, nextArchive;
@@ -54,12 +60,14 @@ try {
   const session = await api('/sessions', { workspace, providerId: 'fixture', model: 'fixture', permissionMode: 'auto' });
   await api(`/sessions/${session.id}/messages`, { content: 'hello from the package' });
   await waitFor(async () => (await api(`/sessions/${session.id}`)).messages.some(message => message.content === 'Package smoke answer'), 'Bundled provider call failed');
-  terminal = pty.spawn(command, ['--url', base, '--session', session.id], { cwd: workspace, env, cols: 110, rows: 34, name: 'xterm-256color' });
+  console.log('Bundled backend and provider call passed; starting TUI.');
+  terminal = pty.spawn('/bin/zsh', ['-lic','exec litespeed "$@"','litespeed','--url', base, '--session', session.id], { cwd: workspace, env, cols: 110, rows: 34, name: 'xterm-256color' });
   const tuiExited = new Promise(done => terminal.onExit(done)); terminal.onData(data => emulator.write(data));
   await waitFor(() => screen().includes('Ctrl+P Commands') && screen().includes('Package smoke answer'), 'Bundled TUI did not render');
   terminal.write('\x03'); await delay(120); terminal.write('\x03');
   assert.equal((await Promise.race([tuiExited, delay(5000).then(() => { throw new Error('TUI did not exit'); })])).exitCode, 0);
   terminal = undefined;
+  console.log('Bundled TUI passed; preparing synthetic upgrade.');
   const nextVersion = release.version.split('.').map(Number); nextVersion[2]++;
   const version = nextVersion.join('.'), upgraded = join(temporary, 'upgrade'); await mkdir(upgraded); await cp(unpacked, join(upgraded, 'litespeed'), { recursive: true, verbatimSymlinks: true });
   const target = join(upgraded, 'litespeed');
@@ -90,6 +98,7 @@ try {
   assert(sessionHeaders.every(id => id === session.id));
   updatedPid = (await api('/health')).pid;
   assert(Number.isInteger(updatedPid), 'Replacement server must identify its PID');
+  complete=true;
   console.log('Package E2E passed: no system Node/Bun, isolated install, web assets, native TUI, provider call, stable session ID, real download/checksum/activation, busy restart refusal, restart, preserved sessions/settings/workspace, and version update.');
 } finally {
   terminal?.kill(); emulator.dispose();
