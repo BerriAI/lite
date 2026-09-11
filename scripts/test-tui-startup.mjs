@@ -33,14 +33,14 @@ try {
   terminal.onData(data => { raw += data; const match = /Stop it with: kill (\d+)/.exec(data); if (match) serverPid = Number(match[1]); emulator.write(data); });
   await waitFor(() => screen().includes('LITESPEED_SMOKE_SHELL>'), 'Invoking shell did not open');
   terminal.write('litespeed\r');
-  await waitFor(() => screen().includes('A fresh start.') && screen().includes('Ctrl+P Commands'), 'Production TUI did not open');
+  await waitFor(() => screen().includes('How would you like to work?') && screen().includes('Ctrl+P Commands'), 'Production TUI did not open');
   assert(serverPid, 'launcher reports the owned backend PID');
   const sessions = await (await fetch(`${base}/api/sessions`)).json();
   assert.equal(sessions.sessions.length, 1);
   assert.equal(sessions.sessions[0].workspace, await realpath(join(install, 'workspace')));
-  await waitFor(() => screen().includes('Gateway base URL'), 'Fresh installation did not ask for its gateway');
+  await waitFor(() => screen().includes('How would you like to work?'), 'Fresh installation did not ask how to work');
   terminal.write('\x1b');
-  await waitFor(() => !screen().includes('Gateway base URL'), 'Setup did not close');
+  await waitFor(() => !screen().includes('How would you like to work?'), 'Setup did not close');
   terminal.write('\x1a');
   await waitFor(() => screen().includes('Stopped') && screen().includes('LITESPEED_SMOKE_SHELL>'), 'Suspend did not return to invoking shell');
   terminal.write('fg\r');
