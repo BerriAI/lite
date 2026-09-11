@@ -1,11 +1,15 @@
-# Litespeed 0.1.5
+# Litespeed 0.1.6
 
-Agent handoffs are easier to follow in the terminal, and verification notes explain what needs attention without a command dump.
+Long tasks keep going, and a failing check no longer makes a completed Sidekick look like a failed model invocation.
 
-- Sidekick has a muted heading above its steps, matching Driver. The name stays visible when its activity is collapsed, and Driver is labeled again when it resumes.
-- Parallel workers and experts keep their own numbered headings and independently expandable transcripts.
-- Verification notices in both UIs distinguish missing checks, later edits, and earlier attempts without recorded successful reruns. Expand the notice for commands and file details. Historical receipts use the same presentation; saved evidence is preserved.
-- Live tools, reasoning, task lists, approvals, and scrolling keep their existing behavior. Real terminal tests cover single Sidekick handoffs, two workers, two experts, and wide and narrow layouts.
+- `/goal` has no turn limit by default in either UI. A positive turn limit is optional; existing saved limits are preserved.
+- Slow shell commands continue as jobs after the foreground wait instead of being killed. Actual process exits, including background completion, determine check results. Numeric `tail` filters cannot mask failed test pipelines.
+- A Sidekick, worker, or expert that finishes with unresolved checks shows **Completed · Needs review**. Agent failures still show the actual error.
+- Compaction retries empty or reasoning-only summaries, can fall back from a worker to its driver model, and can retry later in the same turn. Original history and Undo are retained; running command receipts settle before archiving.
+- Guided terminal setup starts with the architecture, then connects the gateway and explains model roles. Gateways without API keys work too.
+- `/new`, `/clear`, and `/reset` start a fresh terminal conversation while keeping the previous session and draft.
+
+Validation includes real gateway compaction on/off comparisons across all four architectures, a Sidekick file-editing and test-running comparison, browser workflows, and real terminal input/rendering tests. The live compaction fixtures preserve four exact decisions from older history; they do not establish lossless summaries for every task.
 
 Update with `litespeed update`, then reopen the terminal UI. Saved sessions, settings, and keys are preserved.
 
