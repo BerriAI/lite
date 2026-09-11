@@ -1,6 +1,8 @@
 import { VERSION } from '../shared/version.js';
 import type { UpdateStatus } from '../shared/updates.js';
-import { gatewayBaseUrl, needsSetup } from '../shared/setup.js';
+import { shuntSchema } from './shunt.js';
+import { shuntConfigured } from '../shared/shunt.js';
+import { gatewayBaseUrl } from '../shared/setup.js';
 import { clientSurface } from '../shared/client.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { WorkspacePreferences } from './workspace-preferences.js';
@@ -39,7 +41,7 @@ const architectureSchema = z.discriminatedUnion('kind', [
   z.object({kind:z.literal('team-fusion'),worker:modelRouteSchema,concurrency:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(4)]).optional()}).strict(),
   z.object({kind:z.literal('expert-fusion'),expert:modelRouteSchema,concurrency:z.union([z.literal(1),z.literal(2),z.literal(3),z.literal(4)]).optional()}).strict(),
 ]);
-const sessionSchema = z.object({modelReasoning:z.record(z.string().max(400),z.enum(REASONING_EFFORTS)).refine(value=>Object.keys(value).length<=100,'At most 100 model reasoning preferences may be configured.').optional(),title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),architecture:architectureSchema.nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
+const sessionSchema = z.object({shunt:shuntSchema.nullable().optional(),modelReasoning:z.record(z.string().max(400),z.enum(REASONING_EFFORTS)).refine(value=>Object.keys(value).length<=100,'At most 100 model reasoning preferences may be configured.').optional(),title:z.string().trim().min(1).max(200).optional(),workspace:z.string().max(4096).optional(),providerId:z.string().max(64).optional(),model:z.string().max(250).optional(),mode:z.enum(['build','plan']).optional(),permissionMode:z.enum(['ask','auto']).optional(),planner:z.object({providerId:z.string().min(1).max(64),model:z.string().min(1).max(250)}).nullable().optional(),architecture:architectureSchema.nullable().optional(),outputStyle:z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/).nullable().optional()});
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
@@ -191,11 +193,9 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/workspace-preferences',async(req,res)=>res.json(preferences.get(await workspace(req.query.workspace))));
   app.post('/api/workspace-preferences',async(req,res)=>{
     const input=sessionSchema.required({providerId:true,model:true}).extend({setupComplete:z.boolean().optional()}).parse(req.body), root=await workspace(input.workspace);
-    checkProvider(input.providerId);if(input.architecture)checkProvider(architectureWorker(input.architecture).providerId);if(input.planner)checkProvider(input.planner.providerId);
+    checkProvider(input.providerId);if(input.architecture)checkProvider(architectureWorker(input.architecture).providerId);if(input.planner)checkProvider(input.planner.providerId);if(!shuntConfigured(input.shunt,store.settings().providers))throw httpError(400,'Choose an API-key Shunt model or turn Shunt off.');
     if(input.setupComplete&&!input.model.trim())throw httpError(400,'Choose a model to finish setup.');
-    preferences.save(root,{...input,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined});
-    const settings=store.settings();
-    if(input.setupComplete&&needsSetup(settings,{providerId:settings.defaultProvider,model:settings.defaultModel}))store.saveSettings({defaultProvider:input.providerId,defaultModel:input.model});
+    preferences.save(root,{...input,shunt:input.shunt??undefined,architecture:input.architecture??undefined,planner:input.planner??undefined,outputStyle:input.outputStyle??undefined},true);
     res.json({ok:true});
   });
   app.get('/api/sessions',(req,res)=>res.json({sessions:store.sessions(queryString(req.query.q),req.query.archived==='true')}));
@@ -213,6 +213,7 @@ export function createApp(options:AppOptions = {}) {
       if(selection.mode===undefined)delete selection.mode;
       // planner:null means "no planner" on create; a set planner needs a real provider.
       if(!selection.planner)delete selection.planner;else checkProvider(selection.planner.providerId);
+      if(!selection.shunt)delete selection.shunt;else if(!shuntConfigured(selection.shunt,store.settings().providers))throw httpError(400,'Choose an API-key Shunt model or turn Shunt off.');
       // architecture:null means "single model" on create; each role needs a real provider.
       if(!selection.architecture)delete selection.architecture;else checkProvider(architectureWorker(selection.architecture).providerId);
       // outputStyle:null means "no style" on create, mirroring planner.
@@ -227,7 +228,7 @@ export function createApp(options:AppOptions = {}) {
     // Imports are inert history: no tools execute and no imported path is opened.
     const settings=store.settings();
     // An imported planner or architecture may name a provider this install does not have; drop both.
-    const session=store.createSession({...imported.session,planner:undefined,architecture:undefined,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'} as Partial<Session>);
+    const session=store.createSession({...imported.session,shunt:undefined,planner:undefined,architecture:undefined,title:`${imported.session.title||'Session'} (imported)`.slice(0,200),workspace:settings.workspace,providerId:settings.providers.some(p=>p.id===imported.session.providerId)?imported.session.providerId:settings.defaultProvider,permissionMode:'ask'} as Partial<Session>);
     for(const message of imported.messages)store.saveMessage({...message,attachments:message.attachments?.map(({path: _path,...attachment})=>attachment),id:randomUUID(),sessionId:session.id} as Message);
     res.status(201).json(session);
   });
@@ -267,11 +268,13 @@ export function createApp(options:AppOptions = {}) {
     // outputStyle rewrites the system prompt of future turns (session-constant
     // cached-prefix config), so it follows the same contract: idle-only PATCH,
     // revision bump in the store, queue held.
-    const configChange=patch.modelReasoning!==undefined||patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.architecture!==undefined||patch.outputStyle!==undefined;
+    const configChange=patch.shunt!==undefined||patch.modelReasoning!==undefined||patch.model!==undefined||patch.providerId!==undefined||patch.mode!==undefined||patch.permissionMode!==undefined||patch.planner!==undefined||patch.architecture!==undefined||patch.outputStyle!==undefined;
     if(configChange){runner.assertIdle(req.params.id);runner.history.assertReady(req.params.id);}
+    if(!shuntConfigured(patch.shunt,store.settings().providers))throw httpError(400,'Choose an API-key Shunt model or turn Shunt off.');
     checkProvider(patch.providerId);if(patch.planner)checkProvider(patch.planner.providerId);if(patch.architecture)checkProvider(architectureWorker(patch.architecture).providerId);
     const session=store.updateSession(req.params.id,patch,expectedConfigRevision);
-    if(configChange){preferences.save(session.workspace,session);publishConfiguration(req.params.id);}res.json(session);
+    const modelChange=patch.shunt!==undefined||patch.modelReasoning!==undefined||patch.model!==undefined||patch.providerId!==undefined||patch.planner!==undefined||patch.architecture!==undefined||patch.outputStyle!==undefined;
+    if(configChange){preferences.save(session.workspace,session,modelChange);publishConfiguration(req.params.id);}res.json(session);
   });
   app.delete('/api/sessions/:id',(req,res)=>{runner.assertIdle(req.params.id);runner.deleteSessionJobs(req.params.id);store.deleteSession(req.params.id);runner.removeFromSearchIndex(req.params.id);res.json({ok:true});});
   const memory=new Memory(store);

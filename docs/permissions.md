@@ -62,3 +62,7 @@ External writes show their diff in the tool transcript but are not part of works
 ## Honest limits
 
 Command pattern matching is a convenience on the command text, not a shell parser or a sandbox. An allowed command still runs with your local user's full capabilities, and a denied pattern only blocks commands that match it textually. Prefer deny rules for clear, narrow cases and treat allow rules as a way to reduce prompts for commands you already trust. Automatic-approval mode remains a broad opt-in; explicit deny and ask rules are the tools that constrain it.
+
+## Optional Shunt
+
+Shunt’s reader authorizes each source as `read_file`; its writer authorizes the generated target as `write_file`. Existing grants, rules, profile ceilings, external-path checks, hooks and sidecars apply. Its large-read routing hint is not a denial; `direct_reason` is an agent choice that preserves normal permission checks. See [Shunt permissions and recovery](shunt.md#permissions-and-recovery).

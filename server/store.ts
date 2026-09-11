@@ -188,11 +188,11 @@ export class Store {
       return session;
     });
   }
-  updateSession(id: string, patch: Omit<Partial<Session>, 'planner' | 'outputStyle' | 'architecture'> & { planner?: Session['planner'] | null; outputStyle?: string | null; architecture?: Session['architecture'] | null }, expectedConfigRevision?: number): Session {
+  updateSession(id: string, patch: Omit<Partial<Session>, 'planner' | 'outputStyle' | 'architecture' | 'shunt'> & { shunt?: Session['shunt'] | null; planner?: Session['planner'] | null; outputStyle?: string | null; architecture?: Session['architecture'] | null }, expectedConfigRevision?: number): Session {
     return this.atomic(() => {
       this.assertChildMutable(id);
       const previous = this.session(id); this.assertConfigRevision(previous, expectedConfigRevision);
-      const { profile: _profile, configRevision: _revision, planner, outputStyle, architecture, ...safe } = patch;
+      const { profile: _profile, configRevision: _revision, shunt, planner, outputStyle, architecture, ...safe } = patch;
       // planner routes Plan-mode turns, so setting or clearing it is a model
       // configuration change exactly like `model`: revision bump + queue hold.
       // null clears (the field is removed, never stored as null).
@@ -204,9 +204,10 @@ export class Store {
       // same class of decision as `model`: revision bump + queue hold.
       const architectureChanged = architecture !== undefined && JSON.stringify(architecture ?? undefined) !== JSON.stringify(previous.architecture);
       const reasoningChanged = safe.modelReasoning !== undefined && JSON.stringify(safe.modelReasoning) !== JSON.stringify(previous.modelReasoning);
-      const changed = reasoningChanged || plannerChanged || styleChanged || architectureChanged || (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
+      const changed = (shunt !== undefined && JSON.stringify(shunt ?? undefined) !== JSON.stringify(previous.shunt)) || reasoningChanged || plannerChanged || styleChanged || architectureChanged || (['workspace', 'providerId', 'model', 'mode', 'permissionMode'] as const).some(key => safe[key] !== undefined && safe[key] !== previous[key]);
       if (safe.workspace !== undefined && safe.workspace !== previous.workspace && (previous.profile || this.db.prepare('SELECT 1 FROM session_profiles WHERE session_id=?').get(id))) throw Object.assign(new Error('Clear the profile before changing the workspace.'), { status: 409 });
       const session = { ...previous, ...safe, id, updatedAt: Date.now(), configRevision: previous.configRevision! + (changed ? 1 : 0) };
+      if (shunt !== undefined) { if (shunt === null) delete session.shunt; else session.shunt = shunt; }
       if (planner !== undefined) { if (planner === null) delete session.planner; else session.planner = planner; }
       if (outputStyle !== undefined) { if (outputStyle === null) delete session.outputStyle; else session.outputStyle = outputStyle; }
       if (architecture !== undefined) { if (architecture === null) delete session.architecture; else session.architecture = architecture; }

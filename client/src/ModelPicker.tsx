@@ -1,3 +1,4 @@
+import { SHUNT_DESCRIPTION, SHUNT_MODEL_HINT, SHUNT_BENEFIT, shuntConfigured, type ShuntSelection } from '../../shared/shunt';
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { REASONING_EFFORTS, type Model, type ReasoningEffort, type Settings } from '../../shared/types';
@@ -83,6 +84,7 @@ export function ModelField({ simple = false, hint, label, value, settings, selec
 }
 
 export function ModelPicker({ disabled, settings, selection, onChange, onClose, onSettings, workspace }: { disabled?: boolean; settings: Settings; selection: Selection; onChange: (selection: Selection) => void; onClose: () => void; onSettings: () => void; workspace: string }) {
+  const [shuntPending,setShuntPending]=useState(false);
   const [view, setView] = useState<View>(selection.architecture?.kind ?? 'single');
   const [open, setOpen] = useState<Role | 'architecture' | null>(null);
   const [workspaceStyles, setWorkspaceStyles] = useState<string[]>([]);
@@ -125,12 +127,30 @@ export function ModelPicker({ disabled, settings, selection, onChange, onClose, 
         {pending && <p className="field-hint">Choose a {workerLabel.toLowerCase()} to enable {arrangement.name}.</p>}
         {(view === 'team-fusion' || view === 'expert-fusion') && <label className="model-setting-row">Workers at once<select aria-label="Workers at once" disabled={pending} value={selection.architecture && selection.architecture.kind !== 'sidekick-fusion' ? selection.architecture.concurrency ?? 'auto' : 'auto'} onChange={event => { if (selection.architecture && selection.architecture.kind !== 'sidekick-fusion') { const { concurrency: _, ...architecture } = selection.architecture; onChange({ ...selection, architecture: event.target.value === 'auto' ? architecture : { ...architecture, concurrency: Number(event.target.value) as 1 | 2 | 3 | 4 } }); } }}><option value="auto">All requested · default</option>{[1, 2, 3, 4].map(count => <option key={count} value={count}>{count === 1 ? '1 · sequential' : `${count} · parallel`}</option>)}</select></label>}
       </section>
+      <ShuntSettings settings={settings} selection={selection} onChange={value=>onChange({...selection,shunt:value})} onPending={setShuntPending} onReasoning={reasoning} />
       <section className="planner-section" aria-label="Planning">
         <div className="planner-heading"><div><strong>Planner model</strong><p>Use a different model in Plan mode.</p></div><button type="button" role="switch" className="setting-switch" aria-label="Use a planner model" aria-checked={Boolean(selection.planner)} disabled={!route} onClick={() => { onChange({ ...selection, planner: selection.planner ? null : route }); setOpen(null); }}><span /></button></div>
         {selection.planner && field('planner', 'Planner', selection.planner)}
       </section>
       <label className="model-setting-row output-style-setting">Output style<select aria-label="Output style" value={selection.outputStyle ?? ''} onChange={event => onChange({ ...selection, outputStyle: event.target.value || null })}><option value="">Default</option>{styles.map(style => <option key={style} value={style}>{style[0].toUpperCase() + style.slice(1)}</option>)}</select></label>
     </fieldset></div>
-    <div className="model-picker-footer"><button className="text-button" onClick={() => { onClose(); onSettings(); }}>Manage providers</button><button className="button primary" disabled={disabled || pending} onClick={onClose}>Done</button></div>
+    <div className="model-picker-footer"><button className="text-button" onClick={() => { onClose(); onSettings(); }}>Manage providers</button><button className="button primary" disabled={disabled || pending || shuntPending || !shuntConfigured(selection.shunt,settings.providers)} onClick={onClose}>Done</button></div>
   </Modal>;
+}
+
+export function ShuntSettings({settings,selection,onChange,onPending,onReasoning}:{settings:Settings;selection:Selection;onChange:(value:ShuntSelection)=>void;onPending:(pending:boolean)=>void;onReasoning?:(route:ModelRoute,effort:string)=>void}) {
+  const value=selection.shunt;
+  const [wanted,setWanted]=useState(Boolean(value?.enabled)),[open,setOpen]=useState(false);
+  const providers=settings.providers.filter(provider=>provider.kind!=='codex');
+  useEffect(()=>{setWanted(Boolean(value?.enabled));},[value?.enabled]);
+  const pending=wanted&&(!value?.model||!shuntConfigured({enabled:true,model:value.model},settings.providers));
+  useEffect(()=>{onPending(pending);},[pending,onPending]);
+  return <details className="shunt-settings planner-section" open={value?.enabled || undefined}>
+    <summary><span>Advanced settings <small>Shunt · {value?.enabled?'On':'Off'}</small></span><ChevronDown size={14}/></summary>
+    <p className="field-hint">{SHUNT_DESCRIPTION} {SHUNT_BENEFIT} <a href="https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90" target="_blank" rel="noreferrer" title="Spotify’s reported result for large reads. Actual savings vary and Shunt adds its own model usage.">Learn more</a></p>
+    <div className="planner-heading"><div><strong>Shunt</strong></div><button type="button" className="setting-switch" role="switch" aria-label="Enable Shunt" aria-checked={wanted} disabled={!providers.length} onClick={()=>{const enabled=!wanted;setWanted(enabled);setOpen(enabled&&!value?.model);if(!enabled)onChange({...value,enabled:false});else if(value?.model&&shuntConfigured({enabled:true,model:value.model},settings.providers))onChange({...value,enabled:true,model:value.model});else setOpen(true);}}><span/></button></div>
+    {wanted&&<ModelField simple={!onReasoning} label="Shunt" hint={SHUNT_MODEL_HINT} settings={{...settings,providers}} selection={{...selection,providerId:providers.some(p=>p.id===value?.model?.providerId)?value!.model!.providerId:providers[0]?.id??''}} value={value?.model??null} onChange={model=>onChange({...value,enabled:true,model})} onReasoning={onReasoning??(()=>{})} open={open} onOpen={setOpen}/>}
+    {pending&&<p className="field-hint">Choose a Shunt model to enable it.</p>}
+    {!providers.length&&<p className="field-hint">Connect an API-key provider to use Shunt.</p>}
+  </details>;
 }

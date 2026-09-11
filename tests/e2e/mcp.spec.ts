@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile, rename, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from './fixtures';
 import type { McpServerConfig, Session, SessionDetail, Settings } from '../../shared/types';
 import type { McpServerStatus } from '../../shared/mcp';
 

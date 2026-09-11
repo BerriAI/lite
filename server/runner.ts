@@ -1,4 +1,7 @@
 import { shellInspection } from './shell-inspection.js';
+import { SHUNT_LIMITS, shuntConfigured, shuntInstructions, shuntTools } from '../shared/shunt.js';
+import { bulkReadSchema, codeWriteSchema, completeShunt } from './shunt.js';
+import { shuntSource, shuntReadGate, shuntWriteTarget } from './tools.js';
 import { progressTimeout } from './progress-timeout.js';
 import { clientContext, fileScopeGuidance } from './client-context.js';
 import { clientSurface as parseClientSurface, type ClientSurface } from '../shared/client.js';
@@ -46,7 +49,7 @@ type CapturedRules = { project: PermissionRule[]; app: PermissionRule[]; hidden:
  * text, a captured workspace file, or '' with an advisory when the named style
  * could not be resolved. Children inherit it through the captured policy. */
 type CapturedStyle = { text: string; advisory?: string };
-type RunPolicy = { sidecars: unknown; reviewer?: {provider:Provider;model:string}; session: Session; provider: Provider; workerProvider?: Provider; guidance: string; style: CapturedStyle; rules: CapturedRules; hooks: CapturedHooks; tools: readonly string[]; memory: boolean };
+type RunPolicy = { sidecars: unknown; reviewer?: {provider:Provider;model:string}; session: Session; provider: Provider; workerProvider?: Provider; shuntProvider?: Provider; guidance: string; style: CapturedStyle; rules: CapturedRules; hooks: CapturedHooks; tools: readonly string[]; memory: boolean };
 type ResearchBudget = { launches: number; steps: number; elapsedMs: number };
 type ActiveRun = { clientSurface?: ClientSurface; turnId?: string; profile?: ProfileSnapshot | null; policy?: RunPolicy; budget?: ResearchBudget; sidekickBudget?: ResearchBudget; external?: ExternalToolLease; controller: AbortController; approvals: Map<string, PendingPermission>; completed?: boolean; blocked?: boolean; compacting?: boolean; progressMessage?: Message; child?: { delegation: DelegationSummary; parent: ActiveRun; timedOut: boolean; isolated?: WorkerWorkspace; role?: DelegationSummary['role'] }; done?: Promise<void>; resolveDone?: () => void; failure?: string; jobsNotice?: string;
   /** Mid-turn steering notes accepted for THIS response (max 5 per run). Notes
@@ -71,6 +74,8 @@ export const SIDEKICK_LIMITS = { launches: 8, idleMs: 600_000, resultBytes: 64 *
 const utf8Bounded = (text: string, limit: number) => { const bytes=Buffer.from(text);if(bytes.length<=limit)return text;let end=limit;while(end>0&&(bytes[end]&0xc0)===0x80)end--;return bytes.subarray(0,end).toString('utf8'); };
 const canonical = (value: unknown): string => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item) ? Object.fromEntries(Object.entries(item).sort(([a],[b]) => a.localeCompare(b))) : item);
 const conflict = (message: string) => Object.assign(new Error(message), { status: 409 });
+
+class ShuntDenied extends Error {}
 
 export class Runner {
   private runs = new Map<string, ActiveRun>();
@@ -474,6 +479,9 @@ export class Runner {
     if (!pair.model) throw Object.assign(new Error('Choose a model before sending a message.'), { status: 400 });
     const checkEffort=(provider:Provider,model:string)=>{const effort=session.modelReasoning?.[JSON.stringify([provider.id,model])],supported=modelCatalog.getLimit(provider,model)?.reasoningEfforts;if(effort&&supported&&!supported.includes(effort))throw Object.assign(new Error(`${model} does not advertise reasoning effort ${effort}. Choose Default or a supported effort in model settings.`),{status:400});};
     checkEffort(provider,pair.model);
+    if (!shuntConfigured(session.shunt, this.store.settings().providers)) throw Object.assign(new Error('Choose a connected API-key provider and model for Shunt in Advanced settings, or turn Shunt off.'), {status:400});
+    const shuntProvider = session.shunt?.enabled ? this.store.settings().providers.find(p => p.id === session.shunt!.model!.providerId) : undefined;
+    if (shuntProvider) checkEffort(shuntProvider,session.shunt!.model!.model);
     const workerProvider = session.mode === 'build' && session.architecture
       ? this.store.settings().providers.find(p => p.id === architectureWorker(session.architecture!).providerId) : undefined;
     if (session.mode === 'build' && session.architecture && !workerProvider) throw Object.assign(new Error('The worker provider is not connected. Update the model selection.'), { status: 400 });
@@ -492,6 +500,7 @@ export class Runner {
     const policy:RunPolicy={sidecars:structuredClone(this.store.settings().sidecars??[]),session:{...structuredClone(session),providerId:pair.providerId,model:pair.model},provider:structuredClone(provider),guidance:captureProjectGuidance(session.workspace),style:this.captureStyle(session.workspace,session.outputStyle),rules,hooks,memory:Boolean(this.store.settings().memoryEnabled),tools:[...toolDefinitions.filter(tool=>(profile?.active.tools==null||profile.active.tools.some(name=>name===tool.function.name))&&(session.mode!=='plan'||isReadOnlyTool(tool.function.name))&&!rules.hidden.includes(tool.function.name)),historySearchTool,toolOutputPageTool,bashOutputTool,killShellTool,waitTool,viewImageTool,webSearchTool].map(tool=>tool.function.name)};
     const run: ActiveRun = { clientSurface: parseClientSurface(surface), controller: new AbortController(), approvals: new Map(), profile, policy, budget:{launches:0,steps:0,elapsedMs:0} };
     policy.workerProvider = workerProvider && structuredClone(workerProvider);
+    policy.shuntProvider = shuntProvider && structuredClone(shuntProvider);
     const reviewPair=session.planner??pair,reviewProvider=this.store.settings().providers.find(item=>item.id===reviewPair.providerId);
     policy.reviewer=reviewProvider?{provider:structuredClone(reviewProvider),model:reviewPair.model}:{provider:policy.provider,model:pair.model};
     const message: Message = { clientSurface: run.clientSurface, id: randomUUID(), sessionId:id, role:'user', content, attachments, createdAt:Date.now() };
@@ -778,7 +787,7 @@ export class Runner {
   }
   private safeError(error: unknown, run?:ActiveRun): string {
     let text = error instanceof Error ? error.message : 'An unexpected error occurred.';
-    for (const provider of [...this.store.settings().providers,...(run?.policy?[run.policy.provider]:[])]) if (provider.apiKey) text = text.split(provider.apiKey).join('[redacted]');
+    for (const provider of [...this.store.settings().providers,...(run?.policy?[run.policy.provider,...(run.policy.shuntProvider?[run.policy.shuntProvider]:[])]:[])]) if (provider.apiKey) text = text.split(provider.apiKey).join('[redacted]');
     return text.slice(0,2000);
   }
   // Volatile facts (mode/permission posture, date, background memory) live in the
@@ -1176,6 +1185,84 @@ export class Runner {
     if (!run.controller.signal.aborted) this.setSession(ownerSession.id,{status:owner.approvals.size?'waiting':'running'});
     return approved;
   }
+  private async executeShunt(id: string, run: ActiveRun, message: Message, call: ToolCall, notice: (content:string)=>void): Promise<string> {
+    const policy=run.policy!,session=policy.session,provider=policy.shuntProvider!,model=session.shunt!.model!.model;
+    const signal=run.controller.signal, kind=call.name==='bulk_read'?'reader':'writer';
+    call.shunt={id:randomUUID(),kind,providerId:provider.id,model,phase:'reading',sources:[]};
+    const operation=call.shunt;
+    const publish=()=>{this.persist(message);this.bus.emit(id,'tool',{messageId:message.id,tool:call});};
+    publish();
+    const read=kind==='reader'?bulkReadSchema.parse(call.args):undefined;
+    const write=kind==='writer'?codeWriteSchema.parse(call.args):undefined;
+    operation.target=write?.target;
+    const check=()=>{
+      signal.throwIfAborted();
+      if((run.steering?.length??0)>(run.steeringDelivered??0))throw new ShuntDenied('New user steering arrived. Read it before continuing; no further Shunt action was executed.');
+    };
+    const prepare=async(action:ToolCall)=>{
+      check();
+      if(!await this.approve(session,action,run))throw new ShuntDenied(action.ruleMatch?.decision==='deny'?this.ruleDenial(action.ruleMatch):'The user denied or cancelled this action. Do not retry it or bypass this decision.');
+      const veto=await this.fireHooks(id,run,'PreToolUse',{tool:action.name,args:action.args},action.name,notice);
+      if(veto)throw new ShuntDenied(`Blocked by PreToolUse hook: ${utf8Bounded(veto.stderr.trim(),HOOK_LIMITS.stdioBytes)}`);
+      check();
+      const blocked=await this.interceptToolCall(id,run,action,notice);
+      if(blocked!==null)throw new ShuntDenied(blocked);
+      if(action.intercepted&&!await this.approve(session,action,run))throw new ShuntDenied('The modified action was denied. Do not execute the original or modified action.');
+      await validateToolPath(session.workspace,action.name,action.args,this.approvedPaths.get(action));
+      check();
+    };
+    let expectedFile:Awaited<ReturnType<typeof shuntWriteTarget>>|undefined;
+    if(write?.target) {
+      if(!run.child&&session.architecture&&session.architecture.kind!=='sidekick-fusion'&&(!run.takeover?.remaining||!run.takeover.files.includes(write.target)))throw new ShuntDenied('Source generation requires an approved takeover for this exact target. Delegate implementation first.');
+      const args={path:write.target},access=await inspectToolPath(session.workspace,'write_file',args);
+      const sources=[{source:'project' as const,rules:policy.rules.project},{source:'app' as const,rules:policy.rules.app}];
+      for(const subject of [args,...(access?.external?[{path:access.resolvedPath}]:[])]) {
+        const match=decide(sources,'write_file',subject);
+        if(match?.decision==='deny')throw new ShuntDenied(this.ruleDenial(match));
+      }
+      expectedFile=await shuntWriteTarget(session.workspace,write.target,access,signal);
+    }
+    const sources:Awaited<ReturnType<typeof shuntSource>>[]=[], actions:ToolCall[]=[];
+    let remaining=SHUNT_LIMITS.sourceBytes as number;
+    for(const path of [...new Set(read?.paths??[write!.reference])]) {
+      const action:ToolCall={id:call.id,name:'read_file',args:{path},status:'running'};
+      await prepare(action);
+      if(action.args.offset!==undefined||action.args.limit!==undefined)throw new Error('A sidecar changed this source into a range read. Use read_file for that range instead.');
+      const source=await shuntSource(session.workspace,action.args,this.approvedPaths.get(action),signal,remaining);
+      remaining-=source.bytes;if(remaining<0)throw new Error('Shunt sources exceed the combined byte limit. Choose fewer files.');
+      sources.push(source);actions.push(action);
+      const {content:_,...manifest}=source;operation.sources.push(manifest);publish();
+      await this.fireHooks(id,run,'PostToolUse',{tool:'read_file',args:action.args,output:JSON.stringify(manifest)},'read_file',notice);
+    }
+    check();
+    for(const action of actions)await validateToolPath(session.workspace,'read_file',action.args,this.approvedPaths.get(action));
+    operation.phase='responding';publish();this.workerActivity(run,`Shunt ${kind} · ${model}`);
+    const start=()=>this.usage.start({sessionId:id,rootSessionId:run.child?.delegation.parentSessionId??id,turnId:run.child?.delegation.parentTurnId??run.turnId!,providerId:provider.id,model,phase:kind==='reader'?'shunt_read':'shunt_write',role:'shunt',callerRole:run.child?(run.child.role??'research'):session.architecture?.kind==='expert-fusion'?'driver':'lead',operationId:operation.id,...(run.child?{invocationId:run.child.delegation.id}:{})});
+    const progressFailure=new AbortController();
+    let record:RequestUsage|undefined,lastPublish=0,flush:ReturnType<typeof setTimeout>|undefined;
+    const flushProgress=()=>{flush=undefined;lastPublish=Date.now();publish();};
+    let answer:string;
+    try { answer=await completeShunt({kind,instruction:read?.question??write!.spec,sources,provider,model,sessionId:run.child?.delegation.parentSessionId??id,signal:AbortSignal.any([signal,progressFailure.signal]),reasoningEffort:session.modelReasoning?.[JSON.stringify([provider.id,model])],
+        onStart:()=>{record=start();},progress:text=>{if(text!==undefined)call.output=text;if(Date.now()-lastPublish>=100){if(flush)clearTimeout(flush);flushProgress();}else if(text!==undefined&&!flush)flush=setTimeout(()=>{try{flushProgress();}catch(error){progressFailure.abort(error);}},100-(Date.now()-lastPublish));},
+        usage:usage=>{try{if(record)this.usage.update(record,usage);}catch{/* Invalid reports remain unknown. */}},retry:()=>{record=start();}}); } finally {if(flush)clearTimeout(flush);}
+    check();
+    if(!write?.target){operation.phase='completed';return answer;}
+    operation.phase='approval';publish();
+    const action:ToolCall={id:call.id,name:'write_file',args:{path:write.target,content:answer},status:'running'};
+    await prepare(action);
+    if(action.args.path!==write.target)throw new Error('A sidecar changed the generated target. Review its new path and retry generation; no file was written.');
+    await this.waitForWorkspace(session.workspace,run.child?.delegation.parentSessionId??id,run,label=>{call.waitingForWorkspace=label;publish();});
+    check();operation.phase='writing';call.waitingForWorkspace=undefined;publish();
+    if(!run.child&&session.architecture&&session.architecture.kind!=='sidekick-fusion')run.takeover!.remaining--;
+    const owner=run.child?.role&&!run.child.isolated?run.child.delegation.parentSessionId:id;
+    const access=this.approvedPaths.get(action);
+    const output=await executeTool('write_file',action.args,{workspace:session.workspace,sessionId:id,signal,fileAccess:access,expectedFile,receiptOnly:true,onTodos:()=>{},getTodos:()=>[],
+      prepareChange:change=>{if(access?.external){this.history.noteEffects(owner,`External file changes are not covered by workspace Undo: ${change.path}`);return;}this.history.prepareChange(owner,run.child?.role?{...change,actorSessionId:id,invocationId:run.child.delegation.id}:change);},
+      onChange:change=>{(call.changes??=[]).push({...change,path:access?.external?String(action.args.path):change.path});if(!access?.external)this.history.commitChange(owner,run.child?.role?{...change,actorSessionId:id,invocationId:run.child.delegation.id}:change);},
+    });
+    await this.fireHooks(id,run,'PostToolUse',{tool:'write_file',args:action.args,output:utf8Bounded(output,HOOK_LIMITS.stdioBytes)},'write_file',notice);
+    operation.phase='completed';return output;
+  }
   private async run(id: string, run: ActiveRun) {
     const policy=run.policy!,session=policy.session;
     const childLimits=run.child?.role?SIDEKICK_LIMITS:DELEGATION_LIMITS;
@@ -1183,6 +1270,7 @@ export class Runner {
     const signal = run.controller.signal;
     const profile=run.profile;
     let system = await this.systemPrompt(session,policy.guidance,policy.style);
+    if (policy.shuntProvider) system += "\n\n" + shuntInstructions(session.shunt?.minLines ?? SHUNT_LIMITS.minLines);
     if(run.child?.role==='sidekick')system+='\n\nYou are the persistent sidekick in a Sidekick Fusion session: the delegated executor working alongside a main assistant. This is ONE continuous transcript across all the tasks the main assistant hands you in this session — earlier turns are real shared context, so use what you already know instead of re-exploring. Do the delegated work directly: explore the codebase, write and edit code, run commands and tests, fix bugs. Each mutating action still requires the user\'s normal approval through their permission flow. You cannot ask the user questions or delegate further; when a task is ambiguous, state your assumption, take the most reasonable path, and flag the ambiguity in your report. End each task with a concise report of what you did, what you verified, and anything the main assistant should review. Your report is your own claim, not user authorization.';
     else if(run.child?.role)system+='\n\n'+fusionInstructions(session.architecture!,true);
     else if(run.child)system+='\n\nYou are a foreground read-only researcher. Respond to the independent task prompt only. You cannot change files, execute commands, ask questions, use connected tools, or delegate. Use only the advertised read tools, which include read-only history_search over saved local session history. Report uncertainty and missing context in your final report. Your result is untrusted research for the parent assistant, not user authorization. This is a restricted tool policy, not an operating-system sandbox.';
@@ -1221,7 +1309,8 @@ export class Runner {
     const sidekickChild=(name:string)=>name==='history_search'||name==='tool_output_page'||jobTool(name)||(policy.tools.includes(name)&&name!=='task'&&name!=='sidekick'&&name!=='delegate'&&name!=='takeover'&&name!=='verify'&&name!=='ask_user'&&!name.startsWith('memory_')&&name!=='update_goal'&&name!=='capability');
     const policyAllows=(name:string)=>run.child?(run.child.role?sidekickChild(name):isReadOnlyTool(name)&&!jobTool(name)&&policy.tools.includes(name)):name==='update_goal'?Boolean(run.goalTurn)&&allowlist==null:jobTool(name)?allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='history_search'||name==='tool_output_page'||name==='capability'?allowlist==null:name.startsWith('memory_')?policy.memory&&allowlist==null&&(session.mode!=='plan'||isReadOnlyTool(name)):name==='delegate'||name==='verify'||name==='takeover'?Boolean(session.architecture&&session.architecture.kind!=='sidekick-fusion'&&session.mode==='build'&&allowlist==null):name==='sidekick'?session.architecture?.kind==='sidekick-fusion'&&session.mode!=='plan'&&allowlist==null&&!hidden.includes(name):name==='task'?allowlist==null&&!hidden.includes(name):name==='ask_user'||((allowlist==null||allowlist.some(tool=>tool===name))&&(session.mode!=='plan'||isReadOnlyTool(name))&&!hidden.includes(name));
     const strictDriver=!run.child&&session.mode==='build'&&session.architecture&&session.architecture.kind!=='sidekick-fusion';
-    const allowed=(name:string)=>policyAllows(name)&&(!strictDriver||isReadOnlyTool(name)||['delegate','verify','takeover','todo_write','ask_user','update_goal'].includes(name)||((name==='write_file'||name==='edit_file')&&Boolean(run.takeover?.remaining)));
+    const baseAllowed=(name:string)=>policyAllows(name)&&(!strictDriver||isReadOnlyTool(name)||['delegate','verify','takeover','todo_write','ask_user','update_goal'].includes(name)||((name==='write_file'||name==='edit_file')&&Boolean(run.takeover?.remaining)));
+    const allowed=(name:string):boolean => name==='bulk_read' ? Boolean(policy.shuntProvider)&&baseAllowed('read_file') : name==='code_write' ? Boolean(policy.shuntProvider)&&baseAllowed('read_file')&&baseAllowed('write_file') : baseAllowed(name);
     // GATEWAY PARTITION (docs/design-capability-proxy.md, Option 3): tools whose
     // server did NOT opt into advertise:true stay OUT of the advertised array —
     // they are reachable only through the fixed-schema capability tool, so server
@@ -1240,7 +1329,8 @@ export class Runner {
     // the plain-tool path in allowed() (hidden under a profile allowlist, which
     // can only name PROFILE_TOOLS; visible in Plan; inside the child ceiling —
     // a deliberate ceiling expansion recorded in docs/delegation.md).
-    const availableTools = [...toolDefinitions, ...(session.architecture&&!run.child?(session.architecture.kind==='sidekick-fusion'?[sidekickTool]:[delegateTool,verifyTool,takeoverTool]):[]), historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, viewImageTool, webSearchTool, updateGoalTool, ...(gateway.size?[capabilityTool]:[]), ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name)||(strictDriver&&['write_file','edit_file'].includes(t.function.name)&&policyAllows(t.function.name)));
+    const readTools = policy.shuntProvider ? toolDefinitions.map(tool => tool.function.name==='read_file' ? {...tool,function:{...tool.function,parameters:{...tool.function.parameters,properties:{...(tool.function.parameters.properties as object),direct_reason:{type:'string',minLength:1,maxLength:1000,description:'Why you need source directly for exact reasoning, debugging or recovery instead of a Shunt answer.'}}}}} : tool) : toolDefinitions;
+    const availableTools = [...readTools, ...(policy.shuntProvider?shuntTools:[]), ...(session.architecture&&!run.child?(session.architecture.kind==='sidekick-fusion'?[sidekickTool]:[delegateTool,verifyTool,takeoverTool]):[]), historySearchTool, toolOutputPageTool, bashOutputTool, killShellTool, waitTool, viewImageTool, webSearchTool, updateGoalTool, ...(gateway.size?[capabilityTool]:[]), ...(policy.memory&&!run.child?memoryToolDefinitions:[]), questionTool, ...externalTools.filter(t => t.function.name !== 'ask_user')].filter(t=>allowed(t.function.name)||(strictDriver&&['write_file','edit_file','code_write'].includes(t.function.name)&&policyAllows(t.function.name==='code_write'?'write_file':t.function.name)&&(t.function.name!=='code_write'||baseAllowed('read_file'))));
     // An ignored invalid rules file must be visible in the session detail, not
     // only when a prompt happens to occur. The child transcript inherits the
     // parent's captured rules; the parent already carries the notice.
@@ -1535,6 +1625,11 @@ export class Runner {
               return;
             }
           }
+          else if (call.name==='bulk_read'||call.name==='code_write') {
+            call.status='running';call.startedAt=Date.now();
+            output=await this.executeShunt(id,run,message,call,content=>hookNotices.push(content));
+            call.status='completed';
+          }
           else if (!(await this.approve(session,call,run))) { call.status = 'denied'; output = call.ruleMatch?.decision==='deny' ? this.ruleDenial(call.ruleMatch) : session.mode === 'plan' && !isReadOnlyTool(call.name) ? 'This action is not available in read-only Plan mode.' : 'The user denied or cancelled this action. Do not retry it or bypass this decision.'; }
           else if (!(await preToolVeto())) {
             // Sidecar interception (design note 4.5): AFTER approval and AFTER
@@ -1549,6 +1644,10 @@ export class Runner {
             else if (call.intercepted && !(await this.approve(session,call,run))) { call.status='denied';output='The modified action was denied. Do not execute the original or modified action.'; }
             else {
             await validateToolPath(session.workspace,call.name==='verify'?'bash':call.name,call.name==='verify'?verificationCommand(call.args):call.args,this.approvedPaths.get(call));
+            if (policy.shuntProvider && call.name==='read_file' && await shuntReadGate(session.workspace,call.args,this.approvedPaths.get(call),signal,session.shunt?.minLines??SHUNT_LIMITS.minLines)) {
+              call.routing={kind:'shunt',paths:[String(call.args.path)]};call.status='completed';
+              output='This broad read exceeds the Shunt threshold. Use bulk_read with this path and a focused question. For a small lookup use a bounded read_file range; for exact reasoning, debugging or recovery provide direct_reason. No source content was returned. This is a routing hint, not a permission denial.';
+            } else {
             const inspection = (call.name === 'bash' || call.name === 'verify') && call.args.run_in_background !== true && shellInspection(call.name === 'verify' ? verificationCommand(call.args).command : call.args.command);
             if(!inspection && ['bash','verify','write_file','edit_file'].includes(call.name)) await this.waitForWorkspace(session.workspace,run.child?.delegation.parentSessionId??id,run,label => {
               call.status='running'; call.startedAt ??= Date.now(); call.output=label;call.waitingForWorkspace=label;
@@ -1584,12 +1683,14 @@ export class Runner {
             call.status='completed';
             if(call.name==='verify'&&!checkFailed(output)&&run.takeover)run.unresolvedWorkers?.delete(run.takeover.repairOf);
             }
+            }
           }
         } catch (error) {
           // A durable question may be unresolved after cancellation storage failure,
           // or already answered before event failure. Never invent a second result.
           if(questionStarted)throw error;
-          call.status='error';output=this.safeError(error,run);
+          call.status=error instanceof ShuntDenied?'denied':'error';output=this.safeError(error,run);
+          if(call.shunt)call.shunt.phase='error';
         }
         if(commandSnapshot) {
           try {call.changes=await this.history.finishCommand(commandSnapshot);} catch(error) {run.failure=this.safeError(error,run);run.blocked=true;output+=`\n[File history needs recovery: ${run.failure}]`;}
@@ -1611,10 +1712,10 @@ export class Runner {
           if(bytes>childLimits.transcriptBytes-4096) { call.status='error';output=run.child.role?'The sidekick transcript reached its 16 MiB limit.':'The research transcript reached its 4 MiB limit.';run.failure=output;toolAttachments.length=0; }
         }
         if(call.status==='denied'&&(run.steering?.length??0)>(run.steeringDelivered??0)) {deferredForSteering=true;output='This action was not executed because new user steering arrived. Read the note before choosing the next action.';}
-        if((call.status==='denied'&&!deferredForSteering)||(call.status==='error'&&!run.child?.role&&!session.architecture))run.blocked=true;
-        if(run.child?.role||session.architecture) {
-          const key=(call.name==='write_file'||call.name==='edit_file')?`file:${call.args.path}`:signature(call);
-          if(call.status==='error'&&!isReadOnlyTool(call.name))(run.toolFailures??=new Set()).add(key);
+        if((call.status==='denied'&&!deferredForSteering)||(call.status==='error'&&!call.shunt&&!run.child?.role&&!session.architecture))run.blocked=true;
+        if(run.child?.role||session.architecture||call.shunt||run.toolFailures?.size) {
+          const key=call.name==='code_write'&&call.args.target?`file:${call.args.target}`:(call.name==='write_file'||call.name==='edit_file')?`file:${call.args.path}`:signature(call);
+          if(call.status==='error'&&!isReadOnlyTool(call.name)&&(call.name!=='code_write'||Boolean(call.args.target)))(run.toolFailures??=new Set()).add(key);
           else if(call.status==='completed')run.toolFailures?.delete(key);
         }
         // Storm accounting: any success clears every failure streak; a failure
@@ -1740,7 +1841,7 @@ export class Runner {
     // An interrupted sidekick transcript is unrecoverable mid-turn state; it
     // stays readable but a fresh sidekick child replaces it (create() exempts
     // interrupted records from the one-durable-sidekick guard).
-    const contextKey=createHash('sha256').update(canonical({workspace:policy.session.workspace,revision:policy.session.configRevision,history:policy.session.historyRevision??0,architecture:arch,profile:parent.profile,guidance:policy.guidance,rules:policy.rules,style:policy.style,hooks:policy.hooks,sidecars:policy.sidecars,provider:{id:provider.id,kind:provider.kind,baseUrl:provider.baseUrl,credentialRevision:createHash('sha256').update(provider.apiKey??'').digest('hex')}})).digest('hex');
+    const contextKey=createHash('sha256').update(canonical({workspace:policy.session.workspace,revision:policy.session.configRevision,history:policy.session.historyRevision??0,architecture:arch,shunt:policy.session.shunt,shuntProvider:policy.shuntProvider?{id:policy.shuntProvider.id,kind:policy.shuntProvider.kind,baseUrl:policy.shuntProvider.baseUrl,credentialRevision:createHash('sha256').update(policy.shuntProvider.apiKey??'').digest('hex')}:undefined,profile:parent.profile,guidance:policy.guidance,rules:policy.rules,style:policy.style,hooks:policy.hooks,sidecars:policy.sidecars,provider:{id:provider.id,kind:provider.kind,baseUrl:provider.baseUrl,credentialRevision:createHash('sha256').update(provider.apiKey??'').digest('hex')}})).digest('hex');
     const workspace=isolated?.workspace??policy.session.workspace;
     const route=architectureWorker(arch), role=arch.kind==='sidekick-fusion'?'sidekick':arch.kind==='team-fusion'?'worker':'expert';
     const record=role==='sidekick'?this.delegations.reusableSidekick(id,contextKey):null;

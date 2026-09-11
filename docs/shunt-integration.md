@@ -1,6 +1,6 @@
 # Shunt integration proposal
 
-Status: proposed, not implemented. Reviewed September 11, 2026 against the implementation at `5054c61`. This document turns the [upstream research and experiments](design-shunt.md) into a concrete integration plan for the current repository. The earlier research remains the source for upstream behavior; the native integration choices below are recommendations unless marked settled.
+Status: approved proposal, implemented in the native Shunt PR. This document preserves the September 11, 2026 design review against `5054c61`. The [Shunt guide](shunt.md) documents current behavior and the [native evaluation report](../research/shunt/results/native-summary.md) records verification. The maintainer subsequently chose a short, collapsed **Advanced settings** entry in onboarding and Models; that supersedes the expanded onboarding row and “Additional options” menu name below. Sampling stays at provider defaults. The bounded 48-run pilot precedes the proposed larger release matrix.
 
 ## Product contract
 

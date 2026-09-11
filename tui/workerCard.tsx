@@ -18,7 +18,7 @@ function WorkerTranscript({ task, controller, width, label }: { task: Delegation
   useEffect(() => { if (task.status !== 'running') void sync.refresh(); }, [sync, task.status]);
   const rows = detail?.messages.flatMap(message => message.role !== 'assistant' ? [] : [
     ...(message.content.trim() ? [{ id: message.id, text: message.content.trim(), prose: true }] : []),
-    ...(message.toolCalls ?? []).map(call => ({ id: `${message.id}:${call.id}`, text: `${call.status === 'running' || call.status === 'pending' ? '›' : call.status === 'completed' ? '✓' : '×'} ${toolRow(call).text.split('\n')[0]}`, prose: false })),
+    ...(message.toolCalls ?? []).flatMap(call => [{ id: `${message.id}:${call.id}`, text: `${call.status === 'running' || call.status === 'pending' ? '›' : call.status === 'completed' ? '✓' : '×'} ${toolRow(call).text.split('\n')[0]}`, prose: false },...(call.shunt&&call.output?[{id:`${message.id}:${call.id}:answer`,text:call.output,prose:true}]:[])]),
   ]) ?? [];
   const visible = expanded ? rows : rows.slice(-4);
   const lines = <>{visible.map(row => <text key={row.id} fg={toHex(theme.textMuted)} wrapMode="word">{row.prose ? <em>{terminalText(expanded ? row.text : row.text.replace(/\s+/g, ' ').slice(0, Math.max(20, width - 8)), true)}</em> : terminalText(expanded ? row.text : row.text.slice(0, Math.max(20, width - 8)))}</text>)}</>;

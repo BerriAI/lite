@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from './fixtures';
 import type { Session, SessionDetail, Settings } from '../../shared/types';
 
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });

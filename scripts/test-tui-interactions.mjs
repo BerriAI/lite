@@ -1,6 +1,6 @@
 /** Acceptance and visual checks for setup and live worker attribution. */
 import { spawn } from 'node:child_process';
-import { mkdir, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
@@ -11,6 +11,8 @@ import { chromium } from '@playwright/test';
 const root=resolve(import.meta.dirname,'..'), artifacts=join(root,'test-results-tui','interactions');
 await mkdir(artifacts,{recursive:true});
 const config=await mkdtemp(join(tmpdir(),'litespeed-tui-setup-'));
+const clipboard=join(config,'clipboard.txt');
+await writeFile(join(config,'pbcopy'),`#!/bin/sh\ncat > "$LITESPEED_TEST_CLIPBOARD"\n`,{mode:0o700});
 const server=spawn(process.execPath,['--import','tsx','scripts/e2e-server.ts'],{cwd:root,env:{...process.env,LITESPEED_E2E_PORT:'0',LITESPEED_E2E_NO_VITE:'1',LITESPEED_E2E_ONBOARDING:'1'},stdio:['ignore','pipe','pipe']});
 let log='',terminal,emulator,browser;
 server.stdout.on('data',chunk=>log+=chunk);server.stderr.on('data',chunk=>log+=chunk);
@@ -46,7 +48,7 @@ try{
   const settings=await api('/settings');browser=await chromium.launch({channel:'chrome',headless:true});
   async function launch(session,cols=100,rows=38){
     await stopTerminal();emulator=new xterm.Terminal({cols,rows,allowProposedApi:true});
-    terminal=pty.spawn(process.execPath,['bin/litespeed.mjs','tui','--url',base,'--session',session.id,'--workspace',settings.workspace],{cwd:root,cols,rows,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',LITESPEED_DISABLE_PROJECT_CONFIG:'1',LITESPEED_CONFIG_DIR:config,XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
+    terminal=pty.spawn(process.execPath,['bin/litespeed.mjs','tui','--url',base,'--session',session.id,'--workspace',settings.workspace],{cwd:root,cols,rows,name:'xterm-256color',env:{...process.env,PATH:config+':'+process.env.PATH,SSH_CONNECTION:'',SSH_TTY:'',LITESPEED_TEST_CLIPBOARD:clipboard,TERM:'xterm-256color',LITESPEED_DISABLE_PROJECT_CONFIG:'1',LITESPEED_CONFIG_DIR:config,XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
     const display=emulator;terminal.onData(chunk=>display.write(chunk));await waitFor(()=>screen().includes('Ctrl+P Commands'),'ready');
     await new Promise(done=>setTimeout(done,100));
   }
@@ -61,8 +63,15 @@ try{
   terminal.write('\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('Worker: Choose a model'),'team setup');
   terminal.write('\x1b[H\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('Enter a model ID'),'model chooser');terminal.write('test-fast');await waitFor(()=>screen().includes('› test-fast'),'model result');terminal.write('\r');
   await waitFor(()=>screen().includes('Worker: test-fast'),'worker selected');await save('02-setup-models');
+  assert(screen().includes('Advanced settings'));
+  terminal.write('\x1b[H\x1b[B\x1b[B\x1b[B\r');await waitFor(()=>screen().includes('Shunt: Off'),'Shunt advanced settings');await save('02-shunt-advanced');
+  terminal.write('\r');await waitFor(()=>screen().includes('Enter a model ID'),'Shunt chooser');terminal.write('budget-model');await waitFor(()=>screen().includes('› budget-model'),'Shunt model found');terminal.write('\r');
+  await waitFor(()=>screen().includes('Shunt model: budget-model'),'Shunt selected');await save('02-shunt-model');terminal.write('\x1b');await waitFor(()=>screen().includes('Advanced settings · Shunt On'),'Shunt configured');
   terminal.write('\x1b[F\r');await waitFor(()=>!screen().includes('Choose your models · 3 of 3'),'setup saved');
   assert.equal((await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).setupComplete,true);
+  const shuntSetup=await api(`/sessions/${session.id}`);assert.equal(shuntSetup.session.shunt.model.model,'budget-model');
+  await api(`/sessions/${session.id}`,{shunt:{enabled:false},expectedConfigRevision:shuntSetup.session.configRevision},'PATCH');
+  await api('/workspace-preferences',{workspace:settings.workspace,providerId:'fixture',model:'test-model',shunt:{enabled:false}});
   await save('03-start');
   terminal.write('/settings\r');await waitFor(()=>screen().includes('API connections and ChatGPT sign-in'),'settings menu');
   terminal.write('\x1b[H\r');await waitFor(()=>screen().includes('+ Add provider'),'providers menu');
@@ -104,6 +113,29 @@ try{
     await fetch(base+'/fixture/delegations/release',{method:'POST'});
     await waitFor(async()=>(await api(`/sessions/${next.id}`)).session.status==='idle','workers finish');
   }
+  for(const kind of ['single','team-fusion','expert-fusion']){
+    const architecture=kind==='single'?null:{kind,[kind==='team-fusion'?'worker':'expert']:{providerId:'fixture',model:'test-fast'}};
+    const shuntSession=await api('/sessions',{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture,permissionMode:'auto',shunt:{enabled:true,model:{providerId:'fixture',model:'budget-model'}}});await launch(shuntSession,120,42);
+    terminal.write((kind==='single'?'SHUNT_BROWSER':'SHUNT_WORKERS')+'\r');
+    await waitFor(()=>screen().includes('fixture exports a greeting'),'Shunt result visible inline');
+    if(kind!=='single')await waitFor(()=>screen().split('Shunt reader').length>=3,'Shunt appears in both workers');
+    assert(!screen().includes('Inspect'));await save('07-shunt-'+kind);
+    await fetch(base+'/fixture/delegations/release',{method:'POST'});
+    await waitFor(async()=>(await api(`/sessions/${shuntSession.id}`)).session.status==='idle','Shunt finishes');
+  }
+  const copySession=await api('/sessions/import',{session:{title:'Clipboard',providerId:'fixture',model:'test-model'},messages:[{id:'copy-answer',role:'assistant',content:'Clipboard selection Ω ready.',createdAt:1}]});
+  await launch(copySession,100,32);await waitFor(()=>screen().includes('Clipboard selection Ω ready.'),'copyable response');
+  const copyRows=screen().split('\n'),copyY=copyRows.findIndex(line=>line.includes('Clipboard selection Ω ready.'))+1,copyX=copyRows[copyY-1].indexOf('Clipboard selection Ω ready.')+1;
+  terminal.write(`\x1b[<0;${copyX};${copyY}M`);await new Promise(done=>setTimeout(done,80));
+  terminal.write(`\x1b[<32;${copyX+20};${copyY}M`);await new Promise(done=>setTimeout(done,80));
+  terminal.write(`\x1b[<0;${copyX+20};${copyY}m`);
+  await waitFor(async()=>{try{return (await readFile(clipboard,'utf8')).includes('Clipboard selection');}catch{return false;}},'selection copied automatically');
+  const selected=await readFile(clipboard,'utf8');assert(selected.includes('Ω'));
+  await writeFile(clipboard,'');terminal.write('\x1b[99;9u');
+  await waitFor(async()=>(await readFile(clipboard,'utf8'))===selected,'Command+C copies selection');
+  await writeFile(clipboard,'');terminal.write('\x1b[99;6u');
+  await waitFor(async()=>(await readFile(clipboard,'utf8'))===selected,'Ctrl+Shift+C copies selection');
+  await save('07-selection-copy');console.log('TUI clipboard passed: selection release, Unicode, Command+C, Ctrl+Shift+C, native clipboard stdin.');
   const imported=await api('/sessions/import',{session:{title:'Long conversation',providerId:'fixture',model:'test-model',permissionMode:'ask'},messages:Array.from({length:240},(_,i)=>({id:`history-${i}`,role:i%2?'assistant':'user',content:i%2?'A completed answer.\n\n```typescript\n'+Array.from({length:30},(_,n)=>`const value${n} = ${n};`).join('\n')+'\n```':'Inspect these files.',createdAt:i+1}))});
   await launch(imported,100,32);await new Promise(done=>setTimeout(done,250));
   const started=performance.now();terminal.write('Draft stays responsive');await waitFor(()=>screen().includes('Draft stays responsive'),'typing through long history');
@@ -123,7 +155,7 @@ try{
   await waitFor(async()=>(await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).setupComplete===true,'fresh setup persisted');
   const freshSettings=await api('/settings');assert.equal(freshSettings.providers[0].baseUrl,settings.providers[0].baseUrl+'/setup-auth');assert(!JSON.stringify(freshSettings).includes('fixture-key'));
   assert.equal(freshSettings.defaultModel,'test-model');assert.equal((await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).architecture.kind,'sidekick-fusion');
-  const next=await api('/sessions',{workspace:settings.workspace+'/src'});await launch(next,80,24);await waitFor(()=>screen().includes('A fresh start.'),'next folder opens chat');assert(!screen().includes('Gateway base URL'));assert.equal(next.model,'test-model');await save('10-next-folder-ready');
+  const next=await api('/sessions',{workspace:settings.workspace+'/src'});await launch(next,80,24);await waitFor(()=>screen().includes('A fresh start.'),'next folder opens chat');assert(!screen().includes('Gateway base URL'));assert.equal(next.model,'test-model');assert.equal(next.architecture.kind,'sidekick-fusion');assert.equal(next.architecture.sidekick.model,'test-fast');await save('10-next-folder-ready');
   console.log('Fresh TUI gateway setup passed: blank URL, masked key, failed authentication, model discovery, and saved setup.');
   console.log('TUI interactions passed: first-run setup, saved models, live Allow all, two workers, two experts, Sidekick handoff, and narrow/wide rendering.');
 }finally{await stopTerminal();await browser?.close();server.kill('SIGTERM');await rm(config,{recursive:true,force:true});}

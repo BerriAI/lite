@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 test('setup explains roles, saves a workspace default, and keeps advanced controls out of the first run', async ({ page, request }, testInfo) => {
   const settings = await (await request.get('/api/settings')).json();

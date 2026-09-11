@@ -63,9 +63,29 @@ it('honors an explicitly supplied gateway environment without persisting its key
   expect(JSON.stringify(store.db.prepare('SELECT data FROM settings').get())).not.toContain('env-private-key');
 });
 
-it('remembers the first selected model for a different project without replacing an existing default',async()=>{
+it('remembers each explicit model choice for new sessions across projects',async()=>{
   store.saveSettings({providers:[{id:'p',name:'Gateway',kind:'openai',baseUrl:url}],defaultProvider:'p',defaultModel:''});
   const saved=await request('/workspace-preferences',{workspace:directory,providerId:'p',model:'chosen-model',setupComplete:true});expect(saved.status).toBe(200);
   const next=await request('/sessions',{workspace:tmpdir()});expect(next.data.model).toBe('chosen-model');expect(next.data.providerId).toBe('p');
-  await request('/workspace-preferences',{workspace:directory,providerId:'p',model:'project-specific',setupComplete:true});expect(store.settings().defaultModel).toBe('chosen-model');
+  await request('/workspace-preferences',{workspace:directory,providerId:'p',model:'new-choice',setupComplete:true});expect(store.settings().defaultModel).toBe('new-choice');
+  expect((await request('/sessions',{workspace:tmpdir()})).data.model).toBe('new-choice');
+  expect((await request(`/sessions/${next.data.id}`)).data.session.model).toBe('chosen-model');
+});
+
+it('carries an explicit session model setup across workspaces without carrying permissions or CLI overrides',async()=>{
+  store.saveSettings({providers:[{id:'p',name:'Gateway',kind:'openai',baseUrl:url}],defaultProvider:'p',defaultModel:'haiku'});
+  const previous=(await request('/sessions',{workspace:tmpdir()})).data;
+  const current=(await request('/sessions',{workspace:directory})).data;
+  const choice={providerId:'p',model:'chosen-driver',architecture:{kind:'sidekick-fusion',sidekick:{providerId:'p',model:'efficient'}},shunt:{enabled:true,model:{providerId:'p',model:'reader'}},planner:{providerId:'p',model:'planner'},modelReasoning:{'p:chosen-driver':'high'}};
+  expect((await request(`/sessions/${current.id}`,{...choice,permissionMode:'auto'},'PATCH')).status).toBe(200);
+  const next=(await request('/sessions',{workspace:tmpdir()})).data;
+  expect(next).toMatchObject({...choice,permissionMode:'ask'});
+  expect((await request(`/sessions/${previous.id}`)).data.session.model).toBe('haiku');
+  await request('/sessions',{workspace:directory,providerId:'p',model:'one-off',architecture:null,shunt:null});
+  expect((await request('/sessions',{workspace:directory})).data).toMatchObject(choice);
+  await request(`/sessions/${previous.id}`,{permissionMode:'auto'},'PATCH');
+  expect((await request('/sessions',{workspace:directory})).data.model).toBe('chosen-driver');
+  expect((await request(`/sessions/${current.id}`,{architecture:null,shunt:{enabled:false},planner:null},'PATCH')).status).toBe(200);
+  const single=(await request('/sessions',{workspace:tmpdir()})).data;
+  expect(single.architecture).toBeUndefined();expect(single.planner).toBeUndefined();expect(single.shunt.enabled).toBe(false);
 });

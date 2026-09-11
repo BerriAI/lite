@@ -16,3 +16,12 @@ it('keeps setup completion and permission defaults across clients, ordinary sess
   expect(new WorkspacePreferences(store).get('/workspace')).toMatchObject({providerId:'p',model:'changed',permissionMode:'auto',setupComplete:true});
   expect(new WorkspacePreferences(store).get('/different-workspace')).toEqual({});
 });
+
+it('persists the latest model setup after restarting and clears older workspace model arrangements',()=>{
+  const preferences=new WorkspacePreferences(store);
+  preferences.save('/old',{providerId:'p',model:'haiku',architecture:{kind:'team-fusion',worker:{providerId:'p',model:'old-worker'}},permissionMode:'auto'});
+  preferences.save('/new',{providerId:'p',model:'chosen',shunt:{enabled:true,model:{providerId:'p',model:'reader'}}},true);
+  store.close();store=new Store(directory);
+  expect(new WorkspacePreferences(store).get('/old')).toEqual({providerId:'p',model:'chosen',shunt:{enabled:true,model:{providerId:'p',model:'reader'}},permissionMode:'auto'});
+  expect(new WorkspacePreferences(store).get('/unseen')).toEqual({providerId:'p',model:'chosen',shunt:{enabled:true,model:{providerId:'p',model:'reader'}}});
+});

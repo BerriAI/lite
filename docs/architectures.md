@@ -23,9 +23,9 @@ Team and Expert drivers cannot invoke arbitrary Bash or connected tools to bypas
 {"kind":"expert-fusion","expert":{"providerId":"gateway","model":"strong-model"}}
 ```
 
-The picker starts with an architecture dropdown and displays only its required model rows. Every row has its own searchable model menu and per-model reasoning control. Below a divider, the optional Planner model switch reveals the Plan-mode route. Output style is a compact separate row. First-use workspaces default to Single model.
+The picker starts with an architecture dropdown and displays only its required model rows. Every row has its own searchable model menu and per-model reasoning control. Below a divider, the optional Planner model switch reveals the Plan-mode route. Output style is a compact separate row. New sessions inherit the last explicitly chosen model setup across workspaces.
 
-The session's `providerId`/`model` remain the lead or driver. Clearing `architecture` selects Single model. Configuration changes require an idle session and advance its revision; queued messages pause for explicit review and resume. Workspace preferences remember the most recently selected model arrangement without changing existing sessions or copying credentials.
+The session's `providerId`/`model` remain the lead or driver. Clearing `architecture` selects Single model. Configuration changes require an idle session and advance its revision; queued messages pause for explicit review and resume. Saved defaults remember the most recently selected model arrangement across workspaces without changing existing sessions or copying credentials.
 
 A turn captures its workspace, model routes, permission rules, reasoning preferences, guidance, style, profile, and hooks at acceptance. Child actions use that policy, not stale settings in a persisted child. Model effort is saved per provider/model pair. Provider default omits the override. Catalog-advertised efforts constrain the picker and preflight; when capability metadata is missing, an explicit override is passed through and provider rejection gives recovery guidance. Model names do not imply capability or context-window size.
 
@@ -70,3 +70,7 @@ node scripts/fusion-smoke.mjs --strong-provider PROVIDER_ID --strong-model MODEL
 ```
 
 The script uses a separate identical CSV-parser fixture for each arrangement, restores its independent acceptance tests before scoring, cancels timed-out runs, archives test sessions, and records provider-reported family usage, failed or denied root tools, and takeovers. It checks host completion holds separately from independent test success. Pass `--architecture expert-fusion` (or another arrangement ID) to run only that arrangement. It writes a JSON report and retains fixture workspaces for inspection. One small task is not a general quality or cost benchmark. See the [delivery audit](fusion-implementation.md) for recorded results.
+
+## Optional Shunt
+
+Shunt is an independent optional model service available across every architecture. It uses fresh requests inside the originating tool call, preserves each role and private workspace, and consumes no worker slots. Enable it through Models → Advanced settings. See [Shunt](shunt.md).

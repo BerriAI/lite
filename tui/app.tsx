@@ -35,6 +35,7 @@ import { GoalPanel, PlanPanel, HistoryPanel } from './sessionPanels.js';
 import { SettingsPanel } from './settings.js';
 import { expandProjectCommand, type ProjectCommand } from './projectCommands.js';
 import { Providers } from './providers.js';
+import { copyTerminalText } from './clipboard.js';
 import { PermissionPrompt, QuestionPrompt } from './prompts.js';
 import { DEFAULT_TRANSCRIPT_SETTINGS, InterruptHint, Transcript, TranscriptSettingsProvider, WorkingScanner, type TranscriptSettings } from './transcript.js';
 
@@ -106,9 +107,12 @@ export function App({ controller, config, theme: initialTheme, themeName: initia
 function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeMode }: { controller: TerminalController; router: KeymapRouter; onQuit: (code?: number) => void; chooseTheme: (name: string, mode: 'system' | 'light' | 'dark') => void; themeName: string; themeMode: 'system' | 'light' | 'dark' }) {
   const theme = useTheme(), { width } = useTerminalDimensions(), renderer = useRenderer();
   const state = useSyncExternalStore(controller.subscribe, controller.getState);
-  const config = useConfig(), selectedText = useRef(''), terminalFocused = useRef(true), previousStatus = useRef<string | undefined>(undefined);
+  const config = useConfig(), terminalFocused = useRef(true), previousStatus = useRef<string | undefined>(undefined);
   useFocus(() => { terminalFocused.current = true; }); useBlur(() => { terminalFocused.current = false; });
-  useSelectionHandler(selection => { selectedText.current = selection.getSelectedText(); });
+  useSelectionHandler(selection => {
+    const text = selection.getSelectedText();
+    if (!selection.isDragging && text) void copyTerminalText(renderer, text).catch(error => controller.notice(error.message));
+  });
   useEffect(() => { const status = state.sync.detail?.session.status; if (config.attention.enabled && config.attention.sounds !== false && (!config.attention.focus_only || terminalFocused.current) && previousStatus.current === 'running' && (status === 'waiting' || status === 'idle' || status === 'error')) process.stdout.write('\x07'); previousStatus.current = status; }, [state.sync.detail?.session.status]);
   const detail = state.sync.detail, busy = isRunning(detail);
   const [skills, setSkills] = useState<ProjectSkill[]>([]);
@@ -155,12 +159,12 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     const attachment = await attachmentFromFile(filename, controller.detail!.session.workspace);
     controller.setDraft({ ...controller.getState().draft, attachments: [...controller.getState().draft.attachments, attachment] });
   });
-  const copyResponse = () => { const text = selectedText.current || controller.detail?.messages.findLast(message => message.role === 'assistant' && message.content)?.content; if (text) { renderer.copyToClipboardOSC52(text); controller.notice('Copied to the terminal clipboard.'); } else controller.notice('There is no response to copy yet.'); close(); };
+  const copyResponse = () => { const text = renderer.getSelection()?.getSelectedText() || controller.detail?.messages.findLast(message => message.role === 'assistant' && message.content)?.content; if (text) run(async () => { await copyTerminalText(renderer, text); controller.notice('Copied.'); }); else controller.notice('There is no response to copy yet.'); close(); };
   const commands: MenuItem[] = [
     { id: 'copy', label: 'Copy selected text or last response', action: copyResponse },
     { id: 'timeline', label: 'Conversation timeline', description: 'Inspect, copy, or fork from a response', action: () => menu('Conversation timeline', conversationGroups(controller.detail!).filter(group => group.footer).reverse().map(group => ({ id: group.message.id, label: terminalText(group.message.content).slice(0, 100) || 'Response', action: () => menu('Response actions', [
       { id: 'read', label: 'Read response', action: () => setPanel(<TextViewer title="Response" text={group.message.content} onClose={close} />) },
-      { id: 'copy', label: 'Copy response', action: () => { renderer.copyToClipboardOSC52(group.message.content); close(); } },
+      { id: 'copy', label: 'Copy response', action: () => { run(() => copyTerminalText(renderer, group.message.content)); close(); } },
       { id: 'usage', label: 'Turn usage', action: () => setPanel(<TextViewer title="Turn usage" text={usageDetails(group.message, group.runUsage)} onClose={close} />) },
       { id: 'fork', label: 'Fork from here', disabled: busy, action: () => { close(); run(() => controller.fork(group.message.id)); } },
     ]) }))) },
@@ -240,7 +244,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   useKeyboard(key => {
     if (key.defaultPrevented) return;
-    if (key.ctrl && key.shift && key.name === 'c') { key.preventDefault(); key.stopPropagation(); copyResponse(); return; }
+    if ((key.super || (key.ctrl && key.shift)) && key.name === 'c') { key.preventDefault(); key.stopPropagation(); copyResponse(); return; }
     const exitMatch = parseBinding(config.keybinds.app_exit ?? KEYBIND_DEFAULTS.app_exit).some(binding => binding.steps.length === 1 && binding.steps[0] !== LEADER_TOKEN && strokeMatches(binding.steps[0], { name: key.name, ctrl: key.ctrl, shift: key.shift, meta: key.meta }));
     if (key.ctrl && key.name === 'c' && exitMatch) {
       key.preventDefault(); key.stopPropagation();

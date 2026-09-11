@@ -1,8 +1,6 @@
 # Shunt for Litespeed
 
-Status: research and implementation proposal. The feature is not implemented in Litespeed and no production settings have changed. The option will be off by default, with its own user-selected Shunt model independent of the architecture's models. Other product decisions in the decision register remain open.
-
-The [current repository integration proposal](shunt-integration.md) expands this research into exact runtime, permission, onboarding, UI, accounting, and release-test changes. It incorporates the user's decisions to support all architecture agents and include the optional switch in onboarding, and takes precedence over earlier implementation recommendations below.
+Status: upstream research and historical design recommendations. Native Shunt is now implemented, off by default, with a separately chosen model and a compact Advanced settings entry in both clients. The [current guide](shunt.md) and [native evaluation report](../research/shunt/results/native-summary.md) supersede the earlier implementation recommendations and decision register below. Production settings are not changed by this research or its tests.
 
 ## Recommendation
 
@@ -261,4 +259,4 @@ Place this between “Choose how models work together” and “Guides,” after
 >
 > **Shunt** is an optional way for agents in any architecture to send large reads and predictable file generation to a separate Shunt model you choose. Your existing agents keep their reasoning and review roles. It is off by default; enable it in **Models → Additional options** and choose its model independently of your driver and other agents. It can reduce the context sent to those models, but adds Shunt usage and may increase latency. See the Shunt guide for routing, limits, and verification.
 
-Until then, the branch’s README entry links to this proposal and explicitly identifies it as unshipped.
+The original research exit criteria are retained above for provenance. Current implementation and validation are documented in the [Shunt guide](shunt.md).

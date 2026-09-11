@@ -1,14 +1,16 @@
 import { useState, type ReactNode } from 'react';
+import { shuntConfigured } from '../../shared/shunt';
 import { Check } from 'lucide-react';
 import { architectureWorker, selectArchitecture, type ArchitectureKind } from '../../shared/architectures';
 import { SETUP_ARCHITECTURES, SETUP_PERMISSIONS, modelGuidance, GATEWAY_URL_HINT, GATEWAY_KEY_HINT, gatewayBaseUrl, setupGateway, type GatewayConnection } from '../../shared/setup';
 import type { Settings } from '../../shared/types';
 import type { Selection } from './Composer';
-import { ModelField } from './ModelPicker';
+import { ModelField, ShuntSettings } from './ModelPicker';
 import { Logo, Modal } from './ui';
 import { errorMessage, post } from './api';
 
 export function Onboarding({ settings, selection, onSave, onClose, renderProviders, onSettings, quick = false }: { settings: Settings; quick?: boolean; selection: Selection; onSave: (next: Selection) => Promise<void>; onClose: () => void; onSettings: (settings: Settings) => void; renderProviders: (close: () => void) => ReactNode }) {
+  const [shuntPending,setShuntPending]=useState(false);
   const [providers, setProviders] = useState(false);
   const [simple, setSimple] = useState(quick);
   const [step, setStep] = useState(quick && settings.providers.some(p => p.id === selection.providerId && p.baseUrl) ? 2 : 0), [kind, setKind] = useState<'single' | ArchitectureKind>(selection.architecture?.kind ?? (quick || !selection.model ? 'sidekick-fusion' : 'single'));
@@ -18,13 +20,13 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
   const [baseUrl, setBaseUrl] = useState(gateway.baseUrl), [apiKey, setApiKey] = useState('');
   const [connection, setConnection] = useState('');
   const label = kind === 'expert-fusion' ? 'Expert' : kind === 'team-fusion' ? 'Worker' : 'Sidekick';
-  const valid = Boolean(draft.model && settings.providers.some(provider => provider.id === draft.providerId) && (kind === 'single' || worker?.model && settings.providers.some(provider => provider.id === worker.providerId)));
+  const valid = !shuntPending && shuntConfigured(draft.shunt,settings.providers) && Boolean(draft.model && settings.providers.some(provider => provider.id === draft.providerId) && (kind === 'single' || worker?.model && settings.providers.some(provider => provider.id === worker.providerId)));
   async function connect() {
     setSaving(true); setError('');
     try {
       const result = await post<GatewayConnection>('/providers/connect', { providerId: gateway.providerId, baseUrl: gatewayBaseUrl(baseUrl), ...(apiKey.trim() ? {apiKey: apiKey.trim()} : {}) });
       onSettings(result.settings); setGateway({providerId: result.providerId, baseUrl: baseUrl.trim(), existing: true}); setApiKey('');
-      setDraft(current => ({...current, providerId: result.providerId, model: current.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current.model : ''}));
+      setDraft(current => ({...current, ...(current.shunt?.enabled&&current.shunt.model.providerId===result.providerId&&!result.models.some(model=>model.id===current.shunt!.model!.model)?{shunt:{...current.shunt,model:{providerId:result.providerId,model:''}}}:{}), providerId: result.providerId, model: current.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current.model : ''}));
       setWorker(current => current?.providerId === result.providerId && result.models.some(model => model.id === current.model) ? current : null);
       setConnection(`Connected · ${result.models.length} models available`); setStep(simple ? 2 : 1); setOpen(null);
     } catch (error) { setError(errorMessage(error)); } finally { setSaving(false); }
@@ -51,6 +53,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
           <ModelField simple hint={modelGuidance(kind, 'driver')} label={kind === 'single' ? 'Model' : 'Driver'} settings={settings} selection={draft} value={draft.model ? draft : null} onChange={route => setDraft({ ...draft, ...route })} onReasoning={() => {}} open={open === 'driver'} onOpen={value => setOpen(value ? 'driver' : null)} />
           {kind !== 'single' && <ModelField simple hint={modelGuidance(kind, 'worker')} label={label} settings={settings} selection={draft} value={worker} onChange={setWorker} onReasoning={() => {}} open={open === 'worker'} onOpen={value => setOpen(value ? 'worker' : null)} />}
         </div>}
+        <ShuntSettings settings={settings} selection={draft} onChange={shunt=>setDraft({...draft,shunt})} onPending={setShuntPending}/>
         <div className="setup-links"><button className="text-button" onClick={() => simple ? setStep(0) : setProviders(true)}>{simple ? 'Change gateway' : 'Manage providers'}</button>
         {simple && <button className="text-button" onClick={() => { setSimple(false); setStep(1); setOpen(null); }}>Customize setup</button>}</div>
         {!simple && <><label className="model-setting-row setup-permissions">Permissions<select aria-label="Setup permissions" value={draft.permissionMode} onChange={event => setDraft({ ...draft, permissionMode: event.target.value as 'ask' | 'auto' })}><option value="ask">Ask first</option><option value="auto">Allow all tools</option></select></label>

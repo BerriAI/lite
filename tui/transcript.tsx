@@ -303,6 +303,10 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width }: 
   const theme = useTheme(), [expanded, setExpanded] = useState(false);
   const open = expanded || showDetails, row = toolRow(call);
   const output = terminalText(call.output ?? (call.status === 'pending' ? 'Waiting to start…' : call.status === 'running' ? 'Running…' : 'No output.'), true);
+  if(call.shunt||call.routing||call.name==='bulk_read'||call.name==='code_write')return <box flexDirection="column" flexShrink={0}>
+    <InlineToolRow row={row} awaitingPermission={awaitingPermission} margin={0}/>
+    {call.output&&<box paddingLeft={4}><scrollbox height={Math.min(10,Math.max(1,Math.ceil(output.length/Math.max(20,width-8)),output.split('\n').length))}><text fg={toHex(row.failed||row.denied?theme.error:theme.textMuted)} wrapMode="word"><em>{output}</em></text></scrollbox></box>}
+  </box>;
   return <box flexDirection="column" flexShrink={0}>
     <box onMouseDown={() => setExpanded(!expanded)} flexDirection="row"><text fg={toHex(theme.textMuted)}>{open ? '▾' : '▸'}</text><InlineToolRow row={row} awaitingPermission={awaitingPermission} margin={0} /></box>
     {call.waitingForWorkspace && <text fg={toHex(theme.textMuted)} wrapMode="word"><em>{terminalText(call.waitingForWorkspace)}</em></text>}

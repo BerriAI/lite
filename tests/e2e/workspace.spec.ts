@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 async function fresh(page:any){await page.goto('/');await expect(page.getByRole('textbox',{name:'Message Litespeed'})).toBeVisible();}
 async function send(page:any,text:string){await page.getByRole('textbox',{name:'Message Litespeed'}).fill(text);await page.getByRole('button',{name:'Send message',exact:true}).click();}

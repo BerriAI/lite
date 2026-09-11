@@ -2,8 +2,9 @@ import type { Usage } from './types.js';
 
 export interface RequestUsage {
   id: string; rootSessionId: string; turnId: string; sessionId: string;
-  providerId: string; model: string; role: 'lead' | 'driver' | 'sidekick' | 'worker' | 'expert' | 'research';
-  phase: 'response' | 'compaction' | 'review'; invocationId?: string; usage?: Usage;
+  providerId: string; model: string; role: 'lead' | 'driver' | 'sidekick' | 'worker' | 'expert' | 'research' | 'shunt';
+  phase: 'response' | 'compaction' | 'review' | 'shunt_read' | 'shunt_write'; invocationId?: string; usage?: Usage;
+  operationId?: string; callerRole?: Exclude<RequestUsage['role'], 'shunt'>;
 }
 export interface TurnUsage extends Usage { requests: number; reportedRequests: number; breakdown: RequestUsage[] }
 
@@ -20,3 +21,5 @@ export function aggregateUsage(records: RequestUsage[]): TurnUsage {
       ? { cachedTokens: reported.reduce((sum, usage) => sum + usage.cachedTokens!, 0) } : {}),
   };
 }
+
+export function usagePhase(phase:RequestUsage['phase']):string {return phase==='shunt_read'?'Reader':phase==='shunt_write'?'Writer':phase;}

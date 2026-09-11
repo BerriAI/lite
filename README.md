@@ -46,11 +46,11 @@ For a web-only session, run `litespeed serve`. For development, use `npm run dev
 | **Team Fusion** | A strong driver assigns fresh cheaper workers, runs independent work in parallel, and verifies the combined result. |
 | **Expert Fusion** | A cheaper driver coordinates fresh strong experts and verifies their work. Independent assignments can run in parallel. |
 
-Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Litespeed remembers your model arrangement per workspace; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
+Choose any connected model for each role. An optional **Planner model** handles Plan mode separately. Litespeed uses your last chosen model arrangement for new sessions across workspaces; existing sessions keep their settings. Cost and quality depend on the models and task. See [architecture details and limits](docs/architectures.md).
 
 ## Additional options
 
-**Shunt (proposed)** would let agents in any architecture send large reads and predictable file generation to a separate Shunt model you choose, keeping their reasoning and review roles. It would be off by default, available during onboarding and in model settings in both clients. It is not shipped yet; see the [integration proposal](docs/shunt-integration.md) and [research and measured results](docs/design-shunt.md).
+**Shunt** sends large reads and routine generation to a separate model. Off by default; enable it in **Advanced settings** during setup or in Models, in either client. [How it works and measured results](docs/shunt.md).
 
 ## Guides
 

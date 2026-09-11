@@ -5,6 +5,7 @@ import type { Provider, Settings } from '../shared/types.js';
 import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, TextViewer, type MenuItem } from './ui.js';
 import { SecretPrompt } from './secrets.js';
+import { copyTerminalText } from './clipboard.js';
 
 type Login = { loginId: string; url: string; userCode?: string; expiresAt: number };
 function LoginScreen({ controller, login, onClose }: { controller: TerminalController; login: Login; onClose: () => void }) {
@@ -24,8 +25,8 @@ function LoginScreen({ controller, login, onClose }: { controller: TerminalContr
     void poll(); return () => { live = false; clearTimeout(timer); };
   }, [controller, login]);
   return <Menu title="Sign in to ChatGPT" search={false} onClose={onClose} items={[
-    { id: 'url', label: 'Copy sign-in link', description: login.url, action: () => { renderer.copyToClipboardOSC52(login.url); } },
-    ...(login.userCode ? [{ id: 'code', label: `Code: ${login.userCode}`, description: 'Select to copy the code', action: () => { renderer.copyToClipboardOSC52(login.userCode!); } }] : []),
+    { id: 'url', label: 'Copy sign-in link', description: login.url, action: () => { void copyTerminalText(renderer, login.url).catch(error => controller.notice(error.message)); } },
+    ...(login.userCode ? [{ id: 'code', label: `Code: ${login.userCode}`, description: 'Select to copy the code', action: () => { void copyTerminalText(renderer, login.userCode!).catch(error => controller.notice(error.message)); } }] : []),
     { id: 'status', label: status, disabled: true, action() {} },
   ]} footer="Open the link in your browser · Esc back" />;
 }

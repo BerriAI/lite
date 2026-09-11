@@ -45,7 +45,7 @@ Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to 
 
 Use `/models` to change models or add Sidekick, workers, experts, a separate planner, reasoning, or an output style. `/setup` opens the full guided configuration. **Settings → Providers** supports other APIs and ChatGPT device sign-in; keys stay masked.
 
-Workspace model preferences are shared with the web app. An editor opened before another client changes the session must be reopened before saving, so it cannot silently overwrite newer configuration.
+Your last chosen model setup is shared with the web app and used for new sessions in every workspace. Existing sessions keep their models; permission defaults remain per workspace. An editor opened before another client changes the session must be reopened before saving, so it cannot silently overwrite newer configuration.
 
 Team and Expert default to automatic parallel execution for independent assignments. **Workers at once** can cap concurrency at one to four; choosing **Automatic** removes the cap. The shared runner still enforces its turn budget.
 
@@ -72,10 +72,10 @@ Ctrl+P is the main navigation surface: search actions or project commands, use �
 | Read a long notice in full | `/notice` |
 | Scroll / return to latest output | Page Up / Page Down; Ctrl+G |
 | Load earlier conversation | Ctrl+Home, or Load earlier messages |
-| Copy selection or latest response | Ctrl+Shift+C, or `/copy` |
+| Copy selection or latest response | ⌘C, Ctrl+Shift+C, or `/copy` |
 | Suspend / return | Ctrl+Z, then `fg` in the invoking shell |
 
-Mouse selection, buttons, scrolling, and dialogs are supported. Clipboard copying uses OSC 52 and requires terminal support. Escape closes the current dialog before it can act on the task. Approvals and questions temporarily own input, keeping your draft intact. Ctrl+D exits only when the composer is empty; with text it retains its editing function.
+Mouse selection, buttons, scrolling, and dialogs are supported. Selecting text copies it when you release the mouse. Local macOS sessions use the system clipboard; remote sessions use OSC 52 where supported. Hold Shift while selecting to use your terminal’s native selection instead. Escape closes the current dialog before it can act on the task. Approvals and questions temporarily own input, keeping your draft intact. Ctrl+D exits only when the composer is empty; with text it retains its editing function.
 
 For an approval, press **1 Allow once**, **2 Always**, or **3 Deny**. Ctrl+F opens the full arguments and a file-edit preview where available. A Fusion handoff and a worker's subsequent edit or command are separate decisions in Ask mode. Questions use numbered choices or **0 Custom reply**.
 

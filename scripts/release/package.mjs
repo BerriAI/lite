@@ -16,6 +16,8 @@ try {
   for (const file of ['bin', 'tui', 'shared', 'dist', 'package.json', 'package-lock.json', 'LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md']) {
     try { await cp(join(source, file), join(root, file), { recursive: true }); } catch (error) { if (file !== 'NOTICE' || error.code !== 'ENOENT') throw error; }
   }
+  await mkdir(join(root,'research/shunt'),{recursive:true});
+  await cp(join(source,'research/shunt/UPSTREAM-LICENSE'),join(root,'research/shunt/UPSTREAM-LICENSE'));
   await mkdir(join(root, 'scripts')); for (const file of ['prepare-terminal.mjs', 'migrate-state.mjs']) await cp(join(source, 'scripts', file), join(root, 'scripts', file));
   run('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], root);
   const distribution = `node-v${nodeVersion}-${platform}`;

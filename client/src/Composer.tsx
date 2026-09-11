@@ -10,7 +10,7 @@ import { ModelPicker } from './ModelPicker';
  * untouched, null = explicitly cleared in the next PATCH). outputStyle and
  * architecture follow the same tri-state contract: undefined = untouched,
  * null = cleared. */
-export interface Selection { modelReasoning?: ModelReasoning; providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; outputStyle?: string | null; architecture?: ArchitectureSelection | null; }
+export interface Selection { shunt?: import('../../shared/shunt').ShuntSelection | null; modelReasoning?: ModelReasoning; providerId: string; model: string; mode: Mode; permissionMode: PermissionMode; planner?: { providerId: string; model: string } | null; outputStyle?: string | null; architecture?: ArchitectureSelection | null; }
 interface Props {
   settings: Settings; selection: Selection; onSelection: (value: Selection) => void;
   onSend: (content: string, attachments: Attachment[]) => Promise<boolean>; onCancel: () => void;

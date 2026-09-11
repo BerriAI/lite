@@ -62,3 +62,7 @@ Conversation persistence and gateway billing attribution are separate. Litespeed
 ## Verification
 
 The continuation integration test drives a real HTTP/SSE provider fixture through 70 tool steps, multiple compactions, steering, a follow-up turn, and a separate session. It checks the retained user request, complete tool/result groups, stable request headers, and undo availability. Additional regressions cover provider-usage calibration, opt-out persistence, Unicode truncation and paging, later file ranges, compaction failure/cancellation, and sidekick error propagation. These deterministic tests verify orchestration; they do not prove lossless model-generated summaries.
+
+## Optional Shunt
+
+Optional [Shunt](shunt.md) keeps selected large source reads out of the calling agent’s history using a separate model. It complements the existing pruning and compaction logic. Its own reported tokens are included in the root LiteLLM session and turn totals; reduced caller input does not imply the same reduction in total cost.

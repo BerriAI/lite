@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from './fixtures';
 import type { Provider, Session, SessionDetail, Settings } from '../../shared/types';
 
 const composer = (page: Page) => page.getByRole('textbox', { name: 'Message Litespeed', exact: true });
@@ -31,7 +31,7 @@ async function discover(request: APIRequestContext) {
   expect((await response.json()).models.find((model: { id: string }) => model.id === 'budget-model').contextWindow).toBe(16384);
 }
 async function create(request: APIRequestContext, model = 'budget-model') {
-  const response = await request.post('/api/sessions', { data: { title: 'Advisory context test', workspace, providerId: provider.id, model, mode: 'plan', permissionMode: 'ask' } });
+  const response = await request.post('/api/sessions', { data: { title: 'Advisory context test', workspace, providerId: provider.id, model, architecture:null, planner:null, shunt:null, mode: 'plan', permissionMode: 'ask' } });
   expect(response.status()).toBe(201); const session: Session = await response.json(); sessions.push(session); return session;
 }
 async function imported(request: APIRequestContext, marker = 'OLDER_CONTEXT_MARKER') {
