@@ -1,7 +1,9 @@
-# Litespeed 0.1.0
+# Litespeed 0.1.1
 
 The first self-contained macOS release supports Apple silicon and Intel Macs. It includes Node, Bun, native terminal dependencies, and the web app. Install once, then run `litespeed` from your project.
 
+- Read-only inspection stays available during another task; conflicting writes wait visibly and can be cancelled.
+- Skill browsing and direct skill commands are preserved from the concurrent main-branch change.
 - Background update notices in the browser and terminal, plus `litespeed update`.
 - Verified downloads and atomic version switching. Restart is blocked while tasks, background jobs, or workspace terminals are active.
 - Session data, settings, and keys are stored separately from application versions.
