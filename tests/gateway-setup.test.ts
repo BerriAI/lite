@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
+import { needsSetup } from '../shared/setup.js';
+import { saveEnabled } from '../shared/setupFlow.js';
+import { providerIsConfigured } from '../shared/setup.js';
+import { shuntConfigured } from '../shared/shunt.js';
 
 let directory:string,store:Store,server:Server,gateway:Server,base:string,url:string;
 let seen:{url?:string;authorization?:string}[],status:number,empty:boolean,release:(() => void)|undefined,hold:boolean;
@@ -45,6 +49,13 @@ it('reuses an omitted saved key only for the same URL, and allows explicitly key
   expect(seen.at(-1)?.authorization).toBe('Bearer saved-key');
   expect((await request('/providers/connect',{providerId:'litellm',baseUrl:url+'/other'})).status).toBe(200);
   expect(seen.at(-1)?.authorization).toBeUndefined();expect(store.settings().providers[0].apiKey).toBe('');
+});
+it('lets a saved remote gateway without a key finish setup and use Shunt',()=>{
+  store.saveSettings({providers:[{id:'gateway',name:'Gateway',kind:'openai',baseUrl:'https://gateway.example.com',apiKey:''}]});
+  const settings=store.publicSettings(), route={providerId:'gateway',model:'my-model'};
+  expect(settings.providers[0].configured).toBe(false);
+  expect(needsSetup(settings,route)).toBe(false);
+  expect(saveEnabled({step:'review',kind:'single',driver:route,worker:null,shuntOk:shuntConfigured({enabled:true,model:route},settings.providers),providerConfigured:id=>settings.providers.some(p=>p.id===id&&providerIsConfigured(p))})).toBe(true);
 });
 it('does not replace a concurrently edited provider',async()=>{
   hold=true;const pending=request('/providers/connect',{providerId:'litellm',baseUrl:url,apiKey:'synthetic-private-key'});

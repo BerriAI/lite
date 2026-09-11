@@ -24,9 +24,9 @@ export function Dialog({ title, children, footer = 'Esc back', onClose, width: p
 }
 
 export interface MenuItem { id: string; label: string; description?: string; disabled?: boolean; separatorBefore?: boolean; action: () => void }
-interface MenuProps { title: string; items: MenuItem[]; onClose: () => void; search?: boolean; footer?: string }
+interface MenuProps { title: string; items: MenuItem[]; onClose: () => void; search?: boolean; footer?: string; header?: string }
 export function Menu(props: MenuProps) { return <MenuContent key={props.title} {...props} />; }
-function MenuContent({ title, items, onClose, search = true, footer }: MenuProps) {
+function MenuContent({ title, items, onClose, search = true, footer, header }: MenuProps) {
   const theme = useTheme(), { height, width } = useTerminalDimensions();
   const [query, setQuery] = useState(''), [index, setIndex] = useState(0);
   const position = useRef(0), searchText = useRef('');
@@ -35,8 +35,9 @@ function MenuContent({ title, items, onClose, search = true, footer }: MenuProps
   const filtered = items.filter(item => `${item.label} ${item.description ?? ''}`.toLowerCase().includes(query.toLowerCase()));
   const selected = Math.min(index, Math.max(0, filtered.length - 1));
   const size = (item: MenuItem) => 1 + Number(Boolean(item.description)) + Number(Boolean(item.separatorBefore));
+  const headerRows = header ? header.split('\n').reduce((rows, line) => rows + Math.max(1, Math.ceil(line.length / Math.max(8, Math.min(width - 12, 66)))), 0) + 1 : 0;
   const footerRows = Math.ceil((footer?.length ?? 35) / Math.max(8, Math.min(width - 12, 66)));
-  const budget = Math.max(1, height - (search ? 13 : 12) - Math.max(0, footerRows - 1));
+  const budget = Math.max(1, height - (search ? 13 : 12) - headerRows - Math.max(0, footerRows - 1));
   let start = selected, used = size(filtered[selected] ?? { id: '', label: '', action() {} });
   while (start > 0 && used + size(filtered[start - 1]) <= budget) used += size(filtered[--start]);
   let end = selected + 1;
@@ -55,6 +56,7 @@ function MenuContent({ title, items, onClose, search = true, footer }: MenuProps
     }
   });
   return <Dialog title={title} onClose={onClose} footer={footer ?? '↑↓ choose · Enter select · Esc back'}>
+    {header && <text flexShrink={0} marginBottom={1} fg={toHex(theme.textMuted)}>{terminalText(header, true)}</text>}
     {search && <input focused placeholder="Search…" value={query} onInput={searchFor} backgroundColor={toHex(theme.backgroundElement)} textColor={toHex(theme.text)} />}
     <box marginTop={1} flexDirection="column">
       {!filtered.length && <text fg={toHex(theme.textMuted)}>No matches.</text>}
