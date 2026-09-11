@@ -326,6 +326,7 @@ function ToolActivity({ call, showDetails, awaitingPermission, syntax, width, em
     {call.waitingForWorkspace && <text fg={toHex(theme.textMuted)} wrapMode="word"><em>{terminalText(call.waitingForWorkspace)}</em></text>}
     {open && <box paddingLeft={4} flexDirection="column" flexShrink={0}>
       {call.intercepted && <text fg={toHex(theme.warning)}>{`Modified by ${terminalText(call.intercepted.by)}: ${terminalText(call.intercepted.reason)}`}</text>}
+      {call.mcpCalls?.map(inner => <text key={inner.id} fg={toHex(inner.status === 'error' || inner.status === 'denied' ? theme.error : theme.textMuted)} wrapMode="word">{terminalText(`${inner.name} · ${inner.status} · ${inner.argumentBytes} argument bytes${inner.resultBytes === undefined ? '' : ` · ${inner.resultBytes} result bytes`}`)}</text>)}
       {row.shape === 'block' ? <BlockToolRow row={row} syntax={syntax} width={width - 8} /> : result}
     </box>}
   </box>;
@@ -339,7 +340,7 @@ function DriverActivity({ entries, detail, live, heading, syntax, width, embedde
     {heading && <text paddingLeft={3} fg={toHex(theme.textMuted)}>Driver</text>}
     {!live && calls.length > 0 && <Button tone="muted" onPress={() => setExpanded(!expanded)}>{`${open ? '▾' : '▸'} ${calls.length} ${calls.length === 1 ? 'step' : 'steps'}`}</Button>}
     {(open || !calls.length) && entries.map(({ message, call }) => call
-      ? <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => item.toolCallId === call.id && !item.invocationId)} embedded={embedded} />
+      ? <ToolActivity key={call.id} syntax={syntax.normal} width={width} call={call} showDetails={settings.toolDetails} awaitingPermission={detail.permissions.some(item => (item.toolCallId === call.id || call.mcpCalls?.some(inner => inner.id === item.toolCallId)) && !item.invocationId)} embedded={embedded} />
       : <ReasoningRow key={message.id} subtle={syntax.subtle} row={{ running: live && !message.content && !message.toolCalls?.length, ...reasoningSummary(message.reasoning!) }} />)}
   </box>;
 }

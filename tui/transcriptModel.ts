@@ -130,6 +130,10 @@ export function toolRow(call: ToolCall): ToolRowModel {
   if(call.shunt||call.routing||call.name==='bulk_read'||call.name==='code_write')return {...base,icon:'↳',text:shuntLabel(call),pending:shuntLabel(call)};
   const args = call.args ?? {};
   switch (call.name) {
+    case 'capability': {
+      const label = args.operation === 'execute' ? `Run MCP TypeScript · ${call.mcpCalls?.filter(item => item.status === 'completed').length ?? 0}/${call.mcpCalls?.length ?? 0} calls completed` : args.operation === 'search' ? `Search MCP tools · ${str(args.query)}` : `MCP ${str(args.operation)} · ${str(args.name)}`;
+      return { ...base, icon: '↳', text: label, pending: label };
+    }
     case 'bash': {
       const command = str(args.command);
       if (running && !completed && !failed && !denied) {

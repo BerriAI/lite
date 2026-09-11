@@ -77,6 +77,7 @@ export interface Session { modelReasoning?: ModelReasoning; profile?: ActiveProf
    * change with a revision bump, exactly like changing the model. */
   outputStyle?: string; }
 export interface ToolCall { waitingForWorkspace?: string; changes?: FileChange[]; delegationId?: string; ruleMatch?: RuleMatch; id: string; name: string; args: Record<string,unknown>; status: 'pending' | 'running' | 'completed' | 'error' | 'denied'; output?: string; startedAt?: number; endedAt?: number;
+  mcpCalls?: import('./mcp.js').McpCodeInvocation[];
   execution?: import('./receipts.js').CommandExecution;
   shunt?: import('./shunt.js').ShuntOperation;
   routing?: { kind: 'shunt'; paths: string[] };

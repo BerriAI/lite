@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '../shared/types.js';
-import type { McpServerStatus } from '../shared/mcp.js';
+import type { McpServerStatus, McpCodeResult } from '../shared/mcp.js';
 
 /** A turn's immutable catalog and connection identity; never resolves a name
  * against a later configuration. Releasing invalidates this handle only. */
@@ -8,6 +8,8 @@ export interface ExternalToolLease {
   scope(name: string): string;
   assertCurrent(name: string): void;
   execute(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string>;
+  /** Same pinned dispatch as execute, preserving structured data for scripts. */
+  executeForCode?(name: string, args: Record<string, unknown>, signal: AbortSignal): Promise<McpCodeResult>;
   release(): void;
   /** GATEWAY PARTITION (docs/design-capability-proxy.md, Option 3): names of
    * gateway-routed tools (their server's advertise !== true) mapped to the

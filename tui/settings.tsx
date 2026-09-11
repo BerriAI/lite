@@ -74,7 +74,7 @@ export function SettingsPanel({ controller, onClose }: { controller: TerminalCon
     ]} />;
   }
   if (view === 'integrations') return <Menu title="Integrations" onClose={back} footer={feedback || 'Review configuration before connecting a tool server.'} items={[
-    { id: 'edit', label: 'Edit MCP configuration', description: 'JSON server definitions, as in web Settings', action: () => setView('mcp-config') },
+    { id: 'edit', label: 'Edit MCP configuration', description: 'Tool search and TypeScript execution on by default; each call keeps normal approval', action: () => setView('mcp-config') },
     ...(mcp?.servers ?? []).map(server => ({ id: server.name, label: `${server.name} · ${server.status}`, description: server.error || `${server.tools.length} tools`, action: () => setReview(server) })),
     { id: 'refresh', label: 'Reload status', action: () => { void run(async () => { await controller.settings(); setMcp(await controller.client.api<McpSnapshot>('/mcp')); }); } },
   ]} />;

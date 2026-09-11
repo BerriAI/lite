@@ -7,7 +7,7 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { CallToolResultSchema, JSONRPCMessageSchema, ListToolsResultSchema, ToolListChangedNotificationSchema, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import type { Transport, FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { McpServerConfig, Settings, ToolDefinition } from '../shared/types.js';
-import type { McpServerStatus } from '../shared/mcp.js';
+import type { McpServerStatus, McpCodeResult } from '../shared/mcp.js';
 import type { ExternalTools, ExternalToolLease } from './external.js';
 
 export const MCP_LIMITS = {
@@ -53,6 +53,13 @@ function clean(text: string, config: McpServerConfig, max: number = MCP_LIMITS.o
   // Strip terminal escapes and invisible/control characters, retaining newlines and tabs.
   text = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\p{Cf}\x00-\x08\x0b-\x1f\x7f-\x9f]/gu, '');
   return bounded(text, max);
+}
+function cleanData(value: unknown, config: McpServerConfig, depth = 0): unknown {
+  if (depth > MCP_LIMITS.schemaDepth) throw new SafeError('MCP result is too deeply nested.');
+  if (typeof value === 'string') return clean(value, config, MCP_LIMITS.frameBytes);
+  if (Array.isArray(value)) return value.map(item => cleanData(item, config, depth + 1));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [clean(key, config, MCP_LIMITS.frameBytes), cleanData(item, config, depth + 1)]));
+  return value;
 }
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -320,37 +327,54 @@ export class McpManager implements ExternalTools {
       }
       return route;
     };
+    const call = (name: string, args: Record<string, unknown>, requestSignal: AbortSignal) => {
+      const operation = (async () => {
+        const route = assert(name);
+        const request = deadline([signal, released.signal, requestSignal, route.validity, route.connection.lifetime.signal, this.shutdown.signal], MCP_LIMITS.toolMs);
+        try {
+          if (request.signal.aborted) throw cancelled();
+          if (Buffer.byteLength(JSON.stringify(args)) > MCP_LIMITS.catalogBytes) throw new SafeError('MCP arguments are too large.', 400);
+          // Use the captured client and remote name. There is deliberately no
+          // live lookup, rediscovery, retry, task execution, or resource fetch.
+          const result = await abortable(route.connection.client.request({ method: 'tools/call', params: { name: route.remote, arguments: args } }, CallToolResultSchema, { signal: request.signal, timeout: MCP_LIMITS.toolMs }), request.signal);
+          assert(name); if (request.signal.aborted) throw cancelled();
+          if (result.isError) {
+            const text = result.content.filter(part => part.type === 'text').map(part => part.text).join('\n') || (result.structuredContent ? JSON.stringify(result.structuredContent) : '');
+            throw new SafeError(clean(text, route.entry.config) || 'The MCP tool returned an error.', 502);
+          }
+          return { result, config: route.entry.config };
+        } catch (error) {
+          if (request.signal.aborted) throw cancelled();
+          if (error instanceof SafeError) throw error;
+          throw new SafeError('The MCP tool request failed. It was not retried.', 502);
+        } finally { request.clear(); }
+      })();
+      return this.track(operation);
+    };
     return Object.freeze({
       definitions: freeze(definitions),
       gatewayTools: () => gateway,
       scope: (name: string) => assert(name).scope,
       assertCurrent: (name: string) => { assert(name); },
-      execute: (name: string, args: Record<string, unknown>, requestSignal: AbortSignal) => {
-        const operation = (async () => {
-          const route = assert(name);
-          const request = deadline([signal, released.signal, requestSignal, route.validity, route.connection.lifetime.signal, this.shutdown.signal], MCP_LIMITS.toolMs);
-          try {
-            if (request.signal.aborted) throw cancelled();
-            if (Buffer.byteLength(JSON.stringify(args)) > MCP_LIMITS.catalogBytes) throw new SafeError('MCP arguments are too large.', 400);
-            // Use the captured client and remote name. There is deliberately no
-            // live lookup, rediscovery, retry, task execution, or resource fetch.
-            const result = await abortable(route.connection.client.request({ method: 'tools/call', params: { name: route.remote, arguments: args } }, CallToolResultSchema, { signal: request.signal, timeout: MCP_LIMITS.toolMs }), request.signal);
-            assert(name); if (request.signal.aborted) throw cancelled();
-            const pieces: string[] = []; let remaining = MCP_LIMITS.outputBytes;
-            for (const part of result.content) {
-              const text = clean(part.type === 'text' ? part.text : `[${part.type} content omitted]`, route.entry.config, remaining);
-              pieces.push(text); remaining -= Buffer.byteLength(text) + 1; if (remaining <= 0) break;
-            }
-            const text = clean(pieces.join('\n') || (result.structuredContent ? JSON.stringify(result.structuredContent) : ''), route.entry.config);
-            if (result.isError) throw new SafeError(text || 'The MCP tool returned an error.', 502);
-            return text;
-          } catch (error) {
-            if (request.signal.aborted) throw cancelled();
-            if (error instanceof SafeError) throw error;
-            throw new SafeError('The MCP tool request failed. It was not retried.', 502);
-          } finally { request.clear(); }
-        })();
-        return this.track(operation);
+      execute: async (name: string, args: Record<string, unknown>, requestSignal: AbortSignal) => {
+        const { result, config } = await call(name, args, requestSignal);
+        const pieces: string[] = []; let remaining = MCP_LIMITS.outputBytes;
+        for (const part of result.content) {
+          const text = clean(part.type === 'text' ? part.text : `[${part.type} content omitted]`, config, remaining);
+          pieces.push(text); remaining -= Buffer.byteLength(text) + 1; if (remaining <= 0) break;
+        }
+        return clean(pieces.join('\n') || (result.structuredContent ? JSON.stringify(result.structuredContent) : ''), config);
+      },
+      executeForCode: async (name: string, args: Record<string, unknown>, requestSignal: AbortSignal): Promise<McpCodeResult> => {
+        const { result, config } = await call(name, args, requestSignal);
+        // Keep structured data and complete text (within the transport limit)
+        // in the sandbox. Never silently feed truncated JSON into a workflow.
+        const safe: McpCodeResult = {
+          content: result.content.map(part => ({ type: 'text', text: clean(part.type === 'text' ? part.text : `[${part.type} content omitted]`, config, MCP_LIMITS.frameBytes) })),
+          ...(result.structuredContent ? { structuredContent: cleanData(result.structuredContent, config) as Record<string, unknown> } : {}),
+        };
+        if (Buffer.byteLength(JSON.stringify(safe)) > MCP_LIMITS.frameBytes) throw new SafeError('MCP result exceeds the code execution limit. Narrow the tool request.');
+        return safe;
       },
       release: () => released.abort(),
     });

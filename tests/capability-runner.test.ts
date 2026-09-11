@@ -7,12 +7,13 @@ import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
 import type { ExternalTools, ExternalToolLease } from '../server/external.js';
 import type { ToolDefinition } from '../shared/types.js';
+import type { McpCodeResult } from '../shared/mcp.js';
 
 const listen=(server:Server)=>new Promise<string>(resolve=>server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${(server.address() as {port:number}).port}`)));
 const close=(server:Server)=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());});
 const until=async(check:()=>boolean)=>{const deadline=Date.now()+4000;while(!check()){if(Date.now()>deadline)throw new Error('Timed out waiting for capability integration');await new Promise(resolve=>setTimeout(resolve,5));}};
 const text=(res:ServerResponse,content='Done')=>{res.writeHead(200,{'Content-Type':'text/event-stream'});res.end(`data: ${JSON.stringify({choices:[{delta:{content},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`);};
-const tool=(res:ServerResponse,name:string,args:Record<string,unknown>)=>{res.writeHead(200,{'Content-Type':'text/event-stream'});res.end(`data: ${JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:'cap-call',type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);};
+const tool=(res:ServerResponse,name:string,args:Record<string,unknown>,callId='cap-call')=>{res.writeHead(200,{'Content-Type':'text/event-stream'});res.end(`data: ${JSON.stringify({choices:[{delta:{tool_calls:[{index:0,id:callId,type:'function',function:{name,arguments:JSON.stringify(args)}}]},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);};
 const fail=(message:string,status=409)=>Object.assign(new Error(message),{status});
 const definition=(name:string,description:string):ToolDefinition=>({type:'function',function:{name,description,parameters:{type:'object',properties:{text:{type:'string'}},required:['text']}}});
 
@@ -24,6 +25,7 @@ describe('capability gateway: stable connected-tool surface',()=>{
   let generation:number,gatewayDefs:ToolDefinition[],directDefs:ToolDefinition[],gatewayServer:(name:string)=>string,scopes:Record<string,string>;
   let executions:{name:string,args:Record<string,unknown>}[];
   let external:ExternalTools & {capture:ReturnType<typeof vi.fn>};
+  let codeResult: (name: string, args: Record<string, unknown>, signal: AbortSignal) => Promise<McpCodeResult>;
   const gw1='mcp_browser_click_11111111',gw2='mcp_other_scrape_22222222',direct='mcp_trusted_echo_33333333';
   const api=async(path:string,data?:unknown,method?:string)=>{const response=await fetch(url+'/api'+path,{method:method??(data===undefined?'GET':'POST'),headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});return{status:response.status,body:await response.json()};};
   const create=async(extra:Record<string,unknown>={})=>{const response=await api('/sessions',extra);expect(response.status).toBe(201);return response.body;};
@@ -37,6 +39,7 @@ describe('capability gateway: stable connected-tool surface',()=>{
     directDefs=[definition(direct,'Echo text back')];
     gatewayServer=(name:string)=>name===gw2?'other':'browser';
     scopes={[gw1]:'scope-gw1-v1',[gw2]:'scope-gw2-v1',[direct]:'scope-direct-v1'};
+    codeResult=async(name)=>({content:[{type:'text',text:`Executed ${name}`}]});
     respond=(_body,res)=>text(res);
     provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(chunk);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
     store.saveSettings({workspace:directory,providers:[{id:'test',name:'Test',kind:'openai',baseUrl:await listen(provider)}],defaultProvider:'test',defaultModel:'test-model'});
@@ -48,7 +51,7 @@ describe('capability gateway: stable connected-tool surface',()=>{
         const gateway=new Map(gatewayDefs.map(t=>[t.function.name,gatewayServer(t.function.name)]));
         const frozenScopes={...scopes};
         const assertCurrent=(name:string)=>{if(signal.aborted||version!==generation||!definitions.some(t=>t.function.name===name))throw fail('The accepted MCP tool catalog is stale. Review MCP settings and explicitly refresh before a new turn.');};
-        return{definitions,gatewayTools:()=>gateway,scope:(name:string)=>{assertCurrent(name);return frozenScopes[name];},assertCurrent,execute:async(name,args,callSignal)=>{assertCurrent(name);callSignal.throwIfAborted();executions.push({name,args});return `Executed ${name}`;},release:()=>{}};
+        return{definitions,gatewayTools:()=>gateway,scope:(name:string)=>{assertCurrent(name);return frozenScopes[name];},assertCurrent,execute:async(name,args,callSignal)=>{assertCurrent(name);callSignal.throwIfAborted();executions.push({name,args});return `Executed ${name}`;},executeForCode:async(name,args,callSignal)=>{assertCurrent(name);callSignal.throwIfAborted();executions.push({name,args});return codeResult(name,args,callSignal);},release:()=>{}};
       }),
     };
     const app=createApp({store,external});runner=app.runner;server=createServer(app.app);url=await listen(server);
@@ -209,5 +212,73 @@ describe('capability gateway: stable connected-tool surface',()=>{
     const s=await create({mode:'plan'});await run(s.id,'Plan only');
     expect(external.capture).not.toHaveBeenCalled();
     expect(names(calls[0])).not.toContain('capability');
+  });
+
+  it('searches by default, then executes TypeScript with only a compact result in model history',async()=>{
+    const payload='PRIVATE_DOCUMENT '.repeat(15_000);
+    codeResult=async(name,args)=>name===gw2?{content:[],structuredContent:{payload}}:{content:[],structuredContent:{saved:args.text===payload}};
+    respond=(body,res)=>{
+      const results=body.messages.filter((message:{role:string})=>message.role==='tool');
+      if(!results.length)tool(res,'capability',{operation:'search',query:'scrape'},'search-call');
+      else if(results.length===1)tool(res,'capability',{operation:'execute',code:`const result = await tools[${JSON.stringify(gw2)}]({text:"source"}); const payload: string = result.structuredContent.payload; await tools[${JSON.stringify(gw1)}]({text:payload}); return {saved:true};`},'code-call');
+      else text(res);
+    };
+    const s=await create({permissionMode:'auto'});await run(s.id);
+    expect(calls).toHaveLength(3);
+    expect(calls[0].tools.find((item:ToolDefinition)=>item.function.name==='capability').function.description).toContain('Start with operation "search"');
+    expect(names(calls[0])).not.toContain(gw2);
+    expect(executions).toEqual([{name:gw2,args:{text:'source'}},{name:gw1,args:{text:payload}}]);
+    expect(JSON.stringify(calls)).not.toContain('PRIVATE_DOCUMENT');
+    expect(JSON.parse(toolResult(s.id))).toEqual({saved:true});
+    const codeCall=store.messages(s.id).flatMap(message=>message.toolCalls??[]).find(call=>call.id==='code-call')!;
+    expect(codeCall.mcpCalls?.map(item=>[item.name,item.status])).toEqual([[gw2,'completed'],[gw1,'completed']]);
+    expect(codeCall.mcpCalls?.[0].resultBytes).toBeGreaterThan(100_000);
+    expect(JSON.stringify(codeCall)).not.toContain('PRIVATE_DOCUMENT');
+  });
+
+  it('approves each real script call, remembers only that tool, and stops the workflow on denial',async()=>{
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res,'capability',{operation:'execute',code:`await tools[${JSON.stringify(gw1)}]({text:"one"}); await tools[${JSON.stringify(gw1)}]({text:"two"}); try { await tools[${JSON.stringify(gw2)}]({text:"three"}); } catch {} await tools[${JSON.stringify(gw1)}]({text:"must not run"});`});
+    const s=await create({permissionMode:'ask'});runner.start(s.id,'Execute script');
+    await until(()=>runner.permissions(s.id).length===1);
+    expect(runner.permissions(s.id)[0]).toMatchObject({tool:gw1,args:{text:'one'}});
+    runner.decide(s.id,runner.permissions(s.id)[0].id,'always');
+    await until(()=>runner.permissions(s.id).some(item=>item.tool===gw2));
+    expect(executions.map(item=>item.args.text)).toEqual(['one','two']);
+    runner.decide(s.id,runner.permissions(s.id)[0].id,'deny');await runner.whenIdle();
+    expect(executions).toHaveLength(2);expect(store.toolGrants(s.id).map(item=>item.tool)).toEqual([gw1]);
+    const call=store.messages(s.id).flatMap(message=>message.toolCalls??[])[0];
+    expect(call.status).toBe('denied');expect(call.mcpCalls?.map(item=>item.status)).toEqual(['completed','completed','denied']);
+    expect(runner.permissions(s.id)).toEqual([]);
+  });
+
+  it('refuses a stale script call after its approval without using a replacement connection',async()=>{
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res,'capability',{operation:'execute',code:`await tools[${JSON.stringify(gw1)}]({text:"stale"});`});
+    const s=await create({permissionMode:'ask'});runner.start(s.id,'Execute script');await until(()=>runner.permissions(s.id).length===1);
+    generation++;runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');await runner.whenIdle();
+    expect(executions).toEqual([]);expect(toolResult(s.id)).toMatch(/stale/);
+  });
+
+  it('cancels all parallel script approvals when any call is denied',async()=>{
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res,'capability',{operation:'execute',code:`await Promise.all([tools[${JSON.stringify(gw1)}]({text:"one"}), tools[${JSON.stringify(gw2)}]({text:"two"})]);`});
+    const s=await create({permissionMode:'ask'});runner.start(s.id,'Parallel script');await until(()=>runner.permissions(s.id).length===2);
+    runner.decide(s.id,runner.permissions(s.id)[0].id,'deny');await runner.whenIdle();
+    expect(executions).toEqual([]);expect(runner.permissions(s.id)).toEqual([]);
+    expect(store.messages(s.id).flatMap(message=>message.toolCalls??[])[0].mcpCalls?.every(item=>item.status==='denied')).toBe(true);
+  });
+
+  it('applies PreToolUse hooks to the underlying tool inside a script',async()=>{
+    store.saveSettings({hooks:[{event:'PreToolUse',matcher:gw1,command:'exit 2'}]});
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res,'capability',{operation:'execute',code:`await tools[${JSON.stringify(gw1)}]({text:"blocked"});`});
+    const s=await create({permissionMode:'auto'});await run(s.id);
+    expect(executions).toEqual([]);expect(toolResult(s.id)).toContain('PreToolUse hook');
+  });
+
+  it('stops a running remote call and prevents subsequent script dispatch on cancellation',async()=>{
+    let cancelled=false;
+    codeResult=async(_name,_args,signal)=>new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>{cancelled=true;reject(new Error('cancelled'));},{once:true}));
+    respond=(body,res)=>body.messages.at(-1)?.role==='tool'?text(res):tool(res,'capability',{operation:'execute',code:`await tools[${JSON.stringify(gw1)}]({text:"slow"}); await tools[${JSON.stringify(gw2)}]({text:"must not run"});`});
+    const s=await create({permissionMode:'auto'});runner.start(s.id,'Slow script');await until(()=>executions.length===1);
+    runner.cancel(s.id);await runner.whenIdle();expect(cancelled).toBe(true);expect(executions).toHaveLength(1);
+    expect(runner.permissions(s.id)).toEqual([]);
   });
 });

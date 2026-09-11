@@ -39,8 +39,9 @@ createInterface({input:process.stdin}).on('line',line=>{
   if(m.params.name==='slow')return;
   if(m.params.name==='crash'){process.exit(0);return;}
   if(m.params.name==='change'){reply(m.id,{content:[{type:'text',text:'changed'}]});changed();return;}
-  if(m.params.name==='fail'){reply(m.id,{isError:true,content:[{type:'text',text:'fixture-secret failure'}]});return;}
+  if(m.params.name==='fail'){reply(m.id,m.params.arguments?.structured?{isError:true,content:[],structuredContent:{error:'fixture-secret failure'}}:{isError:true,content:[{type:'text',text:'fixture-secret failure'}]});return;}
   if(m.params.name==='output'){reply(m.id,{content:[{type:'text',text:'界'.repeat(70000)+'fixture-secret'}]});return;}
+  if(m.params.arguments?.structured){reply(m.id,{content:[{type:'text',text:'structured result'}],structuredContent:{rows:Array.from({length:1000},(_,i)=>({id:i,value:'x'.repeat(200)})),secret:'fixture-secret'}});return;}
   if(m.params.name==='resource'){reply(m.id,{content:[{type:'resource',resource:{uri:'https://example.invalid/private',text:'RESOURCE_BODY'}}]});return;}
   reply(m.id,{content:[{type:'text',text:label+':'+m.params.arguments.text}]});
  }else reply(m.id,{});
@@ -86,8 +87,21 @@ describe('explicit stdio MCP lifecycle', () => {
   it('redacts tool errors, bounds UTF-8 output and omits resource bodies', async () => {
     const f = await fixture(), manager = managerFor({ test: f.config() }), lease = await connect(manager);
     await expect(lease.execute(named(lease, 'fail'), {}, signal())).rejects.toThrow('[redacted] failure');
+    await expect(lease.execute(named(lease, 'fail'), { structured: true }, signal())).rejects.toThrow('[redacted] failure');
     const output = await lease.execute(named(lease, 'output'), {}, signal()); expect(Buffer.byteLength(output)).toBeLessThanOrEqual(MCP_LIMITS.outputBytes); expect(output).not.toContain('�');
     const resource = await lease.execute(named(lease, 'resource'), {}, signal()); expect(resource).toBe('[resource content omitted]'); expect(resource).not.toContain('RESOURCE_BODY');
+  });
+  it('preserves large structured and text results for code while retaining redaction and catalog checks', async () => {
+    const f = await fixture(), manager = managerFor({ test: f.config() }), lease = await connect(manager);
+    const result = await lease.executeForCode!(named(lease), { structured: true }, signal());
+    expect(result.structuredContent?.rows).toHaveLength(1000); expect(JSON.stringify(result).length).toBeGreaterThan(MCP_LIMITS.outputBytes);
+    expect(result.structuredContent?.secret).toBe('[redacted]'); expect(JSON.stringify(result)).not.toContain('fixture-secret');
+    const text = await lease.executeForCode!(named(lease, 'output'), {}, signal());
+    expect(text.content[0].text).toBe('界'.repeat(70000) + '[redacted]');
+    expect((await lease.executeForCode!(named(lease, 'resource'), {}, signal())).content[0].text).toBe('[resource content omitted]');
+    await expect(lease.executeForCode!(named(lease, 'fail'), {}, signal())).rejects.toThrow('[redacted] failure');
+    await expect(lease.executeForCode!(named(lease, 'fail'), { structured: true }, signal())).rejects.toThrow('[redacted] failure');
+    lease.release(); await expect(lease.executeForCode!(named(lease), {}, signal())).rejects.toThrow();
   });
   it('cancels a slow tool without replay and keeps the connection usable', async () => {
     const f = await fixture(), manager = managerFor({ test: f.config() }), lease = await connect(manager), controller = new AbortController();

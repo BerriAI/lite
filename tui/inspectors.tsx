@@ -45,7 +45,7 @@ export function WorkInspector({ controller, steps: initialSteps, detail: initial
       const invocation = detail.delegations?.find(item => item.toolCallId === call.id && item.parentMessageId === message.id);
       return { id: call.id, label: `${call.name} · ${call.status}`, description: String(call.args.description ?? call.args.path ?? call.args.command ?? ''), action: () => {
         if (invocation) setWorker(invocation);
-        else setText({ title: `${call.name} · ${call.status}`, text: terminalText([JSON.stringify(call.args, null, 2), call.output || '', ...(call.intercepted ? [`Modified by ${call.intercepted.by}: ${call.intercepted.reason}`, `Original arguments: ${JSON.stringify(call.intercepted.originalArgs)}`] : [])].join('\n\n'), true) });
+        else setText({ title: `${call.name} · ${call.status}`, text: terminalText([JSON.stringify(call.args, null, 2), call.output || '', ...(call.mcpCalls?.map(inner => `${inner.name} · ${inner.status} · ${inner.argumentBytes} argument bytes${inner.resultBytes === undefined ? '' : ` · ${inner.resultBytes} result bytes`}`) ?? []), ...(call.intercepted ? [`Modified by ${call.intercepted.by}: ${call.intercepted.reason}`, `Original arguments: ${JSON.stringify(call.intercepted.originalArgs)}`] : [])].join('\n\n'), true) });
       } };
     }),
   ])} />;
