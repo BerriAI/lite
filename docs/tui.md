@@ -9,11 +9,10 @@ On macOS with Node 26.4+ and npm, install the command once from a checkout. See 
 ```sh
 npm ci &&
 npm run build &&
-npm link &&
-speedrail
+npm link
 ```
 
-Then, from any project:
+Then open Speedrail from the project you want to work on:
 
 ```sh
 cd /path/to/project

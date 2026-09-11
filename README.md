@@ -13,13 +13,12 @@ git clone https://github.com/BerriAI/speedrail.git &&
 cd speedrail &&
 npm ci &&
 npm run build &&
-npm link &&
-speedrail
+npm link
 ```
 
-This installs the locked dependencies, builds Speedrail, makes the command available, and opens setup. Bun and the native terminal packages are installed automatically by npm. Enter your gateway URL and key, then choose your models.
+This installs the locked dependencies, builds Speedrail, and makes the command available. Bun and the native terminal packages are installed automatically by npm.
 
-Then, from **any project directory**:
+Then open Speedrail from **the project you want to work on**:
 
 ```sh
 cd /path/to/your/project
