@@ -19,6 +19,8 @@
     "postinstall": "node scripts/prepare-terminal.mjs",
     "dev": "tsx watch server/index.ts",
     "tui": "node bin/speedrail.mjs",
+    "package:macos": "npm run build && node scripts/release/package.mjs",
+    "test:package": "node scripts/release/smoke.mjs",
     "migrate": "node scripts/migrate-state.mjs",
     "build": "vite build && tsup",
     "start": "node dist/server/index.js",

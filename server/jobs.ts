@@ -39,6 +39,7 @@ export class Jobs {
   private jobs = new Map<string, Job>();       // Global id -> job.
   private counters = new Map<string, number>();  // Per-session 'job-N' counter.
 
+  active() { return [...this.jobs.values()].some(job => job.status === 'running'); }
   private key(sessionId: string, id: string): string { return `${sessionId}\0${id}`; }
   private find(sessionId: string, id: string): Job | undefined { return this.jobs.get(this.key(sessionId, id)); }
   private forSession(sessionId: string): Job[] { return [...this.jobs.values()].filter(job => job.sessionId === sessionId); }

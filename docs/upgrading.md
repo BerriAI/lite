@@ -1,5 +1,7 @@
 # Upgrading to Speedrail
 
+For current packaged releases and `speedrail update`, see [installation and updates](installing.md). The instructions below migrate the older Lite name and source installation.
+
 The coding agent is now **Speedrail**. Its package is `@litellm/speedrail`, its command is `speedrail`, and its repository is [BerriAI/speedrail](https://github.com/BerriAI/speedrail). The separate LiteLLM gateway-management CLI keeps its own `lite` command.
 
 ## Keep existing sessions and preferences

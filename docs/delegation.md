@@ -6,7 +6,7 @@ A research task lets the main agent delegate a focused question to a separate mo
 
 1. Ask the main agent to delegate a specific inspection: for example, find the modules responsible for configuration and summarize their behavior.
 2. In ask mode, review the `task` launch request and choose Allow once, Always allow, or Deny. Plan mode does not automatically exempt task launches from approval. Automatic approval or a matching remembered task grant authorizes the launch, not additional researcher tools.
-3. The **Research task** card shows the description and status. Choose **Open transcript** to inspect the separate conversation, including actual read/search results and streamed progress.
+3. The **Research task** card shows the description and status. Expand the card to inspect its inline conversation, including actual read/search results and streamed progress.
 4. The parent waits for a bounded report before continuing. Its conversation records one task result. **Cancel task** stops that researcher; **Stop generation** stops the parent and its researcher.
 
 Viewing a transcript does not launch, resume, or replay a task. Closing the transcript leaves the research running. You can keep an unrelated composer draft or queue a separate follow-up while it works.
@@ -23,7 +23,7 @@ Read-only here describes the available tools, not an operating-system sandbox. W
 
 ## Cancellation and failure
 
-A parent turn can launch at most four researchers, one at a time. At most four researchers run across the app. Each child is limited to 120 seconds; the parent turn has a shared 300-second research budget. There is no model-step ceiling. Context can compact automatically within a research turn. Prompts are limited to 16 KiB, reports to 32 KiB, and child transcripts to 4 MiB. Exceeded limits produce a visible failure or timeout rather than an unbounded background task. Model steps count logical requests, not each physical retry after an explicit transient provider rejection.
+A parent turn can launch at most four researchers, one at a time. At most four researchers run across the app. A researcher stops after ten minutes without model or tool progress. Progress resets that timer; there is no cumulative wall-clock ceiling. There is no model-step ceiling. Context can compact automatically within a research turn. Prompts are limited to 16 KiB, reports to 32 KiB, and child transcripts to 4 MiB. Exceeded limits produce a visible failure or timeout rather than an unbounded background task. Model steps count logical requests, not each physical retry after an explicit transient provider rejection.
 
 Cancelling the child records its cancelled result once and lets the parent explain the outcome. Queued follow-ups are held for deliberate Resume. Cancelling the parent or shutting down Speedrail aborts the child and waits for its bookkeeping before the parent finishes. Already-sent provider requests may still incur usage; cancellation cannot undo a request already received by a remote service.
 

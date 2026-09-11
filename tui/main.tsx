@@ -93,7 +93,7 @@ async function main() {
 
   const root = createRoot(renderer);
   let activeWorkspace = workspace;
-  const render = () => root.render(<App key={activeWorkspace} controller={controller} config={config} storage={storage} theme={theme} themeName={themeName} router={router} onQuit={() => quit(0)} />);
+  const render = () => root.render(<App key={activeWorkspace} controller={controller} config={config} storage={storage} theme={theme} themeName={themeName} router={router} onQuit={code => quit(code ?? 0)} />);
   workspaceUnsubscribe = controller.subscribe(() => {
     const nextWorkspace = controller.detail?.session.workspace;
     if (!nextWorkspace || nextWorkspace === activeWorkspace) return;

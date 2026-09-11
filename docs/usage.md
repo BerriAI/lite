@@ -34,7 +34,7 @@ Speedrail compacts automatically as context approaches the model window, reservi
 
 Compaction can happen repeatedly within one long task. It preserves the latest user request, steering, and recent complete tool groups, summarizes earlier work, and archives the original history. Old tool results are pruned in the request first when that makes enough room. Compaction failures preserve the original history; consecutive retries cannot create an endless summary loop. A single oversized prompt, attachment, or tool group may still need a narrower read or a larger model. Summaries incur provider usage and can omit details.
 
-Driver and worker turns have no fixed model-step ceiling. Stop, explicit permission rules, repeated-failure guards, worker time budgets, and provider limits still apply. Memory is on by default: the agent can save local workspace notes automatically, and you can review, delete, or disable them in Settings. Explicit Ask and Deny rules for memory tools take precedence.
+Driver and worker turns have no fixed model-step ceiling. Stop, explicit permission rules, repeated-failure guards, worker stall detection, and provider limits still apply. Memory is on by default: the agent can save local workspace notes automatically, and you can review, delete, or disable them in Settings. Explicit Ask and Deny rules for memory tools take precedence.
 
 Every gateway request carries the root session ID in `x-litellm-session-id`, including worker, summary, and review calls. LiteLLM can group their spend across turns. Compaction keeps that ID; a new or forked session gets its own. Local usage records remain separate from conversation history. See [Context management and harness comparison](context-management.md) for verified defaults and differences.
 

@@ -236,6 +236,8 @@ export class TerminalManager {
     entry.resolveStopped();
   }
 
+  active() { return this.terminals.size > 0 || this.stopping.size > 0; }
+
   async close() {
     this.closed = true;
     for (const entry of this.terminals.values()) this.dispose(entry, 'Terminal service stopped.');
@@ -262,7 +264,7 @@ function trustedUpgrade(req: IncomingMessage) {
 }
 
 /** Mount on the same HTTP server as the API. Call close() before closing Store during shutdown. */
-export function attachTerminals(server: Server, store: Store): { close(): Promise<void> } {
+export function attachTerminals(server: Server, store: Store, stopping: () => boolean = () => false): { close(): Promise<void>; active(): boolean } {
   const manager = new TerminalManager(store);
   const wss = new WebSocketServer({ noServer: true, maxPayload: TERMINAL_LIMITS.messageBytes, perMessageDeflate: false, clientTracking: true });
   let closing: Promise<void> | undefined;
@@ -274,6 +276,7 @@ export function attachTerminals(server: Server, store: Store): { close(): Promis
   const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     // Leave unrelated upgrades (e.g. development HMR) to their own listeners.
     if (!req.url?.startsWith('/api/')) return;
+    if (stopping()) { reject(socket, 503); return; }
     if (!trustedUpgrade(req)) { reject(socket, 403); return; }
     const match = /^\/api\/sessions\/([a-zA-Z0-9_-]{1,128})\/terminal$/.exec(req.url);
     if (!match) { reject(socket, 400); return; }
@@ -303,5 +306,5 @@ export function attachTerminals(server: Server, store: Store): { close(): Promis
   const onSignal = () => { void close(); };
   server.on('upgrade', upgrade); server.once('close', onClose);
   process.once('SIGTERM', onSignal); process.once('SIGINT', onSignal);
-  return { close };
+  return { close, active: () => manager.active() };
 }

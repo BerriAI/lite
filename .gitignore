@@ -12,3 +12,4 @@ playwright-report/
 *.log
 WORKLOG.md
 test-results-tui/
+release-artifacts/

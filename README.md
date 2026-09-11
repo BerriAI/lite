@@ -6,30 +6,22 @@ Connect through LiteLLM, OpenAI-compatible APIs, native Anthropic, or ChatGPT de
 
 ## Quick start
 
-For the macOS launch, use **Node 26.4+** and npm. Git is needed to clone the repository and use Git tools; Bash is needed for shell tools.
-
-Check `node --version` first. If it is older than 26.4, install Node 26.4+ from [nodejs.org](https://nodejs.org/en/download), reopen your terminal, and check again. Installation stops on an unsupported version.
-
-Install once:
+Download the **macOS package** with its runtimes included—no Node or npm setup:
 
 ```sh
-git clone https://github.com/BerriAI/speedrail.git &&
-cd speedrail &&
-npm ci &&
-npm run build &&
-npm link
+curl -fsSL https://github.com/BerriAI/speedrail/releases/latest/download/install.sh | sh
 ```
 
-This installs the locked dependencies, builds Speedrail, and makes the command available. Bun and the native terminal packages are installed automatically by npm.
-
-Then open Speedrail from **the project you want to work on**:
+Then run it from **the project you want to work on**:
 
 ```sh
 cd /path/to/your/project
-speedrail
+~/.local/bin/speedrail
 ```
 
-That directory becomes your workspace. Speedrail starts its local backend automatically. Keep the cloned checkout in place: `npm link` points the command to it.
+Use `speedrail` once `~/.local/bin` is on your PATH; the installer prints the setup line if needed. Speedrail starts its local backend automatically. Updates appear in both UIs, or run `speedrail update`. Saved sessions and settings stay outside the application package.
+
+See [installation, updates, and the source-build alternative](docs/installing.md). Packages support Apple silicon and Intel Macs. Git and your project's development tools remain separate.
 
 Speedrail has its own command, separate from the [LiteLLM gateway CLI](https://docs.litellm.ai/docs/proxy/management_cli). If you used an earlier version of this agent, follow the [upgrade guide](docs/upgrading.md) to carry over saved sessions and configuration.
 

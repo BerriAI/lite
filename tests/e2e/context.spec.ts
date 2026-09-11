@@ -72,11 +72,11 @@ test('catalog context is an approximate request snapshot, survives reload, and n
   await expect(composer(page)).toHaveValue('This draft is not in the request estimate. '.repeat(100));
 });
 
-test('unknown context limits remain unknown and do not block a large latest message', async ({ page, request }) => {
+test('unknown context limits use a labeled 200K fallback and do not block a large latest message', async ({ page, request }) => {
   const session = await create(request, 'test-model'); await open(page, session); const before = await calls(request);
   const completed = await send(page, request, session, `LATEST_TASK\n${'Large latest task data. '.repeat(2500)}`);
-  const context = latestContext(completed); expect(context.limitSource).toBe('unknown'); expect(context.contextWindow).toBeUndefined();
-  expect(context.limitSource).toBe('unknown'); expect(await calls(request)).toBe(before + 1);
+  const context = latestContext(completed); expect(context.limitSource).toBe('default'); expect(context.contextWindow).toBe(200000);
+  expect(context.limitSource).toBe('default'); expect(await calls(request)).toBe(before + 1);
   expect(completed.messages.some(message => message.role === 'system')).toBe(false);
 });
 

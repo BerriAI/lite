@@ -22,6 +22,7 @@ import { FilePicker } from './files.js';
 import { attachmentFromFile, editDraft, openShell, suspendTerminal } from './terminalIO.js';
 import { Changes, WorkInspector, WorkerInspector } from './inspectors.js';
 import { conversationGroups, usageDetails } from './conversation.js';
+import { UpdateNotice } from './updates.js';
 import { Brand } from './brand.js';
 import { needsSetup } from '../shared/setup.js';
 import { Onboarding } from './onboarding.js';
@@ -89,7 +90,7 @@ function Composer({ controller, focused, onSubmit, onReference, commands }: { co
   </box>;
 }
 
-export interface AppProps { controller: TerminalController; config: TuiConfig; theme: Theme; themeName: string; storage: TerminalStorage; router: KeymapRouter; onQuit: () => void }
+export interface AppProps { controller: TerminalController; config: TuiConfig; theme: Theme; themeName: string; storage: TerminalStorage; router: KeymapRouter; onQuit: (code?: number) => void }
 export function App({ controller, config, theme: initialTheme, themeName: initialName, storage, router, onQuit }: AppProps) {
   const renderer = useRenderer(), [name, setName] = useState(initialName), [mode, setMode] = useState<'system' | 'light' | 'dark'>(storage.preferences().mode ?? 'system');
   const [terminalMode, setTerminalMode] = useState(renderer.themeMode ?? 'dark');
@@ -99,7 +100,7 @@ export function App({ controller, config, theme: initialTheme, themeName: initia
   return <ConfigContext.Provider value={config}><ThemeContext.Provider value={theme}><SessionApp controller={controller} router={router} onQuit={onQuit} chooseTheme={chooseTheme} themeName={name} themeMode={mode} /></ThemeContext.Provider></ConfigContext.Provider>;
 }
 
-function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeMode }: { controller: TerminalController; router: KeymapRouter; onQuit: () => void; chooseTheme: (name: string, mode: 'system' | 'light' | 'dark') => void; themeName: string; themeMode: 'system' | 'light' | 'dark' }) {
+function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeMode }: { controller: TerminalController; router: KeymapRouter; onQuit: (code?: number) => void; chooseTheme: (name: string, mode: 'system' | 'light' | 'dark') => void; themeName: string; themeMode: 'system' | 'light' | 'dark' }) {
   const theme = useTheme(), { width } = useTerminalDimensions(), renderer = useRenderer();
   const state = useSyncExternalStore(controller.subscribe, controller.getState);
   const config = useConfig(), selectedText = useRef(''), terminalFocused = useRef(true), previousStatus = useRef<string | undefined>(undefined);
@@ -268,6 +269,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       {state.draft.attachments.length > 0 && <text fg={toHex(theme.textMuted)}>{state.draft.attachments.map(item => `⌕ ${item.name}`).join('  ')}</text>}
       {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description}))]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
     </> : state.sync.phase === 'error' ? <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column"><text fg={toHex(theme.error)}>{state.sync.error}</text><Button onPress={() => run(() => controller.open(controller.sessionId))}>Reconnect</Button><Button onPress={palette}>Commands</Button></box> : <LoadingScreen />}
+    <UpdateNotice controller={controller} onRestart={() => { process.send?.({ type: 'speedrail-restart', sessionId: controller.sessionId }); onQuit(75); }} />
     {(state.notice || pendingLeader || state.sync.connection === 'reconnecting') && <text paddingLeft={1} fg={toHex(theme.warning)}>{terminalText(pendingLeader ? 'Leader…' : state.notice || 'Reconnecting… Showing the last known state.').slice(0, width - 2)}</text>}
     <box height={1} flexDirection="row" flexShrink={0}><Button onPress={palette}>Ctrl+P Commands</Button><Button onPress={permissions}>{detail?.session.permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}</Button><Button onPress={openSettings}>Settings</Button><text fg={toHex(theme.textMuted)}>{state.pending ? `${state.pending}…` : permission || question ? 'Choose an answer above · Esc Esc stop' : 'Enter send · Shift+Enter newline'}</text></box>
     {panel}

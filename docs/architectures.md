@@ -45,7 +45,7 @@ Approvals belong to the root UI and name the actual action and actor. Worker Pre
 
 Stop aborts active child requests and approvals and waits for owned background jobs to stop before settling their reports. A worker that returns with unfinished background commands is failed and those commands are stopped. Approval wait time is excluded from worker execution time limits. Steering is recorded before acknowledgement and sent to the driver, stopping active delegated work so the driver can apply the new instruction. A note that arrives too late remains visible for continuation; recovery restores acknowledged notes even if the process stopped before delivery.
 
-All Fusion workers share a per-root-turn budget: eight invocations and 30 cumulative active minutes. Each invocation is limited to ten active minutes, 16 MiB of active transcript, and a 64 KiB report. There is no model-step ceiling; long worker turns can compact their context. These limits bound repair and fallback activity. Read-only research has its separate, smaller budget.
+All Fusion workers share a per-root-turn budget: eight invocations. Each invocation allows 16 MiB of active transcript and a 64 KiB report. Workers stop after ten minutes without model or tool progress; approval waits pause that timer. There is no cumulative wall-clock ceiling. There is no model-step ceiling; long worker turns can compact their context. These limits bound repair and fallback activity. Read-only research has its separate, smaller budget.
 
 ## Isolated worker execution
 

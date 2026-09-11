@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 import './check-node.mjs';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { updateService, installed } from './updates.mjs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline/promises';
 import { ensureTuiServer } from './tui-server.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const version = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8')).version;
 const raw = process.argv.slice(2);
+if (raw.length === 1 && ['--version', '-v', 'version'].includes(raw[0])) { console.log(version); process.exit(0); }
 const optionArgs = raw.includes('--') ? raw.slice(0, raw.indexOf('--')) : raw;
 const help = ['help', '--help', '-h'].includes(raw[0]) || optionArgs.some(value => value === '--help' || value === '-h');
 const command = help ? 'help' : !raw.length || raw[0].startsWith('--') ? 'tui' : raw[0];
@@ -18,6 +21,7 @@ let base;
 const valueOptions = new Set(['--url', '--port', '--workspace', '--model', '--provider', '--session', '--profile', '--skills', '--days']);
 const booleanOptions = new Set(['--plan', '--build', '--auto', '--json', '--reindex']);
 const supported = {
+  update: new Set(['--url', '--json']),
   serve: new Set(['--port', '--workspace']),
   run: new Set(['--url', '--model', '--provider', '--session', '--profile', '--skills', '--plan', '--build', '--auto', '--json']),
   tui: new Set(['--url', '--workspace', '--model', '--provider', '--session', '--plan', '--build', '--auto']),
@@ -407,6 +411,8 @@ try {
   speedrail plugin list             List installed plugins
   speedrail plugin remove <name>    Uninstall exactly the plugin's recorded items
   speedrail usage               Provider-reported token usage by day and model
+  speedrail update              Install the latest macOS package and restart when idle
+  speedrail --version           Show the installed version
   speedrail doctor              Redacted diagnostics report (add --reindex to
                            rebuild the derived search index)
 
@@ -438,6 +444,22 @@ commands and edits; it is not a sandbox. Keys stay server-side.
 Questions require your answer in an interactive terminal or the Speedrail app.
 Non-interactive runs cancel unanswered questions, including with --auto.
 `);
+  else if (command === 'update') {
+    const installation = await installed(root);
+    if (!installation) throw new Error('This is a source checkout. Update it with Git and rebuild, or use the macOS package from https://github.com/BerriAI/speedrail/releases.');
+    if (!options.has('--json')) console.log('Checking for a Speedrail update…');
+    const updates = updateService({ root, version, directory: resolve(process.env.SPEEDRAIL_DATA_DIR || resolve(installation.home, '../speedrail-data')) });
+    const result = await updates.install();
+    let restarted = false;
+    {
+      try {
+        const health = await api('/health');
+        if (health.installation === installation.home && health.version !== result.installedVersion) { await api('/updates/restart', {}); restarted = true; }
+      } catch (error) { if (!options.has('--json') && !['ECONNREFUSED', 'ConnectionRefused'].includes(error.cause?.code)) console.log(terminalText(error.message)); }
+    }
+    if (options.has('--json')) console.log(JSON.stringify({ ...result, restarted }));
+    else console.log(restarted ? `Speedrail ${result.installedVersion} is installed. The local server is restarting. Reopen terminal clients to use the new version.` : result.restartRequired ? `Installed Speedrail ${result.installedVersion}. ${restarted ? 'The local server is restarting. Reopen terminal clients to use the new version.' : 'Run speedrail update again after active work finishes to restart the server, or open speedrail if it is stopped.'}` : `Speedrail ${version} is up to date.`);
+  }
   else if (command === 'serve') {
     const entry = existsSync(resolve(root, 'dist/server/index.js')) ? ['dist/server/index.js'] : ['--import', 'tsx', 'server/index.ts'];
     const child = spawn(process.execPath, entry.map(value => value.startsWith('dist/') || value.startsWith('server/') ? resolve(root, value) : value), {
@@ -459,10 +481,27 @@ Non-interactive runs cancel unanswered questions, including with --auto.
     // directory travels as --workspace.
     const started = await ensureTuiServer({ base, root, workspace: option('--workspace', process.cwd()), explicit: options.has('--url') || Boolean(process.env.SPEEDRAIL_URL) });
     if (started) process.stderr.write(`Started Speedrail at ${base}. The server stays available after you exit. Stop it with: kill ${started.pid}\n`);
-    const child = spawn(runtime, [...entry, ...forwarded], { cwd: root, stdio: 'inherit', env: process.env });
+    let restartSession;
+    let child = spawn(runtime, [...entry, ...forwarded], { cwd: root, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], env: process.env });
+    child.on('message', message => { if (message?.type === 'speedrail-restart' && typeof message.sessionId === 'string' && /^[a-zA-Z0-9_-]{1,128}$/.test(message.sessionId)) restartSession = message.sessionId; });
     child.on('error', error => { console.error(`Speedrail: ${terminalText(error.message)}`); process.exitCode = 1; });
-    child.on('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1); });
-    // The TUI owns the terminal; Ctrl+C reaches it in raw mode and SIGTERM forwards.
+    child.on('exit', async (code, signal) => {
+      if (code === 75 && restartSession) {
+        try {
+          const installation = await installed(root);
+          if (!installation) throw new Error('The server updated. Reopen Speedrail to reload the terminal client.');
+          const next = resolve(installation.home, 'current');
+          const deadline = Date.now() + 20000;
+          while (Date.now() < deadline) {
+            try { const health = await api('/health'); if (health.version === JSON.parse(readFileSync(resolve(next, 'package.json'), 'utf8')).version) break; } catch {}
+            await new Promise(done => setTimeout(done, 300));
+          }
+          child = spawn(resolve(next, 'runtime/node'), [resolve(next, 'bin/speedrail.mjs'), 'tui', '--url', base, '--session', restartSession], { stdio: 'inherit', env: process.env });
+          child.on('exit', code => { process.exitCode = code ?? 1; });
+          child.on('error', error => { console.error(terminalText(error.message)); process.exitCode = 1; });
+        } catch (error) { console.error(terminalText(error.message)); process.exitCode = 1; }
+      } else process.exitCode = code ?? (signal === 'SIGINT' ? 130 : signal === 'SIGTERM' ? 143 : 1);
+    });
     process.on('SIGTERM', () => child.kill('SIGTERM'));
   } else if (command === 'run') await runPrompt(positional[0]);
   else if (command === 'profiles') await listProfiles();

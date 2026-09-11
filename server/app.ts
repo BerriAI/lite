@@ -1,3 +1,5 @@
+import { VERSION } from '../shared/version.js';
+import type { UpdateStatus } from '../shared/updates.js';
 import { gatewayBaseUrl, needsSetup } from '../shared/setup.js';
 import { clientSurface } from '../shared/client.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
@@ -51,7 +53,7 @@ export interface AuthService {
   connected(providerId:string):boolean;
   disconnect(providerId:string):any;
 }
-export interface AppOptions { store?:Store; external?:ExternalTools; auth?:AuthService; }
+export interface AppOptions { store?:Store; external?:ExternalTools; auth?:AuthService; updates?: { installation?: string; status(force?:boolean):Promise<UpdateStatus>; install():Promise<UpdateStatus>; restart():Promise<{version:string}>; draining():boolean }; }
 
 export function createApp(options:AppOptions = {}) {
   const store=options.store || new Store(),bus=new EventBus(store),runner=new Runner(store,bus,options.external);
@@ -69,6 +71,7 @@ export function createApp(options:AppOptions = {}) {
   });
   app.use('/api/sessions/:id',(req,res,next)=>{if(runner.delegations.isChild(req.params.id))return res.status(req.method==='GET'||req.method==='HEAD'?404:409).json({error:'Research transcripts are read-only and available through their parent task.'});next();});
   app.use('/api',express.json({limit:'12mb'}));
+  app.use('/api',(req,res,next)=>{if(options.updates?.draining() && !['GET','HEAD'].includes(req.method))return res.status(503).json({error:'Speedrail is restarting. Your draft is preserved; try again when it reconnects.'});next();});
   const mcpConfigRevision=()=>options.external?.configRevision?.()??createHash('sha256').update(JSON.stringify(store.settings().mcpServers,(_key,value)=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))):value)).digest('hex');
   const mcpStatus=()=>({servers:options.external?.status?.()??[],configRevision:mcpConfigRevision()});
   const publicSettings=()=>{const s=store.publicSettings();return{...s,mcpConfigRevision:mcpConfigRevision(),providers:s.providers.map(p=>p.kind==='codex'?{...p,configured:options.auth?.connected(p.id)||false}:p)}};
@@ -81,7 +84,10 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/profiles/edit',async(req,res)=>{const root=await workspace(req.query.workspace),id=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).parse(req.query.id);res.json(await readEditableProfile(root,id));});
   app.post('/api/profiles/save',async(req,res)=>{const input=saveProjectProfileSchema.parse(req.body),root=await workspace(input.workspace);res.json(await saveProjectProfile(root,input));});
   app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
-  app.get('/api/health',(_req,res)=>res.json({ok:true,name:'speedrail',version:'0.1.0'}));
+  app.get('/api/health',(_req,res)=>res.json({ok:true,name:'speedrail',version:VERSION,...(options.updates?.installation?{installation:options.updates.installation,pid:process.pid}:{})}));
+  app.get('/api/updates',async(req,res)=>res.json(options.updates?await options.updates.status(req.query.check==='true'):{currentVersion:VERSION,available:false,packaged:false,restartRequired:false,releaseUrl:'https://github.com/BerriAI/speedrail/releases',command:'Update your source checkout and rebuild.'}));
+  app.post('/api/updates/install',async(_req,res)=>{if(!options.updates)throw httpError(409,'Packaged updates are unavailable on this server.');res.json(await options.updates.install());});
+  app.post('/api/updates/restart',async(_req,res)=>{if(!options.updates)throw httpError(409,'Packaged updates are unavailable on this server.');res.json(await options.updates.restart());});
   // 5.1 usage report. days is zod-clamped 1..90 (coerced from the query
   // string); the store clamps again so no other caller can widen the scan.
   // Token counts are provider-reported; no cost is computed (no rate card in v1).

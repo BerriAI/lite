@@ -113,7 +113,7 @@ try {
   await waitFor(() => screen().includes('Save profile'), 'profile ready to save');
   terminal.write('\x1b[F\r');
   await waitFor(async () => (await api(`/profiles?workspace=${encodeURIComponent(settings.workspace)}`)).profiles.some(profile => profile.id === 'terminal-reviewer'), 'profile saved through TUI');
-  await waitFor(() => screen().includes('Terminal reviewer'), 'profile catalog refreshed');
+  await waitFor(() => screen().includes('● No profile') && screen().includes('○ Terminal reviewer'), 'profile catalog refreshed');
   terminal.write('\x1b[H\x1b[B\r');
   await waitFor(() => screen().includes('Edit Terminal reviewer'), 'profile selected');
   terminal.write('\x1b[H\x1b[B\x1b[B\x1b[B\x1b[B\r');

@@ -1,3 +1,4 @@
+import { progressTimeout } from './progress-timeout.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { randomUUID } from 'node:crypto';
 import { validContextWindow } from './budget.js';
@@ -36,7 +37,7 @@ export class ProviderError extends Error {
 export interface CodexCredential { accessToken: string; accountId?: string; residency?: string }
 let codexCredentials: ((providerId: string) => Promise<CodexCredential>) | undefined;
 export function configureCodexAuth(resolve: (providerId: string) => Promise<CodexCredential>) { codexCredentials = resolve; }
-const REQUEST_TIMEOUT_MS = 5 * 60_000;
+export const PROVIDER_IDLE_TIMEOUT_MS = 10 * 60_000;
 const MAX_EVENT_BYTES = 4 * 1024 * 1024;
 const CODEX_BASE = 'https://chatgpt.com/backend-api/codex';
 
@@ -438,7 +439,10 @@ function codexHeaders(credential: CodexCredential): Record<string, string> {
 }
 export async function* streamCompletion(options: CompletionOptions): AsyncGenerator<StreamChunk> {
   const { provider, model, messages, system, tools } = options;
-  const signal = AbortSignal.any([options.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+  const stalled = new AbortController();
+  const watchdog = progressTimeout(PROVIDER_IDLE_TIMEOUT_MS, () => false, () => stalled.abort(new ProviderError('No model progress for 10 minutes. The request was stopped; partial work is preserved.')));
+  const signal = AbortSignal.any([options.signal, stalled.signal]);
+  try {
   signal.throwIfAborted();
   if (!model) throw new ProviderError('Select a model before sending a message.');
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
@@ -480,9 +484,9 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     await response.body?.cancel();
     throw new ProviderError('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
   }
-  if (provider.kind === 'anthropic') yield* anthropicStream(response, signal, { providerId: provider.id, model });
-  else if (provider.kind === 'codex') yield* responsesStream(response, signal, { providerId: provider.id, model });
-  else yield* chatStream(response, signal, { providerId: provider.id, model });
+  const chunks = provider.kind === 'anthropic' ? anthropicStream(response, signal, { providerId: provider.id, model }) : provider.kind === 'codex' ? responsesStream(response, signal, { providerId: provider.id, model }) : chatStream(response, signal, { providerId: provider.id, model });
+  for await (const chunk of chunks) { watchdog.progress(); yield chunk; }
+  } finally { watchdog.close(); }
 }
 /** Bounded reviewer (4.2): ONE tool-less, history-less completion — a fixed
  * review system text plus a single user message — under a hard timeout, that

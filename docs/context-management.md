@@ -6,10 +6,11 @@ Speedrail keeps a task running across multiple context windows. Tool results are
 
 | Control | Speedrail behavior |
 | --- | --- |
-| Model steps | No fixed ceiling for the driver, sidekick, workers, experts, or researchers. Cancellation, repeated-failure guards, worker time budgets, and provider limits still apply. |
+| Model steps | No fixed ceiling for the driver, sidekick, workers, experts, or researchers. Cancellation, repeated-failure guards, worker stall detection, and provider limits still apply. |
 | Automatic compaction | On. Uses an exact-model context override, then discovered catalog limits, then a labeled 200,000-token planning fallback. Reserves output space before triggering. |
 | Input measurement | UTF-8 text estimate, corrected conservatively with the last matching provider-reported input count. Corrections do not cross provider/configuration changes or history rewrites. Images and opaque state remain uncertain. |
 | Long active turns | Preserve the original user message, delivered steering, and a recent complete continuation. Summarize earlier completed work within the same turn. Successful progress permits another compaction later. |
+| Stalled models and workers | Ten minutes without model/tool progress. New progress resets the timer; worker approval waits pause it. There is no total-duration cap for an actively progressing provider response or worker. |
 | Recovery | Prune older tool results first when useful. A rejected request can try pruning and summarization; an unsuccessful summary does not loop indefinitely. Partial provider responses are never automatically replayed. |
 | File reads | Default and maximum 2,000 lines per call, 256 KiB of selected content, and a 32 KiB UTF-8 preview with a paging receipt when needed. Later line ranges can start beyond the first 256 KiB of a file. Scanning to an offset is bounded to 32 MiB and five seconds. |
 | Bash results | 30,000 characters in the preview, with a stored-output receipt when needed. The process collector has its own byte limit. |

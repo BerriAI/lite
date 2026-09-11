@@ -1028,3 +1028,13 @@ fieldset.model-picker { padding: 22px 24px; gap: 22px; overflow: visible; }
 .setup-architecture { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 16px; align-items: center; color: var(--secondary); font-size: 12px; }
 .setup-architecture select { width: 100%; border: 1px solid var(--border-strong); border-radius: 7px; padding: 10px 12px; background: var(--surface); color: var(--text); font: inherit; }
 .setup-links { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+
+.updates { position: relative; }
+.update-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-left: auto; }
+.update-details { padding: 12px; margin: 4px 0 8px; border: 1px solid var(--border); border-radius: 10px; font-size: 12px; }
+.update-heading, .update-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.update-heading { justify-content: space-between; }
+.update-details p { color: var(--muted); margin: 8px 0; line-height: 1.5; }
+.update-details [role="alert"] { color: var(--red); }
+.update-actions .button { padding: 5px 8px; font-size: 12px; }
+.update-actions a { color: var(--muted); }

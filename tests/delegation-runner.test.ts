@@ -82,8 +82,8 @@ describe('foreground bounded researcher Runner/API integration',()=>{
   });
 
   it('a child deadline settles timed_out without killing parent explanation',async()=>{
-    const original=DELEGATION_LIMITS.childMs;(DELEGATION_LIMITS as {childMs:number}).childMs=30;
-    try{respond=(body,res)=>{if(child(body))return;else if(body.messages.at(-1)?.role==='tool')text(res);else task(res);};const s=await create();await run(s.id);expect(runner.delegations.list(s.id)[0].status).toBe('timed_out');expect(store.messages(s.id).at(-1)?.content).toBe('Root done');}finally{(DELEGATION_LIMITS as {childMs:number}).childMs=original;}
+    const original=DELEGATION_LIMITS.idleMs;(DELEGATION_LIMITS as {idleMs:number}).idleMs=30;
+    try{respond=(body,res)=>{if(child(body))return;else if(body.messages.at(-1)?.role==='tool')text(res);else task(res);};const s=await create();await run(s.id);expect(runner.delegations.list(s.id)[0].status).toBe('timed_out');expect(store.messages(s.id).at(-1)?.content).toBe('Root done');}finally{(DELEGATION_LIMITS as {idleMs:number}).idleMs=original;}
   });
 
   it('parent undo/redo retain exact saved report and never rerun the child',async()=>{
