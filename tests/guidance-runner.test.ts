@@ -102,6 +102,33 @@ describe('storm breaker, no-progress guidance and mid-turn steering', () => {
     expect(store.session(session.id).status).toBe('idle');
   });
 
+  it.each(['bash_output', 'wait'])('allows repeated blocking %s calls while a real command is running', async name => {
+    const session = await create();
+    const job = runner.jobs.start(session.id, 'sleep 30', directory);
+    respond = (body, res) => {
+      const results = body.messages.filter((message: any) => message.role === 'tool').length;
+      if (results < 5) return tools(res, [{ name, args: name === 'bash_output' ? { job_id: job.id, wait_ms: 1000 } : { job_ids: [job.id], timeout_ms: 1000 } }]);
+      return text(res, 'Command is still running.');
+    };
+    try {
+      await run(session.id);
+      const records = store.messages(session.id).flatMap(message => message.toolCalls ?? []);
+      expect(records).toHaveLength(5);
+      expect(records.every(call => call.status === 'completed' && call.output?.includes('running'))).toBe(true);
+      expect(store.messages(session.id).at(-1)?.content).toBe('Command is still running.');
+    } finally { await runner.jobs.kill(session.id, job.id); }
+  });
+
+  it('still stops repeated polling of a job that is not running', async () => {
+    const session = await create();
+    respond = (_body, res) => tools(res, [{ name: 'bash_output', args: { job_id: 'missing-job', wait_ms: 30000 } }]);
+    await run(session.id);
+    const records = store.messages(session.id).flatMap(message => message.toolCalls ?? []);
+    expect(records).toHaveLength(3);
+    expect(records.at(-1)?.status).toBe('denied');
+    expect(store.messages(session.id).at(-1)?.content).toContain('same tools three times');
+  });
+
   it('rejects steering while idle and accepts it during a run, delivering exactly once', async () => {
     const session = await create();
     expect((await api(`/sessions/${session.id}/steer`, { content: 'Focus on the README.' })).status).toBe(409);

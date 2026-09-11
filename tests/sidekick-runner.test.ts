@@ -202,6 +202,24 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(store.messages(id).flatMap(m=>m.toolCalls??[]).every(t=>t.status==='completed')).toBe(true);
   });
 
+  it('continues a Sidekick cancelled by steering using its finished invocation ID',async()=>{
+    let id='', held:ServerResponse|undefined;
+    respond=(body,res)=>{
+      const tasks=runner.delegations.list(id);
+      if(side(body)){if(tasks.length===1)held=res;else text(res,'Completed the updated assignment.');return;}
+      if(!tasks.length)tools(res,[{name:'sidekick',args:{description:'Initial inspection',prompt:'Inspect the project.'}}]);
+      else if(tasks.length===1)tools(res,[{name:'sidekick',args:{description:'Updated inspection',prompt:'Follow the new instruction.',repairOf:tasks[0].id}}]);
+      else text(res,'Finished the updated task.');
+    };
+    const session=await create();id=session.id;runner.start(id,'Inspect this project');await until(()=>Boolean(held));
+    runner.steer(id,'Focus on the CLI.');await runner.whenIdle();
+    expect(runner.delegations.list(id).map(task=>task.status)).toEqual(['cancelled','completed']);
+    const calls=store.messages(id).flatMap(message=>message.toolCalls??[]);
+    expect(calls.at(-1)).toMatchObject({status:'completed',args:{repairOf:runner.delegations.list(id)[0].id}});
+    expect(calls.some(call=>call.output?.includes('repairOf must name'))).toBe(false);
+    expect(store.messages(id).at(-1)?.content).toBe('Finished the updated task.');
+  });
+
   it('rejects an unknown repairOf without making a later valid assignment fail', async()=>{
     respond=(body,res)=>{
       if(side(body)){text(res,'Completed the assignment.');return;}

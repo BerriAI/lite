@@ -36,6 +36,26 @@ describe('fine-grained permission rules Runner/API integration',()=>{
   });
   afterEach(async()=>{runner.stopAll();await runner.whenIdle();await close(server);await close(provider);store.close();await rm(directory,{recursive:true,force:true});});
 
+  it('updates the session task list without an approval in Ask first mode',async()=>{
+    respond=oneCallThenText('todo_write',{todos:[{id:'inspect',content:'Inspect the project',status:'in_progress'}]});
+    const s=await create();runner.start(s.id,'Plan the task');
+    await until(()=>toolCalls(s.id)[0]?.status==='completed');await runner.whenIdle();
+    expect(prompts(s.id)).toEqual([]);
+    expect(store.todos(s.id)).toEqual([{id:'inspect',content:'Inspect the project',status:'in_progress'}]);
+  });
+
+  it.each(['ask','deny'] as const)('still respects an explicit %s rule for task-list updates',async decision=>{
+    store.saveSettings({permissionRules:rules([{tool:'todo_write',decision}])});
+    respond=oneCallThenText('todo_write',{todos:[{id:'inspect',content:'Inspect the project',status:'in_progress'}]});
+    const s=await create({permissionMode:'auto'});runner.start(s.id,'Plan the task');
+    if(decision==='ask'){
+      await until(()=>runner.permissions(s.id).length===1);
+      runner.decide(s.id,runner.permissions(s.id)[0].id,'deny');
+    }
+    await runner.whenIdle();
+    expect(toolCalls(s.id)[0].status).toBe('denied');expect(store.todos(s.id)).toEqual([]);
+  });
+
   it('an app allow rule skips the prompt in ask mode and records the decisive match',async()=>{
     store.saveSettings({permissionRules:rules([{tool:'write_file',decision:'allow'}])});
     respond=oneCallThenText('write_file',{path:'hello.txt',content:'hi'});

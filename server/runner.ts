@@ -1176,7 +1176,7 @@ export class Runner {
     if(match?.decision==='deny')return false;
     const scope = createHash('sha256').update(canonical({workspace:ownerSession.workspace,...(access?.external?{externalPath:access.resolvedPath}:{}),mcp:subject.startsWith('mcp_') ? run.external!.scope(subject) : undefined})).digest('hex');
     if (match?.decision!=='ask') {
-      if ((run.policy?.memory && !run.child && ['memory_remember','memory_forget'].includes(subject)) || (localReadOnly && !access?.external) || session.permissionMode === 'auto' || this.store.toolGrants(ownerSession.id).some(g => g.tool === subject && g.scope === scope) || match?.decision==='allow') return true;
+      if (subject === 'todo_write' || (run.policy?.memory && !run.child && ['memory_remember','memory_forget'].includes(subject)) || (localReadOnly && !access?.external) || session.permissionMode === 'auto' || this.store.toolGrants(ownerSession.id).some(g => g.tool === subject && g.scope === scope) || match?.decision==='allow') return true;
     }
     if (run.controller.signal.aborted) return false;
     const base = access?.external ? `${subject === 'bash' ? 'Run this command with an external working directory' : localReadOnly ? 'Read outside this session’s workspace' : 'Modify a file outside this session’s workspace'}: ${access.resolvedPath}${run.child ? ` (requested by the ${run.child.role ?? 'researcher'})` : ''}.${!localReadOnly ? ' External changes are not covered by workspace Undo.' : ''}` : subject === 'task' ? 'Launch one bounded read-only researcher. It cannot modify files or delegate.' : subject === 'sidekick' ? 'Hand this task to the persistent sidekick. It can modify files and run commands, each behind your normal approval.' : subject === 'delegate' ? 'Start a fresh worker for this assignment. Its file edits and commands use this session’s permissions.' : subject === 'bash' ? `Run this command in your workspace${run.child?.role ? ` (requested by the ${run.child.role})` : ''}` : subject.startsWith('mcp_') ? 'Call this connected tool' : run.child?.role ? `Allow this ${run.child.role} action in your workspace` : 'Allow this action in your workspace';
@@ -1574,8 +1574,13 @@ export class Runner {
         this.persist(message);
         throw new Error(message.error);
       }
-      const batch = canonical(message.toolCalls.map(call => ({name:call.name,args:call.args})).sort((a,b) => canonical(a).localeCompare(canonical(b))));
-      repeatedBatches = batch === previousBatch ? repeatedBatches + 1 : 1;
+      const waitingCalls = new Set(message.toolCalls.filter(call => {
+        const ids = call.name === 'bash_output' && typeof call.args.wait_ms === 'number' && call.args.wait_ms >= 1000 ? [call.args.job_id]
+          : call.name === 'wait' && (call.args.timeout_ms === undefined || typeof call.args.timeout_ms === 'number' && call.args.timeout_ms >= 1000) ? call.args.job_ids : undefined;
+        return Array.isArray(ids) && ids.some(jobId => typeof jobId === 'string' && this.jobs.get(id, jobId)?.status === 'running');
+      }).map(call => call.id));
+      const batch = canonical(message.toolCalls.filter(call => !waitingCalls.has(call.id)).map(call => ({name:call.name,args:call.args})).sort((a,b) => canonical(a).localeCompare(canonical(b))));
+      repeatedBatches = waitingCalls.size === message.toolCalls.length ? 0 : batch === previousBatch ? repeatedBatches + 1 : 1;
       previousBatch = batch;
       // Repeated identical actions can spend tokens or mutate twice without progress.
       const stalled = repeatedBatches >= 3;
@@ -1650,7 +1655,7 @@ export class Runner {
             const input=sidekickTaskInput(call.args);
             if(call.args.repairOf!==undefined) {
               const prior=typeof call.args.repairOf==='string'?this.delegations.list(id).find(task=>task.id===call.args.repairOf&&task.parentTurnId===run.turnId):undefined;
-              if(!prior||!(prior.status==='completed'||run.unresolvedWorkers?.has(prior.id)))throw conflict('repairOf must name a finished worker invocation from this turn. Omit it for a new assignment.');
+              if(!prior||prior.status==='running')throw conflict('repairOf must name a finished worker invocation from this turn. Omit it for a new assignment.');
             }
             if(!(await this.approve(session,call,run))) { call.status='denied';output=call.ruleMatch?.decision==='deny'?this.ruleDenial(call.ruleMatch):'The user denied or cancelled the sidekick task. Do not retry it or bypass this decision.'; }
             else if (!(await preToolVeto())) {
@@ -1807,7 +1812,7 @@ export class Runner {
       // call statuses above, so they count here too). Repeats and failures are
       // evidence-free; success-on-new resets the counter entirely.
       {
-        const progress=message.toolCalls.some(call=>call.status==='completed'&&!seenCalls.has(signature(call)));
+        const progress=message.toolCalls.some(call=>call.status==='completed'&&(!seenCalls.has(signature(call))||waitingCalls.has(call.id)));
         for(const call of message.toolCalls)seenCalls.add(signature(call));
         run.deadRounds=progress?0:(run.deadRounds??0)+1;
         // Hard stop after 4 dead rounds: end the turn honestly, preserving the

@@ -10,6 +10,8 @@ Use **Ask first** to review actions, or **Allow all tools** to run without routi
 
 Explicit ask rules still require approval each time, so those prompts offer **Allow once** and explain the rule instead of offering a remembered approval that cannot apply. Explicit deny rules, Plan mode, and profile restrictions remain in effect.
 
+Updating an agent's session task list does not require a routine approval in Build mode. Explicit ask or deny rules for `todo_write` still apply; this does not grant permission to edit project files or run commands.
+
 ## Where rules live
 
 - **App rules** — Settings → Permissions. Stored with your other app settings.
