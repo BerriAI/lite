@@ -81,6 +81,8 @@ Approvals show who is asking, the target file or command, and a readable preview
 
 ## Conversation and review
 
+`/new`, `/clear`, and `/reset` are aliases: each starts a new session with empty conversation context in the same workspace. Project instructions, saved memory, and workspace preferences remain available. The previous conversation stays saved; use `/sessions` to reopen it. Use `/compact` to summarize context while continuing the current conversation.
+
 The current task list stays at the top right in terminals at least 112 columns wide, with separate Driver and worker progress. Narrow terminals keep the current task and completion count below the header; `/todos` shows the full task lists. Completed tasks remain visible.
 
 While a model is reasoning, one “Thinking…” indicator appears. Its finished reasoning appears in muted text before the response. Live tool calls appear directly in order and collapse into a work log at the next text response. Scrolling up pauses automatic following; **Ctrl+G** or **Latest** returns to the live output.
