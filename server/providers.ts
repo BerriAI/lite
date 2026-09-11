@@ -359,6 +359,23 @@ function chatMessages(messages: ProviderMessage[], providerId: string, model: st
       ...(Array.isArray(data.reasoning_items) ? { reasoning_items: data.reasoning_items } : {}) };
   });
 }
+function markTrailingCacheBreakpoint(messages: any[], format: 'anthropic' | 'chat'): any[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (format === 'chat' && message.role === 'tool') {
+      // LiteLLM moves a tool-message marker onto the outer Anthropic tool_result.
+      return messages.with(i, { ...message, cache_control: { type: 'ephemeral' } });
+    }
+    if (message.role !== 'user') continue;
+    const content = typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content;
+    if (!Array.isArray(content)) continue;
+    const index = content.findLastIndex(part => (part.type === 'text' && Boolean(part.text)) ||
+      (format === 'anthropic' ? ['image', 'tool_result'].includes(part.type) : part.type === 'image_url'));
+    if (index < 0) continue;
+    return messages.with(i, { ...message, content: content.with(index, { ...content[index], cache_control: { type: 'ephemeral' } }) });
+  }
+  return messages;
+}
 function codexInput(messages: ProviderMessage[], providerId: string, model: string): any[] {
   const input: any[] = [];
   for (const message of messages) {
@@ -452,11 +469,8 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     if (!provider.apiKey) throw new ProviderError('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
     headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
     const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
-    // Anthropic prompt caching is opt-in per request: breakpoints on the last
-    // tool schema and the system block mark the stable prefix as cacheable.
-    // Harmless when the provider or gateway has caching disabled.
     const anthropicTools = tools?.length ? tools.map((t, index) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters, ...(index === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) : undefined;
-    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: 8192, stream: true, messages: anthropicMessages(messages, provider.id, model),
+    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: 8192, stream: true, messages: markTrailingCacheBreakpoint(anthropicMessages(messages, provider.id, model), 'anthropic'),
       ...(instructions ? { system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }] } : {}),
       ...(anthropicTools ? { tools: anthropicTools } : {}) };
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
@@ -470,12 +484,9 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     url = `${CODEX_BASE}/responses`;
   } else {
     if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
-    // Anthropic-family models behind an OpenAI-compatible gateway need the same
-    // explicit cache breakpoint, carried in a content part per the gateway
-    // convention. Scoped to models that require opt-in caching; other models
-    // keep plain string content so strict endpoints see an unmodified request.
-    const optInCache = /\bclaude\b|anthropic/i.test(model);
-    body = { model, ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}), messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...chatMessages(messages, provider.id, model)], stream: true,
+    const optInCache = /\bclaude\b|anthropic/i.test(model) || provider.anthropicCacheModels?.includes(model);
+    const history = chatMessages(messages, provider.id, model);
+    body = { model, ...(options.reasoningEffort ? { reasoning_effort: options.reasoningEffort } : {}), messages: [...(system ? [{ role: 'system', content: optInCache ? [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }] : system }] : []), ...(optInCache ? markTrailingCacheBreakpoint(history, 'chat') : history)], stream: true,
       stream_options: { include_usage: true }, ...(tools?.length ? { tools, tool_choice: 'auto' } : {}) };
     url = endpoint(provider.baseUrl, 'chat/completions');
   }

@@ -32,7 +32,7 @@ function providerIdentity(provider: Provider): string {
   return createHash('sha256').update(JSON.stringify({
     id: provider.id, name: provider.name, kind: provider.kind, baseUrl: provider.baseUrl,
     apiKey: provider.apiKey, models: provider.models,
-    contextWindows: provider.contextWindows ? Object.entries(provider.contextWindows).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) : undefined,
+    anthropicCacheModels: provider.anthropicCacheModels, contextWindows: provider.contextWindows ? Object.entries(provider.contextWindows).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) : undefined,
   })).digest('hex');
 }
 

@@ -64,6 +64,15 @@ try{
   terminal.write('\x1b[F\r');await waitFor(()=>!screen().includes('Choose your models · 3 of 3'),'setup saved');
   assert.equal((await api('/workspace-preferences?workspace='+encodeURIComponent(settings.workspace))).setupComplete,true);
   await save('03-start');
+  terminal.write('/settings\r');await waitFor(()=>screen().includes('API connections and ChatGPT sign-in'),'settings menu');
+  terminal.write('\x1b[H\r');await waitFor(()=>screen().includes('+ Add provider'),'providers menu');
+  terminal.write('\x1b[H\x1b[B\r');await waitFor(()=>screen().includes('Claude caching aliases:'),'provider editor');
+  terminal.write('\x1b[F\x1b[A\r');await waitFor(()=>screen().includes('Claude model aliases (one per line)'),'cache aliases editor');
+  terminal.write('team/coding\nreader-alias');await waitFor(()=>screen().includes('reader-alias'),'cache aliases typed');terminal.write('\x13');
+  await waitFor(()=>screen().includes('Claude caching aliases: team/coding, reader-alias'),'cache aliases returned');await save('03-cache-aliases');
+  terminal.write('\x1b[F\r');await waitFor(async()=>JSON.stringify((await api('/settings')).providers[0].anthropicCacheModels)===JSON.stringify(['team/coding','reader-alias']),'cache aliases persisted');
+  await waitFor(()=>screen().includes('+ Add provider'),'provider save finished');terminal.write('\x1b');await waitFor(()=>screen().includes('API connections and ChatGPT sign-in'),'back to settings');terminal.write('\x1b');
+  await waitFor(()=>!screen().includes('API connections and ChatGPT sign-in'),'settings closed');
   const configured=await api(`/sessions/${session.id}`);await api(`/sessions/${session.id}`,{architecture:null,expectedConfigRevision:configured.session.configRevision},'PATCH');
   terminal.write('create fixture\r');await waitFor(()=>screen().includes('Permission requested'),'prompt');await save('04-permissions');terminal.write('4');
   await waitFor(async()=>{const d=await api(`/sessions/${session.id}`);return d.session.status==='idle'&&d.session.permissionMode==='auto';},'allow all while waiting');

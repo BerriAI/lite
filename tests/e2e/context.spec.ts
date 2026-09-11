@@ -203,3 +203,27 @@ test('mobile conversation omits context diagnostics and keeps the composer usabl
   await page.screenshot({ path: 'test-results/context-mobile.png', fullPage: true, animations: 'disabled' });
   await expect(composer(page)).toHaveValue('Keep the mobile composer usable.');
 });
+
+
+test('Claude cache aliases save and reload in provider settings without changing model discovery', async ({ page, request }) => {
+  const session = await create(request); await open(page, session);
+  const edit = async () => {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Settings', exact: true });
+    await dialog.getByRole('button', { name: provider.name, exact: true }).click();
+    await dialog.locator('summary').filter({ hasText: 'Claude caching aliases' }).click();
+    return dialog;
+  };
+  let dialog = await edit();
+  await dialog.getByRole('textbox', { name: 'Claude model aliases', exact: true }).fill(' team/coding, reader-alias, ');
+  await dialog.getByRole('button', { name: 'Save settings', exact: true }).click(); await expect(dialog).toHaveCount(0);
+  let saved: Settings = await (await request.get('/api/settings')).json();
+  expect(saved.providers.find(item => item.id === provider.id)?.anthropicCacheModels).toEqual(['team/coding', 'reader-alias']);
+  await page.reload(); dialog = await edit();
+  await expect(dialog.getByRole('textbox', { name: 'Claude model aliases', exact: true })).toHaveValue('team/coding, reader-alias');
+  await page.screenshot({ path: 'test-results/claude-cache-aliases.png', animations: 'disabled' });
+  await dialog.getByRole('textbox', { name: 'Claude model aliases', exact: true }).fill('');
+  await dialog.getByRole('button', { name: 'Save settings', exact: true }).click(); await expect(dialog).toHaveCount(0);
+  saved = await (await request.get('/api/settings')).json();
+  expect(saved.providers.find(item => item.id === provider.id)?.anthropicCacheModels).toEqual([]);
+});

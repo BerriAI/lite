@@ -47,8 +47,9 @@ export function Providers({ controller, onClose }: { controller: TerminalControl
   };
   if (editing && view === 'key') return <SecretPrompt title="Provider API key" onClose={back} onSave={apiKey => { setEditing({ ...editing, apiKey }); back(); }} />;
   if (editing && view.startsWith('field:')) {
-    const field = view.slice(6) as 'name' | 'baseUrl' | 'id' | 'models';
-    return <TextPrompt title={field === 'baseUrl' ? 'API base URL' : field === 'models' ? 'Model IDs (one per line)' : field === 'id' ? 'Provider ID' : 'Provider name'} value={field === 'models' ? editing.models?.join('\n') : editing[field]} multiline={field === 'models'} onClose={back} onSave={value => { setEditing({ ...editing, [field]: field === 'models' ? value.split(/\n/).map(item => item.trim()).filter(Boolean) : value.trim() }); back(); }} />;
+    const field = view.slice(6) as 'name' | 'baseUrl' | 'id' | 'models' | 'anthropicCacheModels';
+    const list = field === 'models' || field === 'anthropicCacheModels';
+    return <TextPrompt title={field === 'baseUrl' ? 'API base URL' : field === 'anthropicCacheModels' ? 'Claude model aliases (one per line)' : field === 'models' ? 'Model IDs (one per line)' : field === 'id' ? 'Provider ID' : 'Provider name'} value={list ? editing[field]?.join('\n') : editing[field]} multiline={list} onClose={back} onSave={value => { setEditing({ ...editing, [field]: list ? value.split(/\n/).map(item => item.trim()).filter(Boolean) : value.trim() }); back(); }} />;
   }
   if (editing && view === 'kind') return <Menu title="Provider type" onClose={back} search={false} items={[
     { id: 'openai', label: 'OpenAI compatible', description: 'LiteLLM, OpenAI, or another compatible API', action: () => { setEditing({ ...editing, kind: 'openai' }); back(); } },
@@ -60,6 +61,7 @@ export function Providers({ controller, onClose }: { controller: TerminalControl
     return <Menu title={isNew ? 'Add provider' : editing.name} search={false} onClose={() => { setEditing(null); back(); }} footer={feedback || state.notice || '↑↓ choose · Enter edit · Esc back'} items={[
       { id: 'kind', label: `Type: ${editing.kind}`, action: () => setView('kind') }, ...fields,
       ...(editing.kind !== 'codex' ? [{ id: 'key', label: `API key: ${editing.apiKey && editing.apiKey !== '••••••••' ? 'Updated' : editing.configured ? 'Configured' : 'Not set'}`, action: () => setView('key') }] : []),
+      ...(editing.kind === 'openai' ? [{ id: 'cache-aliases', label: `Claude caching aliases: ${editing.anthropicCacheModels?.join(', ') || 'Automatic by model name'}`, description: 'Exact Claude gateway IDs. Claude/Anthropic names are automatic.', action: () => setView('field:anthropicCacheModels') }] : []),
       { id: 'save', label: 'Save provider', separatorBefore: true, disabled: Boolean(state.pending), action: () => { void run(() => save(editing)); } },
     ]} />;
   }

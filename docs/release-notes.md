@@ -1,7 +1,8 @@
-# Litespeed 0.1.1
+# Litespeed 0.1.2
 
 The first self-contained macOS release supports Apple silicon and Intel Macs. It includes Node, Bun, native terminal dependencies, and the web app. Install once, then run `litespeed` from your project.
 
+- Anthropic conversation history and tool results are cacheable through LiteLLM and native Messages requests. Claude gateway aliases can be configured in both interfaces.
 - Read-only inspection stays available during another task; conflicting writes wait visibly and can be cancelled.
 - Skill browsing and direct skill commands are preserved from the concurrent main-branch change.
 - Background update notices in the browser and terminal, plus `litespeed update`.

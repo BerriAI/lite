@@ -41,7 +41,7 @@ describe('scoped context window limits', () => {
     expect(resolveContextBudget({ ...provider, contextWindows: { 'input-only': 64_000 } }, 'input-only', cache)).toEqual({ contextWindow: 64_000, outputReserve: 4096, limitSource: 'override' });
   });
   it.each([
-    { name: 'Renamed' }, { kind: 'codex' as const }, { baseUrl: 'https://other.example/v1' }, { apiKey: 'synthetic-changed' }, { models: ['model'] }, { contextWindows: { other: 32_000 } },
+    { name: 'Renamed' }, { kind: 'codex' as const }, { baseUrl: 'https://other.example/v1' }, { apiKey: 'synthetic-changed' }, { models: ['model'] }, { anthropicCacheModels: ['model'] }, { contextWindows: { other: 32_000 } },
   ])('invalidates catalog on exact provider configuration change %j', patch => {
     const cache = new ModelCatalogCache();
     cache.remember(provider, [{ id: 'model', name: 'Model', providerId: provider.id, contextWindow: 32_000 }]);

@@ -31,7 +31,7 @@ export type Mode = 'build' | 'plan';
 export type PermissionMode = 'ask' | 'auto';
 export type RunStatus = 'idle' | 'running' | 'waiting' | 'error';
 export type ProviderKind = 'openai' | 'anthropic' | 'codex';
-export interface Provider { id: string; name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; configured?: boolean; models?: string[]; contextWindows?: Record<string, number>; }
+export interface Provider { id: string; name: string; kind: ProviderKind; baseUrl: string; apiKey?: string; configured?: boolean; models?: string[]; anthropicCacheModels?: string[]; contextWindows?: Record<string, number>; }
 export interface Model { reasoningEfforts?: ReasoningEffort[]; id: string; name: string; providerId: string; contextWindow?: number; maxInputTokens?: number; }
 export interface Settings { mcpConfigRevision?: string; providers: Provider[]; defaultProvider: string; defaultModel: string; workspace: string; permissionMode: PermissionMode; maxSteps?: number; theme: 'system' | 'light' | 'dark'; mcpServers: Record<string, McpServerConfig>; permissionRules?: PermissionRuleSet; memoryEnabled?: boolean;
   /** Lifecycle hooks configured at the app level (design note 4.3). */

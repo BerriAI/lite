@@ -12,4 +12,14 @@ Open **Settings → Providers** in the web app or terminal to add a provider, sa
 
 **Claude subscriptions:** Third-party subscription login/routing is not supported. Use a native API key or a supported provider through LiteLLM instead.
 
+## Prompt caching
+
+Litespeed automatically requests Anthropic prompt caching for native Anthropic connections and Claude/Anthropic model names behind LiteLLM. Each request marks the end of the current user message or tool results, so later steps can reuse the growing conversation. Native requests also retain system and final-tool-schema breakpoints; the OpenAI-compatible route retains its system breakpoint. Markers are added to outgoing copies, not saved conversation history, and never to signed thinking blocks.
+
+If LiteLLM exposes Claude under an opaque name such as `team/coding`, add that exact ID under **Settings → Providers → Claude caching aliases** in the web app or terminal. Leave this list empty for providers that do not route to Claude. This setting adds caching hints; it does not change gateway routing or add model access. Other OpenAI-compatible models keep their existing request format.
+
+The default cache lifetime is five minutes. Cache hits require a sufficiently long, identical prefix and provider support. Changing earlier instructions, tools, models, or compacting history can cause a miss. Anthropic searches a bounded lookback window, so unusually large additions can also miss an earlier cache entry. Caching reduces repeated input processing; it does not guarantee a particular bill or latency. Litespeed reports provider-returned cached token usage when available.
+
+See [Anthropic's prompt caching documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) and [LiteLLM's Anthropic integration](https://docs.litellm.ai/docs/providers/anthropic). The [live verification harness](../research/cache/README.md) compares the old and fixed request paths using synthetic tool conversations.
+
 [Back to Litespeed](../README.md)

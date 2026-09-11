@@ -250,7 +250,7 @@ describe('provider protocol', () => {
       tools: [{ type: 'function', function: { name: 'read_file', description: 'Read', parameters: { type: 'object', properties: {} } } }], signal: new AbortController().signal })) chunks.push(c);
     expect(received.req.url).toBe('/v1/messages'); expect(received.req.headers['anthropic-version']).toBe('2023-06-01');
     expect(received.req.headers['x-api-key']).toBe('test-secret-never-expose');
-    expect(received.body.messages[1]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: 'result' }] });
+    expect(received.body.messages[1]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'old', content: 'result', cache_control: { type: 'ephemeral' } }] });
     expect(received.body.tools[0].input_schema).toEqual({ type: 'object', properties: {} });
     // Prompt-cache breakpoints: the system block and the LAST tool schema carry
     // cache_control so the stable prefix is cacheable; earlier tools stay clean.
@@ -274,7 +274,7 @@ describe('provider protocol', () => {
     expect(received.messages[1]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 'img', content: [
       { type: 'text', text: '[Image attached]' },
       { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
-    ] }] });
+    ], cache_control: { type: 'ephemeral' } }] });
   });
   it('marks the openai-route system block cacheable only for anthropic-family models', async () => {
     const bodies: any[] = [];

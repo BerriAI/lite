@@ -733,6 +733,17 @@ describe('provider context window settings', () => {
   }
   const modelInput = '[aria-label="Model ID 1"]', tokensInput = '[aria-label="Context window tokens 1"]';
 
+  it('saves and clears Claude aliases separately from the model list', async () => {
+    const panel = await mountSettings();
+    await inputValue('[aria-label="Claude model aliases"]', ' team/coding, custom-claude, ');
+    await clickText('Save settings');
+    expect(panel.writes[0].providers[0].anthropicCacheModels).toEqual(['team/coding', 'custom-claude']);
+    expect(panel.writes[0].providers[0].models).toEqual(['model']);
+    await inputValue('[aria-label="Claude model aliases"]', '');
+    await clickText('Save settings');
+    expect(panel.writes[1].providers[0].anthropicCacheModels).toEqual([]);
+  });
+
   it('saves exact-model limits independently of model lists, without echoing saved credentials', async () => {
     const value = { ...settings, providers: [{ ...settings.providers[0], apiKey: 'SAVED_SECRET_SENTINEL' }] };
     const panel = await mountSettings(value);

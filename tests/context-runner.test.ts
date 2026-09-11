@@ -194,6 +194,22 @@ describe('context budget Runner and API integration', () => {
     expect(catalogs).toBe(1); expect(snapshots(s.id).at(-1)?.limitSource).toBe('default'); expect(calls).toHaveLength(1);
   });
 
+  it('persists exact Claude cache aliases while preserving credentials and rejecting invalid lists', async () => {
+    store.saveSettings({ providers: [{ ...provider, apiKey: 'sentinel-test-key' }] });
+    const response = await api('/settings', 'PATCH', { providers: [{ ...provider, anthropicCacheModels: ['team/coding'] }] });
+    expect(response.status).toBe(200);
+    expect(response.body.providers[0].anthropicCacheModels).toEqual(['team/coding']);
+    expect(store.settings().providers[0].anthropicCacheModels).toEqual(['team/coding']);
+    expect(store.settings().providers[0].apiKey).toBe('sentinel-test-key');
+    expect(JSON.stringify(response.body)).not.toContain('sentinel-test-key');
+    for (const anthropicCacheModels of [[''], ['x'.repeat(251)], Array(501).fill('alias'), 'alias']) {
+      expect((await api('/settings', 'PATCH', { providers: [{ ...provider, anthropicCacheModels }] })).status).toBe(400);
+    }
+    expect(store.settings().providers[0].anthropicCacheModels).toEqual(['team/coding']);
+    expect((await api('/settings', 'PATCH', { providers: [{ ...provider, anthropicCacheModels: [] }] })).status).toBe(200);
+    expect(store.settings().providers[0].anthropicCacheModels).toEqual([]);
+  });
+
   it('settings validates overrides, preserves an omitted API key, and exposes no secret', async () => {
     store.saveSettings({ providers: [{ ...provider, apiKey: 'sentinel-test-key' }] });
     const response = await api('/settings', 'PATCH', { providers: [{ ...provider, contextWindows: { 'exact/model': 50000 } }] });
