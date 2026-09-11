@@ -105,11 +105,11 @@ describe('role guidance', () => {
 });
 
 describe('providerIsConfigured', () => {
-  it('prefers the configured flag (covers codex/OAuth and anthropic) and falls back to baseUrl', () => {
-    expect(providerIsConfigured({ configured: true, baseUrl: '' })).toBe(true);
-    expect(providerIsConfigured({ configured: false, baseUrl: 'http://x' })).toBe(false);
-    expect(providerIsConfigured({ baseUrl: 'http://x' })).toBe(true);
-    expect(providerIsConfigured({ baseUrl: '' })).toBe(false);
+  it('requires OAuth sign-in and supports gateways without API keys', () => {
+    expect(providerIsConfigured({ kind: 'codex', configured: true, baseUrl: '' })).toBe(true);
+    expect(providerIsConfigured({ kind: 'codex', configured: false, baseUrl: 'https://chatgpt.com' })).toBe(false);
+    expect(providerIsConfigured({ kind: 'openai', configured: false, baseUrl: 'https://gateway.example.com' })).toBe(true);
+    expect(providerIsConfigured({ kind: 'openai', baseUrl: '' })).toBe(false);
   });
 });
 
@@ -142,4 +142,3 @@ describe('shunt', () => {
     expect(shuntConfigured(fresh, [provider('gateway', { configured: true })])).toBe(false);
   });
 });
-

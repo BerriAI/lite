@@ -68,9 +68,8 @@ export function gatewayBaseUrl(value: string): string {
 export function needsSetup(settings: Settings, route: {providerId: string; model: string}) {
   return !route.model.trim() || !settings.providers.some(provider => provider.id === route.providerId && providerIsConfigured(provider));
 }
-/** Whether a provider is usable: the server marks public settings with a
- * `configured` flag (API key present, local base URL, or codex sign-in); raw
- * store settings fall back to having a base URL. */
-export function providerIsConfigured(provider: { configured?: boolean; baseUrl: string }): boolean {
-  return provider.configured !== undefined ? provider.configured : Boolean(provider.baseUrl);
+/** API gateways may intentionally have no key. The public configured flag
+ * describes credentials, not connectivity; only OAuth requires that flag. */
+export function providerIsConfigured(provider: { kind: string; configured?: boolean; baseUrl: string }): boolean {
+  return provider.kind === 'codex' ? provider.configured === true : Boolean(provider.baseUrl);
 }

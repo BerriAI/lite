@@ -1,5 +1,6 @@
 import type { ModelRoute } from './architectures.js';
 import type { Provider, ToolCall, ToolDefinition } from './types.js';
+import { providerIsConfigured } from './setup.js';
 
 export type ShuntSelection =
   | { enabled: false; model?: ModelRoute; minLines?: number }
@@ -16,10 +17,7 @@ export const SHUNT_MODEL_HINT = 'Choose a fast, efficient model.';
  * only (codex is subscription sign-in, not an API-key Shunt route). */
 export function shuntEligible(provider: Provider): boolean {
   if (provider.kind === 'codex') return false;
-  // Public settings carry a `configured` flag (API key present, localhost, or
-  // codex sign-in); raw store settings fall back to baseUrl/anthropic presence.
-  if (provider.configured !== undefined) return provider.configured;
-  return Boolean(provider.baseUrl || provider.kind === 'anthropic');
+  return providerIsConfigured(provider);
 }
 /** Whether at least one provider could power Shunt. Toggling ON is allowed only
  * when true; toggling OFF must always be allowed. */
