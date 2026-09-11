@@ -2,11 +2,13 @@
 
 Status: research and implementation proposal. The feature is not implemented in Litespeed and no production settings have changed. The option will be off by default, with its own user-selected Shunt model independent of the architecture's models. Other product decisions in the decision register remain open.
 
+The [current repository integration proposal](shunt-integration.md) expands this research into exact runtime, permission, onboarding, UI, accounting, and release-test changes. It incorporates the user's decisions to support all architecture agents and include the optional switch in onboarding, and takes precedence over earlier implementation recommendations below.
+
 ## Recommendation
 
 Implement Shunt as an optional facility for large reads and predictable file generation, separate from the selected multi-model architecture. Preserve the public mechanism: a size gate redirects an untargeted read; an agent supplies a focused question; a fresh reader receives the source; only its answer returns to the requesting agent. A separate writer receives a specification and reference, generates a file, and returns a small receipt after a successful write.
 
-The user has selected a dedicated Shunt model role: choose it independently of the driver, Sidekick, Team workers, Expert, and Planner. Enabling Shunt requires an explicit model selection; it never inherits an architecture model. Users may deliberately select the same underlying model for two roles, but their configuration, requests, context, and usage attribution remain separate. Shunt is also available with the Single architecture.
+The user has selected a dedicated Shunt model role: choose it independently of the driver, Sidekick, Team workers, Expert, and Planner. Enabling Shunt requires an explicit model selection; it never inherits an architecture model. Users may deliberately select the same underlying model for two roles, but their configuration, requests, context, and usage attribution remain separate. Shunt works across Single, Sidekick Fusion, Team Fusion, and Expert Fusion. Every agent in the selected architecture, including the Planner, can offload eligible operations under its existing permissions. Shunt replaces the model work for those individual operations; each agent keeps its reasoning, editing, verification, and coordination role.
 
 Use Litespeed’s existing gateway connection, file permissions, history, usage accounting, and conversation UI. This is a recommended adaptation, not an identical Portal backend. Literal compatibility with the public plugin would instead require Portal, its authenticated CLI, and configured AiKA modes. Both approaches are possible; the transport choice needs a maintainer decision.
 
@@ -109,7 +111,7 @@ Measured tables are in [live results](../research/shunt/results/summary.md). The
 
 ### Accounting rules for the feature
 
-Record every driver and Shunt request in the existing usage ledger, including retries, failures with missing usage, and cancelled calls. Count cached tokens separately when reported. One final usage update should replace a previous cumulative update for the same request rather than double-count it. The turn total must include the Shunt requests even though their full input is absent from the parent’s context. [Current ledger](../server/usage.ts), [usage contracts](../shared/usage.ts).
+Record every driver, architecture agent, and Shunt request in the existing usage ledger, including retries, failures with missing usage, and cancelled calls. Attribute each Shunt invocation to its calling agent and originating tool operation, retaining the root LiteLLM session ID for session cost tracking. Count cached tokens separately when reported. One final usage update should replace a previous cumulative update for the same request rather than double-count it. The turn total must include the Shunt requests even though their full input is absent from the caller's context. [Current ledger](../server/usage.ts), [usage contracts](../shared/usage.ts).
 
 For a paired experiment, main-model input reduction is `1 - on.driver.inputTokens / off.driver.inputTokens`. Total tokens are the sum of input and output for every participating model. Neither metric is monetary savings. A monetary comparison requires the actual routes’ input, output, and cache prices plus any provider charges. Future turns, repeated summaries, retries, verification reads, and cache effects can materially change the result.
 
@@ -121,16 +123,16 @@ The recommended implementation adds native `bulk_read` and `code_write` tools an
 
 ```mermaid
 flowchart TD
-    A[Main agent requests a file read] --> B[Existing mode, profile, path and permission checks]
+    A[Any architecture agent requests a file read] --> B[Existing mode, profile, path and permission checks]
     B --> C[Existing hooks and sidecars; validate approved final arguments]
     C --> D{Shunt enabled and broad read over threshold?}
     D -->|No| E[Normal numbered read]
     D -->|Yes| F[Routing result: supply a question to bulk_read]
     F --> G[Agent requests bulk_read with selected paths and question]
     G --> H[Validate and authorize every source; capture bounded bytes]
-    H --> I[Fresh tool-free worker request]
+    H --> I[Fresh request to the selected Shunt model, without tools]
     I --> J[Bounded answer, source manifest and usage]
-    J --> K[Continue main agent; exact reads for verification]
+    J --> K[Continue calling agent; exact reads for verification]
 ```
 
 A routing result should be typed metadata on an otherwise handled tool call, with a compact instruction to use `bulk_read`. It must not set `run.blocked`, count as a permission failure, pause queues, or cause an infinite denial loop. Actual hook/permission denials remain final. The runner probe demonstrates why this distinction is necessary. [Runner probe](../research/shunt/results/runner-probe.json).
@@ -143,21 +145,20 @@ For a native reader, preserve logical file boundaries with an escaped path and e
 
 For a writer, capture authorized reference snapshots and the target’s existing state before requesting generation. Verify nonempty complete output, remove only a single enclosing fence when applicable, enforce output bounds, and revalidate the target before committing. Perform the write through Litespeed’s existing mutation/history callbacks and workspace ownership handling. A changed target is a conflict, not permission to overwrite concurrent edits. Record the changed file and actual write result; only then return a receipt. Normal diff review and targeted verification remain available.
 
-In Team/Expert Fusion, a strict driver cannot bypass the implementation/takeover rules by calling a new writer tool. The default recommendation scopes Shunt to the root agent for reading and permits its writer only where that agent already has mutation authority. Using Shunt inside delegated workers is a separate decision, and any such call must run in the worker’s actual isolated workspace with the parent’s accepted permissions. [Architecture enforcement](../server/runner.ts), [parallel workspaces](../server/parallel-workers.ts).
+Shunt is available to the root agent, persistent Sidekick, fresh Team workers, Experts, and Planner. Each caller can use the reader where it has read authority and the writer where it already has mutation authority. In Team/Expert Fusion, a strict driver cannot bypass the implementation/takeover rules through the writer; Plan mode remains read-only. Every child receives the session's accepted Shunt configuration, while each invocation has fresh context containing only its authorized sources and question or specification. Resolve paths, permissions, history, and writes in the caller's actual workspace, including an isolated worker copy. Return the answer or receipt to that caller. Cancelling a caller cancels its Shunt requests; the Shunt model itself has no tools and cannot delegate recursively. [Architecture enforcement](../server/runner.ts), [parallel workspaces](../server/parallel-workers.ts).
 
 ### Configuration and provider support
 
 Proposed session value:
 
 ```ts
-type ShuntSelection = {
-  enabled: boolean;
-  model: { providerId: string; model: string };
-  minLines: number;
-};
+type ModelRoute = { providerId: string; model: string };
+type ShuntSelection =
+  | { enabled: false; model?: ModelRoute; minLines?: number }
+  | { enabled: true; model: ModelRoute; minLines?: number };
 ```
 
-This shape uses the independently selected Shunt model for both reader and writer. It must not resolve through an architecture's worker model or change when the driver, Sidekick, Team, Expert, or Planner selection changes. Separate reader/writer model pickers, separate feature switches, fallback policy, and caller eligibility should only enter the schema if those choices are accepted. Absence means off for every existing session, imported session, and workspace preference. Enabling is an idle-only configuration change, revision checked and captured when a turn is accepted, matching architecture/planner behavior. No project file may silently enable an additional provider route.
+This shape uses the independently selected Shunt model for both reader and writer. It must not resolve through an architecture's worker model or change when the driver, Sidekick, Team, Expert, or Planner selection changes. All architecture agents use this same session selection; no additional per-agent enablement is required. Separate reader/writer model pickers, separate feature switches, and fallback policy should only enter the schema if those choices are accepted. Absence means off for every existing session, imported session, and workspace preference. Enabling is an idle-only configuration change, revision checked and captured when a turn is accepted, matching architecture/planner behavior. No project file may silently enable an additional provider route.
 
 Remember the selection per workspace for future sessions; existing sessions retain their own configuration. Session fork, export/import, queue acceptance, and provider removal must all have explicit rules. Recommended import behavior is to retain descriptive provenance but start Shunt off until a local model is chosen, following the existing conservative architecture import behavior. Removal of the chosen provider disables new invocations with a clear configuration message; it never chooses a substitute silently.
 
@@ -169,7 +170,7 @@ These bounds and line handling are intentional differences from the Bash plugin.
 
 ### UI placement
 
-Both clients should use **Models → Additional options → Shunt**, beneath architecture/model selection and alongside other optional model behavior. The first-run flow stays simple: choose gateway, architecture, and required models; Shunt remains off. An optional disclosure can link to the same configuration without making onboarding longer.
+Both clients should use **Models → Additional options → Shunt**, beneath architecture/model selection and alongside other optional model behavior. Onboarding must also show the optional Shunt switch directly on the final model-selection screen, in both quick and full setup. It starts off; enabling it reveals its own model picker. Keep the existing number of setup screens and reuse the same descriptions and controls.
 
 Proposed web control, using the existing model picker typography and switch:
 
@@ -228,7 +229,7 @@ Implementation should proceed in four reviewable stages: shared contract and def
 | Writer | New file, replacement, missing directory, conflict during generation, partial/empty/fenced response, disk failure, cancellation before/after response, history recovery, undo/redo, diff evidence and no false success; preserve strict Fusion driver restrictions. |
 | Models and accounting | Native Anthropic and configured OpenAI-compatible routes; unsupported temperature; tool-free worker, context overflow, 401/429/5xx, retries, abort and timeout, missing/cumulative usage, cached tokens and incomplete output. Every request belongs to its turn and operation exactly once. |
 | State | Restart/resume, reload/SSE replay, export/import, fork, workspace preference isolation, missing provider, revision conflicts, queued input, steering and cancellation; no duplicate invocation after reconnect. |
-| Architectures | Single, Sidekick, Team and Expert, each with off/on in both clients. Prove Shunt uses only its explicitly selected model and separate context; architecture/model changes cannot replace it. Cover deliberately selecting the same model for two roles, separate attribution, missing Shunt selection, absence of recursive delegation and correct caller workspace. Add Planner/Plan coverage separately. |
+| Architectures | Single, Sidekick, Team and Expert, each with off/on in both clients. Exercise calls from the root, persistent Sidekick, fresh Team workers, Experts and Planner. Prove each uses the session's explicitly selected Shunt model with fresh separate context; architecture/model changes cannot replace it. Cover deliberately selecting the same model for two roles, missing Shunt selection, no recursive delegation, and Plan/strict-driver write restrictions. Run concurrent worker invocations with different contents at the same relative path to prove workspace, answer, history, cancellation, transcript and usage attribution remain attached to the correct caller and root session. |
 | Web UI | Enable/save/reload/disable; model picker keyboard/focus; narrow/mobile width; streamed inline results; two concurrent workers; cancel/failure states; no extra modal to inspect results. |
 | TUI | Real PTY setup/model selection, Save/Escape, resize, live reader/writer states, worker identity, scroll anchoring, permissions and cancellation. Screen assertions plus backend effects, not snapshots alone. |
 | Live quality | Paired off/on runs on real small/large files, cross-file questions, test generation, exact editing, debugging, and a task where a plausible summary omits a critical detail. Use independent factual assertions and executable generated-code tests. Reject incorrect answers rather than scoring them as savings. |
@@ -237,7 +238,7 @@ For live release evaluation, pin provider routes, prompts, source revisions, mod
 
 ## Decision register
 
-These are design decisions, not changes already implemented. Explicit user choices are fixed: off initially, available in both clients, documentation under Additional options, and a dedicated user-selected Shunt model independent of architecture models. D3 is settled; the other recommendations remain for review.
+These are design decisions, not changes already implemented. Explicit user choices are fixed: off initially, available in both clients, documentation under Additional options, a dedicated user-selected Shunt model independent of architecture models, availability to all agents across every architecture under their existing permissions, and an optional switch in onboarding. D3 and D5 are settled; onboarding inclusion in D7 is settled. The [integration proposal's final decision list](shunt-integration.md#decisions-for-the-maintainer) consolidates the remaining recommendations for review.
 
 | ID | Maintainer decision | Recommendation and tradeoff |
 | --- | --- | --- |
@@ -245,9 +246,9 @@ These are design decisions, not changes already implemented. Explicit user choic
 | D2 | Reader and writer together, or reader first? | Deliver both before calling the feature complete, but stage the reader first. The writer remains agent-selected, like upstream; it does not silently reroute arbitrary edits. |
 | D3 | Settled: dedicated user-selected Shunt model. | An independent optional role with its own model picker, separate from driver, Sidekick, Team, Expert, and Planner. Require explicit selection; never automatically reuse or inherit an architecture model. The picker supplies both reader and writer modes. Users may explicitly choose the same underlying model for another role. Gemini 2.5 Flash remains the reproduction baseline, not a hardcoded product default. |
 | D4 | Copy all routing quirks, or preserve intent with corrected bounds and shell handling? | Correct the known bugs. Keep a configurable 350-line default, allow truly bounded targeted reads, and label shell interception as best effort. Require an explicit direct-read escape for broad reads needed for reasoning; do not pretend a supplied `limit: 2000` is necessarily targeted. |
-| D5 | Which agents can use Shunt? | Root agent, including its Planner when selected, initially. Keep existing cheap workers and persistent Sidekicks unchanged; preserve strict-driver mutation limits. An all-agents option would need explicit inheritance and concurrent workload limits. |
+| D5 | Settled: all agents across every architecture can use Shunt. | Root, Sidekick, Team workers, Experts and Planner share the session's explicit Shunt selection for eligible operations. Preserve each caller's permissions and mutation limits, actual workspace, separate request context, cancellation, transcript position and usage attribution. Shunt itself cannot recursively delegate. Concurrency bounds remain part of D9. |
 | D6 | What happens after a worker failure or when exact full context is necessary? | Return a recoverable tool error/hint with no automatic full-file spill into the parent. Permit an explicit per-call direct read under ordinary file permissions, visible in the transcript; keep the feature on. Alternative: automatic raw fallback improves continuity but defeats predictable context control. |
-| D7 | Persistence and configuration placement? | Per-session setting, remembered per workspace for new sessions; imports start off. Models → Additional options in web and TUI. Keep onboarding short; no permanent composer control. Confirm whether a `/shunt` shortcut is wanted. |
+| D7 | Onboarding inclusion settled; persistence and exact placement proposed. | Visible optional Shunt row on the final model screen of both quick/full onboarding flows; later Models → Additional options in web and TUI. Per-session setting, remembered per workspace for new sessions; imports start off. Keep onboarding short; no permanent composer control or separate shortcut in the initial proposal. |
 | D8 | Live presentation and stored evidence? | One inline reader/writer row per invocation, anchored to its caller, using existing compact styling. Store source paths/hashes, summary/receipt and actual usage; do not duplicate raw corpus in session history. Human diff viewing remains available without feeding it to the model. |
 | D9 | Initial bounds and provider support? | Ten minutes without model/tool progress, matching the main harness; one call at a time per caller, 256 KiB aggregate source cap plus model context reserve; separately bounded reader/writer outputs. Start with existing API-key gateway/native Anthropic routes and validate subscription routes before enabling them. No automatic batch splitting, summary cache, extra inference retries, or model fallback in v1. |
 | D10 | What is an acceptable quality/latency/spend tradeoff? | Require no factual or executable correctness regression on the agreed release corpus; report latency and total provider usage even where driver tokens improve. Do not put a numerical savings promise in the README. Set a budget and representative task set for the post-integration live matrix. |
@@ -258,6 +259,6 @@ Place this between “Choose how models work together” and “Guides,” after
 
 > **Additional options**
 >
-> **Shunt** is an optional way to send large reads and predictable file generation to a separate Shunt model you choose while your main agent handles reasoning and review. It is off by default; enable it in **Models → Additional options** and choose its model independently of your driver and other agents. It can reduce the context sent to your main model, but adds Shunt usage and may increase latency. See the Shunt guide for routing, limits, and verification.
+> **Shunt** is an optional way for agents in any architecture to send large reads and predictable file generation to a separate Shunt model you choose. Your existing agents keep their reasoning and review roles. It is off by default; enable it in **Models → Additional options** and choose its model independently of your driver and other agents. It can reduce the context sent to those models, but adds Shunt usage and may increase latency. See the Shunt guide for routing, limits, and verification.
 
 Until then, the branch’s README entry links to this proposal and explicitly identifies it as unshipped.
