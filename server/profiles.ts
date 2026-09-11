@@ -79,53 +79,94 @@ export async function readEditableProfile(workspace: string, id: string) {
 }
 
 const profileWrites = new Set<string>();
+/** Shared lock over the project profile manifest. Both the profile editor and
+ * the skill importer write through this lock so concurrent edits cannot lose
+ * updates. `root` must already be a canonical (realpath) workspace. */
+export async function withProfileWriteLock<T>(root: string, operation: () => Promise<T>): Promise<T> {
+  if (profileWrites.has(root)) throw conflict('Another profile or skill write is in progress. Try again.');
+  profileWrites.add(root);
+  try { return await operation(); } finally { profileWrites.delete(root); }
+}
+
+/** Validated strict manifest shape; shared with the skill importer. */
+export type StrictManifest = z.infer<typeof manifestSchema>;
+
+/** Runtime schema validation (a `satisfies` is only a compile-time assertion).
+ * Fails closed with the human-facing 400 used by both the editor and importer. */
+export function validateStrictManifest(value: unknown): StrictManifest {
+  try { return manifestSchema.parse(value); }
+  catch { throw invalid('The project profiles are invalid. Fix .litespeed/profiles.json before saving here.'); }
+}
+
+/** Read the existing strict manifest verbatim (or an empty one when absent).
+ * Never follows aliases. A malformed manifest fails closed with a 400. Exported
+ * for the skill importer so both consumers read the same strict shape. */
+export async function readStrictManifest(root: string): Promise<{ before: string | null; manifest: StrictManifest }> {
+  let before: string | null = null;
+  try { before = await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes); }
+  catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
+  let manifest: z.infer<typeof manifestSchema>;
+  try { manifest = before === null ? { version: 1, profiles: [], skills: [] } : manifestSchema.parse(JSON.parse(before.replace(/^﻿/, ''))); }
+  catch { throw invalid('Fix the invalid .litespeed/profiles.json file before editing profiles here.'); }
+  return { before, manifest };
+}
+
+/** Atomically write `manifest` after verifying the on-disk file still equals
+ * `before`. Exported for the skill importer so both consumers share the same
+ * rollback-safe write path. `root` must already be canonical. The temporary
+ * file is cleaned up on ANY error, and (when the profile editor supplies its
+ * expected revision) the full catalog is re-verified right before commit so a
+ * concurrent skill/manifest change cannot slide under an accepted save. */
+export async function writeStrictManifest(root: string, manifest: z.infer<typeof manifestSchema>, before: string | null, expectedRevision?: string): Promise<string> {
+  const valid = validateStrictManifest(manifest);
+  const content = JSON.stringify(valid, null, 2) + '\n';
+  if (Buffer.byteLength(content) > PROFILE_LIMITS.manifestBytes) throw invalid('The project profile catalog exceeds its size limit.');
+  const directory = join(root, '.litespeed');
+  await mkdir(directory, { recursive: true });
+  const identity = await lstat(directory);
+  const verifyDirectory = async () => {
+    const now = await lstat(directory);
+    if (!now.isDirectory() || now.isSymbolicLink() || now.dev !== identity.dev || now.ino !== identity.ino || await realpath(directory) !== directory) throw conflict('The project configuration directory changed or uses an alias.');
+  };
+  await verifyDirectory();
+  const temporary = join(directory, `.profiles-${randomUUID()}.tmp`);
+  const handle = await open(temporary, 'wx', 0o600);
+  try {
+    await handle.writeFile(content, 'utf8');
+    await handle.sync();
+    await verifyDirectory();
+    const target = join(root, manifestPath);
+    if (before === null) {
+      if (expectedRevision !== undefined && (await readProfileCatalog(root)).revision !== expectedRevision) throw conflict('Project profiles changed during the save. Refresh and try again.');
+      await link(temporary, target);
+      await unlink(temporary);
+    } else {
+      if (await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes) !== before) throw conflict('The profile manifest changed during the save.');
+      if (expectedRevision !== undefined && (await readProfileCatalog(root)).revision !== expectedRevision) throw conflict('Project profiles changed during the save. Refresh and try again.');
+      await rename(temporary, target);
+    }
+    await verifyDirectory();
+  } finally {
+    await handle.close();
+    await unlink(temporary).catch(() => {});
+  }
+  return (await readProfileCatalog(root)).revision;
+}
+
 /** Settings-only editor. Preserve other profiles and all skill declarations;
  * never follow aliases or silently replace an invalid/newer manifest. */
 export async function saveProjectProfile(workspace: string, input: z.infer<typeof saveProjectProfileSchema>) {
   const root = await realpath(workspace);
-  if (profileWrites.has(root)) throw conflict('Another profile save is in progress. Try again.');
-  profileWrites.add(root);
-  let temporary: string | undefined;
-  try {
+  return withProfileWriteLock(root, async () => {
     const loaded = await load(root);
     if (loaded.catalog.revision !== input.catalogRevision) throw conflict('Project profiles changed. Refresh the catalog before saving. Your draft has not been saved.');
-    let before: string | null = null;
-    try { before = await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes); }
-    catch (error) { if (errorCode(error) !== 'ENOENT') throw error; }
-    let manifest: z.infer<typeof manifestSchema>;
-    try { manifest = before === null ? { version: 1, profiles: [], skills: [] } : manifestSchema.parse(JSON.parse(before.replace(/^﻿/, ''))); }
-    catch { throw invalid('Fix the invalid .litespeed/profiles.json file before editing profiles here.'); }
+    const { before, manifest } = await readStrictManifest(root);
     const index = manifest.profiles.findIndex(profile => profile.id === input.profile.id);
     if (input.create ? index !== -1 : index === -1) throw conflict(input.create ? 'That profile ID already exists. Choose another ID.' : 'This profile no longer exists. Refresh the catalog.');
     if (input.create) manifest.profiles.push(input.profile); else manifest.profiles[index] = input.profile;
-    manifest = manifestSchema.parse(manifest);
-    const content = JSON.stringify(manifest, null, 2) + '\n';
-    if (Buffer.byteLength(content) > PROFILE_LIMITS.manifestBytes) throw invalid('The project profile catalog exceeds its size limit.');
-    const directory = join(root, '.litespeed');
-    await mkdir(directory, { recursive: true });
-    const identity = await lstat(directory);
-    const verifyDirectory = async () => {
-      const now = await lstat(directory);
-      if (!now.isDirectory() || now.isSymbolicLink() || now.dev !== identity.dev || now.ino !== identity.ino || await realpath(directory) !== directory) throw conflict('The project configuration directory changed or uses an alias.');
-    };
-    await verifyDirectory();
-    temporary = join(directory, `.profiles-${randomUUID()}.tmp`);
-    const handle = await open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(content, 'utf8'); await handle.sync(); } finally { await handle.close(); }
-    await verifyDirectory();
-    if ((await readProfileCatalog(root)).revision !== input.catalogRevision) throw conflict('Project profiles changed during the save. Refresh and try again.');
-    const target = join(root, manifestPath);
-    if (before === null) { await link(temporary, target); await unlink(temporary); }
-    else {
-      if (await readProfileSource(root, manifestPath, PROFILE_LIMITS.manifestBytes) !== before) throw conflict('The profile manifest changed during the save.');
-      await rename(temporary, target);
-    }
-    temporary = undefined;
-    return { profile: input.profile, catalogRevision: (await readProfileCatalog(root)).revision };
-  } finally {
-    if (temporary) await unlink(temporary).catch(() => {});
-    profileWrites.delete(root);
-  }
+    const next = validateStrictManifest(manifest);
+    return { profile: input.profile, catalogRevision: await writeStrictManifest(root, next, before, input.catalogRevision) };
+  });
 }
 export async function resolveProfileChoice(workspace: string, choice: ProfileChoice, signal?: AbortSignal): Promise<ResolvedProfile> {
   signal?.throwIfAborted();

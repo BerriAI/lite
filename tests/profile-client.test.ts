@@ -366,3 +366,70 @@ describe('skill slash commands', () => {
     expect(document.body.textContent).toContain('.litespeed/skills/');
   });
 });
+
+describe('skill importer', () => {
+  it('importer button is reachable and can plan and import a skill, showing source and destination', async () => {
+    const api = server(); api.catalog = { ...catalog, profiles: [], skills: [] };
+    const candidate = { source: 'claude', scope: 'project', rootId: 'claude:project', rootName: '.claude/skills (project)', root: './.claude/skills/review', id: 'review', name: 'Review skill', description: 'Checks work', fileCount: 2, totalBytes: 200, sourceHash: 'abc'.repeat(22), conflict: false, conflictReason: '' };
+    const plan = { candidate, files: [{ path: '.litespeed/skills/review/SKILL.md', bytes: 100, executable: false }, { path: '.litespeed/skills/review/helper.sh', bytes: 100, executable: true }], conflict: false, conflictReason: '', warnings: [], sourceHash: candidate.sourceHash, destinationRoot: '/workspace/.litespeed/skills/review' };
+    api.intercept = (path) => {
+      if (path.startsWith('/skills/discover?')) return { roots: [{ rootId: 'claude:project', rootName: '.claude/skills (project)', count: 1 }], candidates: [candidate], issues: [] };
+      if (path === '/skills/plan') return plan;
+      if (path === '/skills/import') return { id: 'review', name: 'Review skill', description: 'Checks work', fileCount: 2, catalogRevision: 'r2', warnings: [] };
+      return undefined;
+    };
+    await picker({ skillsOnly: true });
+    await press('Import a Claude/Codex skill…');
+    expect(document.body.textContent).toContain('Choose a skill to import');
+    await click('input[type="radio"]');
+    expect(document.body.textContent).toContain('.litespeed/skills/review/');
+    expect(document.body.textContent).toContain('executable mode preserved');
+    await press('Import into this project');
+    const applied = api.calls.find(call => call.path === '/skills/import');
+    expect(applied).toBeTruthy();
+    expect(applied!.body).toEqual({ workspace: '/workspace', rootId: 'claude:project', id: 'review', sourceHash: 'abc'.repeat(22) });
+  });
+  it('shows a conflict reason and never plans an already-imported skill', async () => {
+    const api = server(); api.catalog = { ...catalog, profiles: [], skills: [] };
+    const disputed = { source: 'claude', scope: 'project', rootId: 'claude:project', rootName: '.claude/skills (project)', root: './.claude/skills/review', id: 'review', name: 'Review skill', description: '', fileCount: 1, totalBytes: 50, sourceHash: 'd'.repeat(64), conflict: true, conflictReason: 'Already imported into this project.' };
+    api.intercept = (path) => {
+      if (path.startsWith('/skills/discover?')) return { roots: [{ rootId: 'claude:project', rootName: '.claude/skills (project)', count: 1 }], candidates: [disputed], issues: [] };
+      if (path === '/skills/plan') throw new Error('plan should not run');
+      return undefined;
+    };
+    await picker({ skillsOnly: true });
+    await press('Import a Claude/Codex skill…');
+    expect(document.body.textContent).toContain('Already imported into this project.');
+    expect(api.calls.some(call => call.path === '/skills/plan')).toBe(false);
+  });
+  it('Choose again returns to the full list (never a blank freeze)', async () => {
+    const api = server(); api.catalog = { ...catalog, profiles: [], skills: [] };
+    const candidate = { source: 'claude', scope: 'project', rootId: 'claude:project', rootName: '.claude/skills (project)', root: './.claude/skills/review', id: 'review', name: 'Review skill', description: '', fileCount: 1, totalBytes: 50, sourceHash: 'e'.repeat(64), conflict: false, conflictReason: '' };
+    const plan = { candidate, files: [{ path: '.litespeed/skills/review/SKILL.md', bytes: 50, executable: false }], conflict: false, conflictReason: '', warnings: [], sourceHash: candidate.sourceHash, destinationRoot: '/workspace/.litespeed/skills/review' };
+    api.intercept = (path) => {
+      if (path.startsWith('/skills/discover?')) return { roots: [{ rootId: 'claude:project', rootName: '.claude/skills (project)', count: 1 }], candidates: [candidate], issues: [] };
+      if (path === '/skills/plan') return plan;
+      return undefined;
+    };
+    await picker({ skillsOnly: true });
+    await press('Import a Claude/Codex skill…');
+    expect(document.body.textContent).toContain('Choose a skill to import');
+    await click('input[type="radio"]');
+    expect(document.body.textContent).toContain('.litespeed/skills/review/');
+    await press('Choose again');
+    expect(document.body.textContent).toContain('Choose a skill to import');
+    expect(document.body.textContent).not.toContain('.litespeed/skills/review/');
+  });
+  it('shows a recoverable error when discovery fails and never lists candidates', async () => {
+    const api = server(); api.catalog = { ...catalog, profiles: [], skills: [] };
+    api.intercept = (path) => {
+      if (path.startsWith('/skills/discover?')) throw new Error('Failed to scan skills');
+      return undefined;
+    };
+    await picker({ skillsOnly: true });
+    await press('Import a Claude/Codex skill…');
+    expect(document.body.textContent).toContain('Failed to scan skills');
+    expect(document.body.textContent).toContain('Retry');
+    expect(document.body.textContent).not.toContain('Choose a skill to import');
+  });
+});

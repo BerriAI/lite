@@ -5,6 +5,7 @@ import type { Session, Settings } from '../shared/types.js';
 import { TerminalController } from './controller.js';
 import { Menu, TextPrompt, TextViewer, type MenuItem } from './ui.js';
 import { ModelChooser } from './models.js';
+import { SkillImporter } from './skillImport.js';
 
 const toolNames: [ProfileTool, string][] = [['read_file', 'Read files'], ['glob', 'Find files'], ['grep', 'Search contents'], ['web_fetch', 'Read web pages'], ['write_file', 'Write files'], ['edit_file', 'Edit files'], ['bash', 'Run commands'], ['todo_read', 'Read task list'], ['todo_write', 'Update task list']];
 function ProfileEditor({ controller, catalog, initial, settings, onClose, onSaved }: { controller: TerminalController; catalog: ProfileCatalog; initial: EditableProfile | null; settings: Settings; onClose: () => void; onSaved: () => void }) {
@@ -42,6 +43,7 @@ export function Profiles({ controller, initial, onClose, skillsOnly = false, onC
   const [choice, setChoice] = useState<ProfileChoice>({ profileId: initial.profile?.profileId ?? null, skillIds: initial.profile?.skillIds ?? [] });
   const [editing, setEditing] = useState<{ profile: EditableProfile | null } | null>(null), [revision, setRevision] = useState(0);
   const [view, setView] = useState('main'), [preview, setPreview] = useState<ProfileDetail | null>(null), [error, setError] = useState('');
+  const [importing, setImporting] = useState(false);
   const [active, setActive] = useState<ProfileDetail | null>(null);
   const back = () => setView('main');
   useEffect(() => { let live = true; Promise.all([controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(initial.workspace)}`), controller.client.api<ProfileDetail>(`/sessions/${encodeURIComponent(initial.id)}/profile`)]).then(([catalog, active]) => { if (live) { setCatalog(catalog); setActive(active); onCatalog?.(catalog); } }).catch(error => { if (live) setError(error.message); }); return () => { live = false; }; }, [revision]);
@@ -57,12 +59,14 @@ export function Profiles({ controller, initial, onClose, skillsOnly = false, onC
     if (await controller.action('Applying profile', () => controller.client.api(`/sessions/${encodeURIComponent(initial.id)}/profile`, { expectedConfigRevision: initial.configRevision ?? 0, choice: { ...choice, catalogRevision: catalog.revision }, ...(defaults && profile ? { selection: { ...profile.defaultModel, ...(profile.defaultMode ? { mode: profile.defaultMode } : {}) } } : {}) }))) onClose();
     else setError(controller.getState().notice);
   };
+  if (skillsOnly && importing) return <SkillImporter controller={controller} workspace={initial.workspace} onClose={() => setImporting(false)} onImported={() => setRevision(value => value + 1)} />;
   if (skillsOnly) return <Menu title="Skills for this session" onClose={onClose} footer={error || (active?.source.status !== 'current' && active?.source.status !== 'inactive' ? `Pinned source is ${active?.source.status}. Preview before applying. ` : '') + (catalog.diagnostics.map(item => item.message).join(' · ') || 'Select up to 8. Apply reloads selected instructions; model, mode, and profile selection stay unchanged.')} items={[
     ...catalog.skills.map(skill => ({ id: `skill:${skill.id}`, label: `${choice.skillIds.includes(skill.id) ? '☑' : '☐'} ${skill.name}`, description: `/${skill.id} · ${skill.description}`, disabled: !choice.skillIds.includes(skill.id) && choice.skillIds.length >= 8, action: () => setChoice({ ...choice, skillIds: choice.skillIds.includes(skill.id) ? choice.skillIds.filter(id => id !== skill.id) : [...choice.skillIds, skill.id] }) })),
     ...choice.skillIds.filter(id => !catalog.skills.some(skill => skill.id === id)).map(id => ({ id: `missing:${id}`, label: `☑ ${id} (source unavailable; remove)`, action: () => setChoice({ ...choice, skillIds: choice.skillIds.filter(value => value !== id) }) })),
     ...(!catalog.skills.length ? [{ id: 'empty', label: 'No project skills found', description: 'Add skills to .litespeed/profiles.json and .litespeed/skills/<id>/SKILL.md', disabled: true, action: () => {} }] : []),
     { id: 'preview', label: 'Preview instructions', action: () => { setView('preview'); setPreview(null); void run(async () => setPreview(await controller.client.api<ProfileDetail>('/profiles/preview', { workspace: initial.workspace, choice: { ...choice, catalogRevision: catalog.revision } }))); } },
     { id: 'apply', label: 'Use skills', disabled: Boolean(state.pending), action: () => { void run(() => apply(false)); } },
+    { id: 'import-skill', separatorBefore: true, label: 'Import a Claude/Codex skill…', action: () => setImporting(true) },
     { id: 'refresh', label: 'Refresh catalog', action: () => setRevision(value => value + 1) },
   ]} />;
   const items: MenuItem[] = [

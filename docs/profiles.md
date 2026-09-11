@@ -103,6 +103,19 @@ Litespeed intersects the profile allowlist with the session's mode, both when ad
 
 **This is not a sandbox.** Allowing `bash` grants access to a shell governed by the ordinary approval policy; shell commands retain the local user's capabilities. The terminal is direct user input and is independent of the model's profile. Profile text never overrides harness constraints.
 
+## Import Claude and Codex skills
+
+If you already use Claude Code or Codex skills (a folder with a `SKILL.md`), you can copy one into the project and register it here with the importer.
+
+- **Where:** `/skills` in the terminal, or **Settings → Project profiles → Import a Claude/Codex skill…** in the browser. During setup, there is an **Import Claude/Codex skills…** link on the final setup step.
+- **Sources (fixed, discovered only when you open the importer):**
+  - **Claude:** `~/.claude/skills` and the project's `.claude/skills`.
+  - **Codex:** `$CODEX_HOME`/`~/.codex/skills`, `~/.agents/skills`, and the project's `.agents/skills` (optionally `.codex/skills`).
+- The importer shows the source folder, the destination `.litespeed/skills/<id>/`, every file it will copy (including the support files a skill needs), any conflict, and an explicit **Import** confirmation. Nothing is run and nothing is activated automatically — after importing, select the skill in **/skills** to apply it.
+- Same-name conflicts are shown as disabled/skipped; an existing file is never overwritten. The selected source is bound by hash and revalidated before applying, so the plan cannot silently land on changed content.
+- Safety: only regular files are copied. Symlinks, hard links, credential-sensitive filenames, invalid-UTF8 `SKILL.md`, and oversized or over-deep folders are rejected with a visible reason. Support files may be binary (arbitrary bytes); only `SKILL.md` must be valid UTF-8 with no NUL bytes. An executable bit is preserved on copied scripts if the source had one; Litespeed never runs them during import. Discovery is bounded (a fixed candidate limit with a truncation notice) and only reads what it needs.
+- Imports preserve every existing profile and skill in `.litespeed/profiles.json` and fail closed if that manifest is invalid or changed while importing.
+
 ## Pinned configuration
 
 Litespeed reads and validates the selected files, then saves a private instruction/tool snapshot for the session. Future turns use that snapshot without rereading its skill files. Instructions and selected skill bodies are included in context estimates and sent to the chosen provider when a turn runs.

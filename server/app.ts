@@ -19,6 +19,7 @@ import { Memory } from './memory.js';
 import { listModels } from './providers.js';
 import { modelCatalog } from './budget.js';
 import { readProfileCatalog, readEditableProfile, saveProjectProfile, saveProjectProfileSchema, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
+import { skillDiscover, skillPlan, skillApply } from './skill-import.js';
 import { validateRuleSet } from './permissions.js';
 import { validateHooks } from './hooks.js';
 import { validateSidecars } from './sidecars.js';
@@ -86,6 +87,13 @@ export function createApp(options:AppOptions = {}) {
   app.get('/api/profiles/edit',async(req,res)=>{const root=await workspace(req.query.workspace),id=z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).parse(req.query.id);res.json(await readEditableProfile(root,id));});
   app.post('/api/profiles/save',async(req,res)=>{const input=saveProjectProfileSchema.parse(req.body),root=await workspace(input.workspace);res.json(await saveProjectProfile(root,input));});
   app.post('/api/profiles/preview',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),choice:profileChoiceSchema}).strict().parse(req.body),signal=requestSignal(res),root=await workspace(input.workspace);signal.throwIfAborted();const resolved=await resolveProfileChoice(root,input.choice,signal);res.json(profileDetail(resolved.snapshot));});
+  // Skill importer: fixed, server-resolved roots only; discovery is explicit,
+  // plan is the dry run and apply revalidates the source hash. No client path is
+  // ever accepted -- only a fixed root id + skill id, both logged/sanitized.
+  const skillRootSchema=z.enum(['claude:home','claude:project','codex:home','codex:agents-home','codex:project','codex:legacy-project']);
+  app.get('/api/skills/discover',async(req,res)=>{const root=await workspace(req.query.workspace);res.json(await skillDiscover(root));});
+  app.post('/api/skills/plan',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),rootId:skillRootSchema,id:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/)}).strict().parse(req.body);const root=await workspace(input.workspace);res.json(await skillPlan(root,input.rootId,input.id));});
+  app.post('/api/skills/import',async(req,res)=>{const input=z.object({workspace:z.string().max(4096).optional(),rootId:skillRootSchema,id:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/),sourceHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict().parse(req.body);const root=await workspace(input.workspace);res.json(await skillApply(root,input.rootId,input.id,input.sourceHash));});
   app.get('/api/health',(_req,res)=>res.json({ok:true,name:'litespeed',version:VERSION,...(options.updates?.installation?{installation:options.updates.installation,pid:process.pid}:{})}));
   app.get('/api/updates',async(req,res)=>res.json(options.updates?await options.updates.status(req.query.check==='true'):{currentVersion:VERSION,available:false,packaged:false,restartRequired:false,releaseUrl:'https://github.com/BerriAI/litespeed/releases',command:'Update your source checkout and rebuild.'}));
   app.post('/api/updates/install',async(_req,res)=>{if(!options.updates)throw httpError(409,'Packaged updates are unavailable on this server.');res.json(await options.updates.install());});

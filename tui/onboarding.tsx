@@ -12,6 +12,7 @@ import { Menu } from './ui.js';
 import { ModelChooser, ShuntSettings } from './models.js';
 import { GatewaySetup } from './gateway.js';
 import { Providers } from './providers.js';
+import { SkillImporter } from './skillImport.js';
 
 const workerLabel = (kind: 'single' | ArchitectureKind) => kind === 'expert-fusion' ? 'Expert' : kind === 'team-fusion' ? 'Worker' : 'Sidekick';
 
@@ -22,11 +23,12 @@ export function Onboarding({ controller, initial, onClose, quick = false }: { co
   const [shunt, setShunt] = useState<ShuntSelection>(initial.shunt ?? { enabled: false });
   const [driver, setDriver] = useState<ModelRoute>({ providerId: initial.providerId, model: initial.model });
   const [worker, setWorker] = useState<ModelRoute | null>(initial.architecture ? architectureWorker(initial.architecture) : null);
-  const [permissionMode, setPermissionMode] = useState(initial.permissionMode), [view, setView] = useState<'main' | 'providers' | 'advanced'>('main');
+  const [permissionMode, setPermissionMode] = useState(initial.permissionMode), [view, setView] = useState<'main' | 'providers' | 'advanced' | 'skills'>('main');
   const [revision, setRevision] = useState(initial.configRevision ?? 0);
 
   if (!state.settings) return null;
   const back = () => setView('main');
+  if (view === 'skills') return <SkillImporter controller={controller} workspace={initial.workspace} onClose={back} onImported={() => { setRevision(value => value + 1); }} />;
   if (view === 'providers') return <Providers controller={controller} onClose={back} />;
   if (view === 'advanced') return <ShuntSettings controller={controller} settings={state.settings} value={shunt} onChange={setShunt} onClose={back} />;
 
@@ -72,7 +74,8 @@ export function Onboarding({ controller, initial, onClose, quick = false }: { co
     ...(roles.includes('worker') ? [{ id: 'worker', label: `${workerLabel(kind)}: ${worker?.model || 'Choose a model'}`, description: modelGuidance(kind, 'worker'), action: () => openRole('worker', true) }] : []),
     { id: 'advanced', label: `Advanced settings · Shunt ${shunt.enabled ? 'On' : 'Off'}`, description: `${SHUNT_DESCRIPTION} ${shunt.enabled && !shuntConfigured(shunt, state.settings.providers) ? 'Choose a Shunt model to enable it.' : SHUNT_MODEL_HINT}`, action: () => setView('advanced') },
     ...(!quick ? [{ id: 'providers', label: 'Manage providers', description: 'Connect an API or sign in to ChatGPT', action: () => setView('providers') },
-    { id: 'permissions', label: `Permissions: ${permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}`, description: permissionMode === 'ask' ? 'Review actions and remember tools you trust' : 'No routine prompts; explicit project rules still apply', action: () => setPermissionMode(permissionMode === 'auto' ? 'ask' : 'auto') }] : []),
+    { id: 'permissions', label: `Permissions: ${permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}`, description: permissionMode === 'ask' ? 'Review actions and remember tools you trust' : 'No routine prompts; explicit project rules still apply', action: () => setPermissionMode(permissionMode === 'auto' ? 'ask' : 'auto') },
+    { id: 'import-skills', label: 'Import Claude/Codex skills…', description: 'Copy skills from your machine into this project', action: () => setView('skills') }] : []),
     { id: 'save', label: state.pending ? 'Saving…' : quick ? 'Start chatting' : 'Start with this setup', separatorBefore: true, disabled: Boolean(state.pending) || !canSave, action: () => { void save(); } },
   ]} />;
 

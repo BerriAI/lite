@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createServer, request as httpRequest, type Server } from 'node:http';
 import { Store } from '../server/store.js';
 import { createApp } from '../server/app.js';
+import type { SkillCandidate, SkillImportPlan } from '../shared/skill-import.js';
 
 const listen=(server:Server)=>new Promise<string>(resolve=>server.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${(server.address() as any).port}`)));
 const close=(server:Server)=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());});
@@ -299,4 +300,69 @@ describe('local API and agent loop',()=>{
     release();await work;await expect(runner.exclusive(s.id,async()=>{throw new Error('failed operation');})).rejects.toThrow('failed operation');await request(`/sessions/${s.id}/messages`,{content:'After lock release'});await until(()=>!runner.active(s.id));expect(calls).toHaveLength(1);
   });
   it('exports and imports history without executing tools',async()=>{const s=await session();store.saveMessage({id:'m1',sessionId:s.id,role:'user',content:'Saved conversation',createdAt:1});const exported=(await request(`/sessions/${s.id}/export`)).data;const imported=await request('/sessions/import',exported);expect(imported.status).toBe(201);expect(imported.data.id).not.toBe(s.id);expect(store.messages(imported.data.id)[0].content).toBe('Saved conversation');expect(calls).toHaveLength(0);});
+});
+
+describe('skill import API',()=>{
+  let dir:string,store:Store,server:Server,provider:Server,base:string;
+  async function request(path:string,body?:unknown,method?:string){const response=await fetch(base+'/api'+path,{method:method||(body===undefined?'GET':'POST'),headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});return{status:response.status,data:await response.json()};}
+  beforeEach(async()=>{
+    dir=await mkdtemp(join(tmpdir(),'litespeed-api-skills-'));
+    // Seed a Claude project skill inside the workspace so the canonical project
+    // root `.claude/skills/review` is walked (never a symlink escape).
+    await mkdir(join(dir,'.claude','skills','review'),{recursive:true});
+    await writeFile(join(dir,'.claude','skills','review','SKILL.md'),'---\nname: Review skill\ndescription: Checks the work\n---\nREVIEW BODY\n');
+    await writeFile(join(dir,'.claude','skills','review','helper.sh'),'#!/bin/sh\necho hi\n');
+    store=new Store(join(dir,'state'));
+    provider=createServer(async(req,res)=>{res.writeHead(404);res.end('{}');});
+    const providerUrl=await new Promise<string>(resolve=>provider.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${(provider.address() as any).port}`)));
+    store.saveSettings({workspace:dir,providers:[{id:'test',name:'Test',kind:'openai',baseUrl:providerUrl,apiKey:'secret'}],defaultProvider:'test',defaultModel:'test-model'});
+    const created=createApp({store}),appServer=createServer(created.app);base=await new Promise<string>(resolve=>appServer.listen(0,'127.0.0.1',()=>resolve(`http://127.0.0.1:${(appServer.address() as any).port}`)));server=appServer;
+  });
+  afterEach(async()=>{await close(server);await close(provider);store.close();await rm(dir,{recursive:true,force:true});});
+  const close=(s:Server)=>new Promise<void>(resolve=>{s.closeAllConnections();s.close(()=>resolve());});
+
+  it('discovers, plans and imports a project skill with JSON-clean shapes and conflicts on re-import',async()=>{
+    const discovered=await request(`/skills/discover?workspace=${encodeURIComponent(dir)}`);
+    expect(discovered.status).toBe(200);
+    const discoveredData=discovered.data as { candidates: SkillCandidate[] };
+    const review=discoveredData.candidates.find(c=>c.id==='review');
+    expect(review).toBeDefined();
+    expect(review).toMatchObject({source:'claude',scope:'project',rootId:'claude:project',fileCount:2});
+    expect(review!.sourceHash).toMatch(/^[a-f0-9]{64}$/);
+    // No raw Buffers must ever leak into JSON: every value is JSON-serializable.
+    expect(JSON.stringify(discoveredData)).not.toContain('"type":"Buffer"');
+    expect(JSON.stringify(discoveredData)).not.toContain('<Buffer');
+
+    const plan=await request('/skills/plan',{workspace:dir,rootId:'claude:project',id:'review'});
+    expect(plan.status).toBe(200);
+    expect(JSON.stringify(plan.data)).not.toContain('"type":"Buffer"');
+    expect(JSON.stringify(plan.data)).not.toContain('<Buffer');
+    const planData=plan.data as SkillImportPlan;
+    expect(planData.candidate.id).toBe('review');
+    expect(planData.files.map(f=>f.path)).toEqual(['.litespeed/skills/review/SKILL.md','.litespeed/skills/review/helper.sh']);
+    expect(planData.sourceHash).toBe(review!.sourceHash);
+
+    const imported=await request('/skills/import',{workspace:dir,rootId:'claude:project',id:'review',sourceHash:review!.sourceHash});
+    expect(imported.status).toBe(200);
+    expect(imported.data).toMatchObject({id:'review',name:'Review skill',fileCount:2});
+    expect(imported.data.catalogRevision).toMatch(/^[a-f0-9]{64}$/);
+    expect((await readFile(join(dir,'.litespeed','skills','review','SKILL.md'),'utf8'))).toContain('REVIEW BODY');
+
+    // Re-import conflicts (409) and does not overwrite.
+    const again=await request('/skills/import',{workspace:dir,rootId:'claude:project',id:'review',sourceHash:review!.sourceHash});
+    expect(again.status).toBe(409);
+    expect(await readFile(join(dir,'.litespeed','skills','review','SKILL.md'),'utf8')).toContain('REVIEW BODY');
+  });
+  it('rejects invalid inputs and unknown roots with 400s',async()=>{
+    expect((await request('/skills/plan',{workspace:dir,rootId:'nope:nope',id:'review'})).status).toBe(400);
+    expect((await request('/skills/plan',{workspace:dir,rootId:'claude:project',id:'missing'})).status).toBe(400);
+    expect((await request('/skills/import',{workspace:dir,rootId:'claude:project',id:'review',sourceHash:'not-a-hash'})).status).toBe(400);
+    // A source hash mismatch between plan and apply is a 409 conflict, not success.
+    const discovered=await request(`/skills/discover?workspace=${encodeURIComponent(dir)}`);
+    const discoveredData=discovered.data as { candidates: SkillCandidate[] };
+    const review=discoveredData.candidates.find(c=>c.id==='review');
+    void review;
+    const stale=await request('/skills/import',{workspace:dir,rootId:'claude:project',id:'review',sourceHash:'a'.repeat(64)});
+    expect(stale.status).toBe(409);
+  });
 });
