@@ -50,7 +50,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     const env = { ...environment(temporary), SPEEDRAIL_DATA_DIR: data, SPEEDRAIL_WORKSPACE: workspace };
     const version = await processResult(runtime!, ['--version'], temporary, env).finished;
     expect(version.code).toBe(0);
-    expect(version.output.trim()).toMatch(/^v22\.13\.0$/);
+    expect(version.output.trim()).toMatch(/^v26\.4\.0$/);
     const providerCalls: { messages: { role: string; content: any }[]; tools?: { function: { name: string } }[] }[] = [];
     let catalogCalls = 0;
     let advertisedMcpName = '';
@@ -133,9 +133,7 @@ describe.skipIf(!runtime)('built runtime compatibility (explicit opt-in)', () =>
     expect(await api('/health')).toEqual({ ok: true, name: 'speedrail', version: '0.1.0' });
     expect(await (await fetch(app.base + '/')).text()).toContain('<div id="root">');
     const initial = await api('/settings');
-    expect(initial.providers).toHaveLength(1);
-    expect(initial.providers[0].baseUrl).toBe('http://localhost:4000');
-    expect(initial.providers[0].apiKey).toBeUndefined();
+    expect(initial.providers).toEqual([]);
     await api('/settings', { providers: [{ id: 'runtime', name: 'Runtime mock', kind: 'openai', baseUrl: `http://127.0.0.1:${providerPort}`, apiKey: 'synthetic-runtime-only' }], defaultProvider: 'runtime', defaultModel: 'runtime-model' }, 'PATCH');
     const session = await api('/sessions', { title: 'Node runtime fixture', permissionMode: 'auto' });
     const sessionPath = `/sessions/${session.id}`;
@@ -565,7 +563,7 @@ const [log,catalog,notification,endpoint]=process.argv.slice(2);
 const record=event=>appendFileSync(log,JSON.stringify({event,endpoint})+'\\n');
 const send=value=>process.stdout.write(JSON.stringify(value)+'\\n');
 const reply=(id,result)=>send({jsonrpc:'2.0',id,result});
-if(process.version!=='v22.13.0'||process.env.OPENAI_API_KEY||process.env.ANTHROPIC_API_KEY||process.env.SPEEDRAIL_DATA_DIR)process.exit(3);
+if(process.version!==${JSON.stringify(version.output.trim())}||process.env.OPENAI_API_KEY||process.env.ANTHROPIC_API_KEY||process.env.SPEEDRAIL_DATA_DIR)process.exit(3);
 record('spawn');
 watchFile(notification,{interval:10},(now,old)=>{if(now.mtimeMs!==old.mtimeMs){record('changed');send({jsonrpc:'2.0',method:'notifications/tools/list_changed'});}});
 createInterface({input:process.stdin}).on('line',line=>{

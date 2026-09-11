@@ -17,7 +17,7 @@ it('refuses a second backend and releases ownership after clean shutdown', () =>
 });
 it('reclaims the directory after its owner is killed without deleting a stale lock', async () => {
   directory=mkdtempSync(join(tmpdir(),'speedrail-owner-crash-'));
-  child=spawn(process.execPath,['--import','tsx','--input-type=module','-e',`import {ownDataDirectory} from ${JSON.stringify(resolve('server/ownership.ts'))}; ownDataDirectory(process.argv[1]); console.log('owned'); setInterval(()=>{},1000);`,directory],{stdio:['ignore','pipe','pipe']});
+  child=spawn(process.execPath,['--import','tsx','--input-type=module','-e',`import {ownDataDirectory} from ${JSON.stringify(resolve('server/ownership.ts'))}; const release=ownDataDirectory(process.argv[1]); process.once('exit',release); console.log('owned'); setInterval(()=>{},1000);`,directory],{stdio:['ignore','pipe','pipe']});
   await once(child.stdout!,'data');
   expect(()=>ownDataDirectory(directory)).toThrow('Another Speedrail server');
   const exited=once(child,'exit');child.kill('SIGKILL');await exited;

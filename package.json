@@ -9,12 +9,13 @@
   "homepage": "https://github.com/BerriAI/speedrail#readme",
   "bugs": { "url": "https://github.com/BerriAI/speedrail/issues" },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=26.4.0"
   },
   "bin": {
     "speedrail": "bin/speedrail.mjs"
   },
   "scripts": {
+    "preinstall": "node bin/check-node.mjs",
     "postinstall": "node scripts/prepare-terminal.mjs",
     "dev": "tsx watch server/index.ts",
     "tui": "node bin/speedrail.mjs",

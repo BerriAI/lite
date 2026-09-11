@@ -1,7 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { DatabaseSync } from 'node:sqlite';
+import '../bin/check-node.mjs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
+const { DatabaseSync } = await import('node:sqlite');
 
 const args = process.argv.slice(2), workspaces = [];
 let root = process.cwd();

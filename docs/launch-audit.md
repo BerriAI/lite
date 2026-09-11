@@ -34,6 +34,12 @@ Browser completion used a delayed cursor change that could run after the next ch
 
 Both composers suggest commands. Built-in web actions execute locally, without sending a provider request; project commands still expand arguments when sent. Setup recommends Sidekick Fusion, describes the model suited to each role, keeps Single model available, and preserves existing selections. The web sidebar shows the train alone. Mobile model settings can scroll while their action footer stays visible.
 
+### Unsupported Node versions could finish installation and then crash
+
+A subsequent coworker installation on Node 20.20.2 emitted `EBADENGINE` warnings, completed its build and link, then crashed because `node:sqlite` was unavailable. The current OpenTUI dependency also declares Node 26.4+. Package metadata now matches that minimum, repository npm configuration rejects unsupported engines, and a dependency-free preinstall/launcher check gives upgrade instructions. The server and migration entrypoints check before importing SQLite.
+
+The exact Node 20.20.2 runtime reproduced the original crash. The updated `npm ci` dry run rejected it before creating `node_modules`; CLI, built server, development server, and migration entrypoints all stopped with the explicit version message. The built-runtime integration test passed on exact Node 26.4.0, including restart, file undo/redo, and MCP lifecycle. This verifies runtime compatibility and the rejection path, not a complete cold dependency installation. The terminal startup suite also passed.
+
 ### License and bundled attribution
 
 The maintainer selected Apache-2.0. The repository now includes the full license, matching package metadata, and README guidance. The bundled terminal theme catalog includes OpenCode theme definitions; the audit verified an exact upstream match and restored the MIT attribution in `THIRD_PARTY_NOTICES.md`. Geist and Geist Mono retain their SIL Open Font License notices, which are also copied into the built web client.
@@ -50,7 +56,7 @@ These are substantive launch concerns. Missing IDE integration, cosmetic spacing
 
 ## Verification and limits
 
-- `npm run check`: typecheck, full unit/integration suite, and production build passed; 1,656 tests passed, one opt-in runtime test skipped.
+- `npm run check`: typecheck, full unit/integration suite, and production build passed; 1,661 tests passed, one opt-in runtime test skipped.
 - Full Chrome suite: all 138 tests passed. Covers permissions, rejected actions, cancellation, queue/steering, recovery, profiles, MCP lifecycle, browser storage, responsive setup, multiple workers, and session isolation.
 - Real PTY interaction suite passed: built-in autocomplete, gateway failure/retry with a masked key, recommended Sidekick setup, saved models, Allow all, live tool output, two workers, two experts, Sidekick handoff, narrow/wide views, and typing with 240 historical messages (about 62 ms in the measured sample).
 - Production terminal startup suite passed: bare `speedrail` on PATH, automatic backend startup, caller workspace, suspend/foreground, clean exit, and the backend remaining available.

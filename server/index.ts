@@ -1,11 +1,11 @@
-import { loadEnvFile } from 'node:process';
+import '../bin/check-node.mjs';
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import express from 'express';
-import { ownDataDirectory } from './ownership.js';
+const { default: express } = await import('express');
+const { ownDataDirectory } = await import('./ownership.js');
 
-if (existsSync('.env')) loadEnvFile('.env');
+if (existsSync('.env')) process.loadEnvFile('.env');
 const { createApp } = await import('./app.js');
 const { Store } = await import('./store.js');
 const { McpManager } = await import('./mcp.js');

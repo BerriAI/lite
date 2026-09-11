@@ -6,7 +6,11 @@ Connect through LiteLLM, OpenAI-compatible APIs, native Anthropic, or ChatGPT de
 
 ## Quick start
 
-For the macOS launch, use **Node 26.4+** and npm. Git is needed to clone the repository and use Git tools; Bash is needed for shell tools. Paste this once:
+For the macOS launch, use **Node 26.4+** and npm. Git is needed to clone the repository and use Git tools; Bash is needed for shell tools.
+
+Check `node --version` first. If it is older than 26.4, install Node 26.4+ from [nodejs.org](https://nodejs.org/en/download), reopen your terminal, and check again. Installation stops on an unsupported version.
+
+Install once:
 
 ```sh
 git clone https://github.com/BerriAI/speedrail.git &&
