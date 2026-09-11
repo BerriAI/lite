@@ -24,6 +24,14 @@ describe('Jobs background shell registry', () => {
     expect(jobs.list('s1')[0].exitCode).toBe(0);
   });
 
+  it('preserves a failed pipeline exit and drains its output before notifying completion', async () => {
+    let completion: number | undefined;
+    jobs.start('s1', 'printf "test failed\n"; (exit 7) | tail -8', dir, { onSettled: job => { completion = job.exitCode; } });
+    await jobs.waitForExit('s1', 'job-1', 2000);
+    expect(completion).toBe(7);
+    expect(await jobs.output('s1', 'job-1', 0)).toContain('test failed');
+  });
+
   it('numbers jobs per session with readable ids', async () => {
     jobs.start('s1', 'true', dir); jobs.start('s1', 'true', dir);
     const other = jobs.start('s2', 'true', dir);

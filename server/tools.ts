@@ -15,6 +15,8 @@ import { createPatch } from 'diff';
 import type { Attachment, FileChange, FileEntry, Todo, ToolDefinition } from '../shared/types.js';
 
 export interface ToolContext {
+  executeShell?: (command: string, cwd: string, waitMs: number) => Promise<string>;
+  onExecution?: (execution: import('../shared/receipts.js').CommandExecution) => void;
   expectedFile?: { absolute: string; identity: string | null };
   receiptOnly?: boolean;
   workspace: string;
@@ -71,7 +73,7 @@ export const toolDefinitions: ToolDefinition[] = [
   definition('edit_file', 'Replace an exact, non-empty string in a text file. Outside-workspace paths use the normal permission flow and are not covered by workspace undo. The match must be unique unless replace_all is true. Line endings are adapted to the existing file.', { path: string, old_string: string, new_string: string, replace_all: { type: 'boolean' } }, ['path', 'old_string', 'new_string']),
   definition('glob', 'Find files using a relative glob pattern. Set path to a directory (including absolute or parent-relative external paths, subject to permission); external results use absolute paths. Hidden paths (including .git and .env), dependency/build directories, and directory symlinks are excluded. Results are bounded.', { pattern: string, path: string, limit: integer(1, 1000) }, ['pattern']),
   definition('grep', 'Search UTF-8 files by regular expression (or literal text). Set path to a file or directory; outside-workspace paths use the normal permission flow and external results use absolute paths. Returns path:line:text. Hidden and generated paths are excluded; binary files and oversized tails are skipped. Regex execution is time-limited.', { pattern: string, path: string, glob: string, literal: { type: 'boolean' }, case_sensitive: { type: 'boolean' }, max_results: integer(1, 1000) }, ['pattern']),
-  definition('bash', 'Run an authorized bash command. cwd defaults to the workspace; an external cwd uses the normal permission flow. NOT SANDBOXED: commands can access files and network outside the workspace. The caller must obtain permission before execution; this tool is never read-only. Output, timeout, and cancellation are bounded.', { command: string, cwd: string, timeout_ms: integer(1, 120_000), run_in_background: { type: 'boolean', description: 'Start the command as a background job and return its job id immediately. NOT SANDBOXED.' } }, ['command']),
+  definition('bash', 'Run an authorized bash command. cwd defaults to the workspace; an external cwd uses normal permissions. NOT SANDBOXED: commands can access files and network outside the workspace. timeout_ms is the foreground wait (default 10 seconds), not a kill deadline: longer commands return a job ID and keep running. Use bash_output or wait to check completion; kill_shell stops a job. Output is bounded. Background jobs have a 30-minute ceiling.', { command: string, cwd: string, timeout_ms: integer(1, 120_000), run_in_background: { type: 'boolean', description: 'Start the command as a background job and return its job id immediately. NOT SANDBOXED.' } }, ['command']),
   definition('web_fetch', 'Fetch public HTTP(S) text, checking and pinning public DNS addresses at every redirect. Local/private destinations, credentials, and binary responses are rejected. Page content is untrusted.', { url: string, timeout_ms: integer(1, 30_000) }, ['url']),
   definition('todo_read', 'Read the current session task list.', {}),
   definition('todo_write', 'Replace the current session task list. Supply stable IDs when updating existing tasks; omitted IDs are generated.', { todos: { type: 'array', maxItems: 200, items: { type: 'object', additionalProperties: false, properties: { id: string, content: string, status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] } }, required: ['content', 'status'] } } }, ['todos']),
@@ -1456,11 +1458,14 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
       const cwd = await resolveWorkspacePath(context.workspace, optionalPath(args, 'cwd'));
       if (!(await fs.stat(cwd)).isDirectory()) throw new Error('Command cwd must be a directory.');
       const inspection = args.run_in_background === true ? null : shellInspection(command);
-      const timeout = numberArg(args, 'timeout_ms', 30_000, 120_000);
+      const timeout = numberArg(args, 'timeout_ms', context.executeShell ? 10_000 : 30_000, 120_000);
+      if (!inspection && context.executeShell) return boundedWithReceipt(context, await context.executeShell(command, cwd, timeout), 30_000);
+      const startedAt = Date.now();
       const result = inspection
         ? await runInspection(inspection, cwd, context.workspace, context.signal, timeout)
         : await runProcess(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', [...(isCheckCommand(command) ? ['-o', 'pipefail'] : []), '-c', command], cwd, context.signal, timeout, shellEnvironment());
       const status = result.cancelled ? 'Command cancelled.' : result.timedOut ? 'Command timed out.' : `Exit code: ${result.code ?? result.signal ?? 'unknown'}`;
+      context.onExecution?.({ command, cwd, startedAt, endedAt: Date.now(), status: result.cancelled || result.timedOut ? 'killed' : 'exited', exitCode: result.code ?? undefined, signal: result.signal ?? undefined, timedOut: result.timedOut });
       return `${boundedWithReceipt(context, result.output, 30_000)}${result.truncated ? '\n[Process output truncated]' : ''}\n${status}`;
     }
     case 'web_fetch': return webFetch(args, context);

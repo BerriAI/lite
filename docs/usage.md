@@ -8,7 +8,11 @@ Tool calls appear live beside the assistant text that introduced them. Consecuti
 
 Use **Steer** to change direction during a response. The note goes to the driver and stops active delegated work so it can apply the new instruction. **Queue** saves a separate follow-up turn. **Stop** cancels the active response and its workers.
 
-Session goals let Litespeed continue an objective across turns within a configured turn limit. Stop pauses continuation. Completed responses report recorded file changes, checks, and provider usage; expand the steps and review changed files to inspect the evidence. [Undo/redo and recovery](local-data.md) explain which changes can be restored.
+Session goals let Litespeed continue an objective across turns with no turn limit by default; you can set an optional limit. Stop pauses continuation. Completed responses report recorded file changes, checks, and provider usage; expand the steps and review changed files to inspect the evidence. [Undo/redo and recovery](local-data.md) explain which changes can be restored.
+
+**Completed · Needs review** means the Sidekick, worker, or expert finished its response but left an action or check unresolved. A failing test is evidence to investigate; it does not mean the model crashed. **Failed**, **Timed out**, and **Cancelled** describe an agent that did not finish, with the actual error or reason shown in its transcript.
+
+Slow shell commands keep running after the foreground wait (ten seconds by default). The agent receives a job ID and can read output or stop it; the wait is not a deadline to kill a build. Foreground commands finish before the turn closes, and their file changes remain available for Undo. Explicit background jobs can outlive a driver turn; their file effects are not captured for Undo. Jobs have a thirty-minute lifetime cap and do not survive a backend restart. Workers stall after ten minutes without model or tool progress, with approval waits excluded.
 
 ## Follow-ups and drafts
 
@@ -32,7 +36,7 @@ Set exact model limits under **Settings → provider → Context window override
 
 Litespeed compacts automatically as context approaches the model window, reserving room for output. If the gateway has not reported a limit, it uses a labeled 200,000-token planning window; configure the exact model limit for smaller or larger models. It uses provider-reported input usage to correct subsequent text estimates when the request configuration and history revision still match.
 
-Compaction can happen repeatedly within one long task. It preserves the latest user request, steering, and recent complete tool groups, summarizes earlier work, and archives the original history. Old tool results are pruned in the request first when that makes enough room. Compaction failures preserve the original history; consecutive retries cannot create an endless summary loop. A single oversized prompt, attachment, or tool group may still need a narrower read or a larger model. Summaries incur provider usage and can omit details.
+Compaction can happen repeatedly within one long task. It preserves the latest user request, steering, and recent complete tool groups, summarizes earlier work, and archives the original history. Old tool results are pruned in the request first when that makes enough room. An empty summary gets one retry; a worker can then use its captured driver model as a fallback. Thinking alone is never accepted as the summary. Failed attempts preserve history and allow another automatic attempt after eight further model steps. A single oversized prompt, attachment, or tool group may still need a narrower read or a larger model. Summaries incur provider usage and can omit details.
 
 Driver and worker turns have no fixed model-step ceiling. Stop, explicit permission rules, repeated-failure guards, worker stall detection, and provider limits still apply. Memory is on by default: the agent can save local workspace notes automatically, and you can review, delete, or disable them in Settings. Explicit Ask and Deny rules for memory tools take precedence.
 

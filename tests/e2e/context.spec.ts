@@ -111,7 +111,7 @@ test('proactive compaction archives older history, preserves the current task, a
 test('an empty proactive summary preserves original context and falls back to one ordinary completion', async ({ page, request }) => {
   await discover(request); const session = await imported(request, 'EMPTY_BUDGET_SUMMARY'), original = await detail(request, session.id); await open(page, session);
   const before = await calls(request); const completed = await send(page, request, session, 'Continue with the existing requirements.');
-  expect(await calls(request)).toBe(before + 2); expect(completed.messages.slice(0, original.messages.length)).toEqual(original.messages);
+  expect(await calls(request)).toBe(before + 3); expect(completed.messages.slice(0, original.messages.length)).toEqual(original.messages);
   expect(completed.messages.some(message => message.role === 'system')).toBe(false);
   const archives: { sessions: Session[] } = await (await request.get('/api/sessions?archived=true')).json();
   expect(archives.sessions.some(item => item.parentId === session.id)).toBe(false);

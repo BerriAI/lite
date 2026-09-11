@@ -92,6 +92,13 @@ try{
   const shuntSetup=await api(`/sessions/${session.id}`);assert.equal(shuntSetup.session.shunt.model.model,'budget-model');
   await api(`/sessions/${session.id}`,{shunt:{enabled:false},expectedConfigRevision:shuntSetup.session.configRevision},'PATCH');
   await api('/workspace-preferences',{workspace:settings.workspace,providerId:'fixture',model:'test-model',shunt:{enabled:false}});
+  terminal.write('/goal\r');await waitFor(()=>screen().includes('Turn limit: None'),'goal defaults to unlimited');
+  terminal.write('\r');await waitFor(()=>screen().includes('Goal objective'),'goal objective');terminal.write('A long task');await waitFor(()=>screen().includes('A long task'),'goal typed');terminal.write('\x13');
+  await waitFor(()=>screen().includes('Turn limit: None'),'goal review');terminal.write('\x1b[F\r');
+  await waitFor(async()=>(await api(`/sessions/${session.id}`)).session.goal?.status==='active','goal saved');
+  assert.equal((await api(`/sessions/${session.id}`)).session.goal.maxTurns,undefined);await save('03-unlimited-goal');
+  await api(`/sessions/${session.id}/goal`,undefined,'DELETE');terminal.write('\x1b');
+  await waitFor(()=>!screen().includes('New objective'),'goal panel closed');
   await save('03-start');
   terminal.write('/settings\r');await waitFor(()=>screen().includes('API connections and ChatGPT sign-in'),'settings menu');
   terminal.write('\x1b[H\r');await waitFor(()=>screen().includes('+ Add provider'),'providers menu');

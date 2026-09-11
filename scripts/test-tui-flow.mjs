@@ -48,7 +48,7 @@ try{
  const session=await api('/sessions',{workspace:settings.workspace,providerId:'fixture',model:'test-model',architecture:{kind:'sidekick-fusion',sidekick:{providerId:'fixture',model:'test-fast'}},permissionMode:'ask'});
  emulator=new xterm.Terminal({cols:120,rows:38,allowProposedApi:true});
  terminal=pty.spawn(process.execPath,['bin/litespeed.mjs','tui','--url',base,'--session',session.id],{cwd:root,cols:120,rows:38,name:'xterm-256color',env:{...process.env,TERM:'xterm-256color',LITESPEED_DISABLE_PROJECT_CONFIG:'1',XDG_CONFIG_HOME:config,XDG_STATE_HOME:config}});
- terminal.onData(chunk=>emulator.write(chunk,record));await waitFor(()=>screen().includes('Ctrl+P Commands'),'TUI starts');
+ terminal.onData(chunk=>emulator.write(chunk,record));await waitFor(()=>screen().includes('Ask Litespeed to do something…')&&screen().includes('Ctrl+P Commands'),'TUI composer starts');
  terminal.write('TUI_FLOW_DRIVER inspect and update the note.\r');
  let approved=new Set(),captured=false,childRequest=false;
  await waitFor(async()=>{

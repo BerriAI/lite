@@ -27,7 +27,7 @@ See [installation, updates, and the source-build alternative](docs/installing.md
 
 Litespeed has its own command, separate from the [LiteLLM gateway CLI](https://docs.litellm.ai/docs/proxy/management_cli). If you used an earlier version of this agent, follow the [upgrade guide](docs/upgrading.md) to carry over saved sessions and configuration.
 
-1. On your first launch, enter your **LiteLLM gateway base URL** and **API key**, then choose your setup and models. **Sidekick Fusion is recommended:** pick a powerful driver and an efficient coding workhorse as its Sidekick. Choose **Single model** if you prefer one model for everything. Litespeed remembers the connection and model; running `litespeed` in another project opens chat directly.
+1. On your first launch, choose your setup, connect your **LiteLLM gateway base URL** and **API key**, and pick your models. **Sidekick Fusion is recommended:** pick a powerful driver and an efficient coding workhorse as its Sidekick. Choose **Single model** if you prefer one model for everything. Litespeed remembers the connection and models; running `litespeed` in another project opens chat directly. Gateways that do not require a key can leave it blank.
 2. Use **Models** or `/models` to change your arrangement. **Ask first** is the default; **Allow all tools** is available in permissions. The full setup is available from the web sidebar or `/setup`.
 3. Type a task. **Build** can edit files and run commands; **Plan** uses read-only tools. Type `/` for command suggestions in either client; use **↑/↓**, **Tab** or **Enter** to complete, and **Esc** to dismiss. **Ctrl+P** opens terminal commands and navigation.
 
@@ -53,6 +53,8 @@ Choose any connected model for each role. An optional **Planner model** handles 
 ## Additional options
 
 **Shunt** sends large reads and routine generation to a separate model. Off by default; enable it in **Advanced settings** during setup or in Models, in either client. [How it works and measured results](docs/shunt.md).
+
+**Session goals** (`/goal`) keep an objective moving across turns. There is no turn limit unless you set one. [Context compaction](docs/context-management.md) makes room during long tasks automatically.
 
 ## Guides
 

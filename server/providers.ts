@@ -254,7 +254,7 @@ async function* chatStream(response: Response, signal: AbortSignal, scope: { pro
     if (choice.finish_reason) {
       if (choice.finish_reason === 'length') throw new ProviderError('The model reached its output limit. No partial tool calls were executed.');
       if (choice.finish_reason === 'content_filter') throw new ProviderError('The provider stopped the response because of content filtering.');
-      if(requireCompleteText && choice.finish_reason !== 'stop') throw new ProviderError('Shunt did not return a complete text response. No generated file was written.');
+      if(requireCompleteText && choice.finish_reason !== 'stop') throw new ProviderError('The model did not return a complete text response. No generated content was applied.');
       finished = true;
     }
   }
@@ -344,7 +344,7 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
       if (chunk.delta?.stop_reason === 'max_tokens') { yield {type:'usage',usage:tokens}; throw new ProviderError('The model reached its output limit. No partial tool calls were executed.'); }
     }
     if (type === 'message_stop') {
-      if(requireCompleteText && stopReason !== 'end_turn') { yield {type:'usage',usage:tokens}; throw new ProviderError('Shunt did not return a complete text response. No generated file was written.'); }
+      if(requireCompleteText && stopReason !== 'end_turn') { yield {type:'usage',usage:tokens}; throw new ProviderError('The model did not return a complete text response. No generated content was applied.'); }
       const blocks = [...thinking].sort(([a], [b]) => a - b).map(([, block]) => block).filter(block => block.type === 'redacted_thinking' || block.signature);
       if (blocks.length) yield { type: 'metadata', metadata: { ...scope, anthropicThinking: blocks } };
       finished = true; yield { type: 'usage', usage: tokens }; break;

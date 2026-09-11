@@ -47,7 +47,17 @@ export function computeReceipts(messages: Message[], sinceMessageId: string | un
         // looked at it, so those never clear the flag (documented limitation).
         const read = firstRead.get(path);
         if (read === undefined || read >= seq) unread.add(path);
-      } else if ((call.name === 'bash' || call.name === 'verify') && call.args.run_in_background !== true) {
+      } else if (call.execution && call.execution.status !== 'running') {
+        const execution = call.execution;
+        commandsRun.push(execution.command);
+        if (execution.checkKey) {
+          checksRun.push(execution.command);
+          if (execution.status !== 'exited' || execution.exitCode !== 0) {
+            checksFailed.push(execution.command); unresolvedChecks.set(execution.checkKey, execution.command);
+          } else unresolvedChecks.delete(execution.checkKey);
+          lastCheck = seq;
+        }
+      } else if (!call.execution && (call.name === 'bash' || call.name === 'verify') && call.args.run_in_background !== true) {
         const command = typeof call.args.command === 'string' ? call.args.command : '';
         commandsRun.push(command);
         if (call.name === 'verify' || isCheckCommand(command)) {

@@ -94,7 +94,7 @@ describe('context budget Runner and API integration', () => {
       else text(res, failure === 'empty' ? '' : failure === 'oversized' ? 'x'.repeat(24001) : 'Summary');
     };
     try { await run(s.id); } finally { if (failure === 'sql') store.db.exec('DROP TRIGGER fail_context'); }
-    expect(calls).toHaveLength(2); expect(calls.filter(summaryRequest)).toHaveLength(1); expect(store.sessions('', true)).toHaveLength(0);
+    expect(calls).toHaveLength(failure === 'empty' ? 3 : 2); expect(calls.filter(summaryRequest)).toHaveLength(failure === 'empty' ? 2 : 1); expect(store.sessions('', true)).toHaveLength(0);
     expect(store.messages(s.id).slice(0, before.length)).toEqual(before); expect(snapshots(s.id).at(-1)?.reason).toContain('failed'); expect(store.session(s.id).status).toBe('idle');
     await exactHistory(s.id, before);
   });
@@ -107,6 +107,61 @@ describe('context budget Runner and API integration', () => {
     expect(calls[1].messages.some((message: any) => message.content === before[0].content)).toBe(false);
     expect(store.sessions('', true)).toHaveLength(1); expect(snapshots(s.id).at(-1)?.reason).toContain('compacted');
     await exactHistory(s.id, before);
+  });
+
+  it('retries automatic compaction after eight further steps instead of disabling it for the whole turn', async () => {
+    const {s}=seed();let summaries=0,steps=0;
+    store.updateSession(s.id,{permissionMode:'auto'});
+    respond=(body,res)=>{
+      if(summaryRequest(body))return text(res,++summaries<3?'':'Recovered after further progress.');
+      if(++steps>9)return text(res,'Finished');
+      res.writeHead(200,{'Content-Type':'text/event-stream'});
+      delta(res,{tool_calls:[{index:0,id:`todo-${steps}`,type:'function',function:{name:'todo_write',arguments:JSON.stringify({todos:[{id:'progress',content:`Completed inspection ${steps}`,status:'completed'}]})}}]});
+      res.end(`data: ${JSON.stringify({choices:[{delta:{},finish_reason:'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
+    };
+    await run(s.id);
+    expect(summaries).toBe(3);expect(steps).toBe(10);
+    const summaryIndices=calls.flatMap((call,index)=>summaryRequest(call)?[index]:[]);
+    expect(summaryIndices[2]-summaryIndices[1]-1).toBe(8);
+    expect(store.sessions('',true)).toHaveLength(1);
+    expect(store.messages(s.id)[0].content).toContain('Recovered after further progress.');
+    expect(store.messages(s.id).at(-1)?.content).toBe('Finished');
+  });
+
+  it('waits for pending process receipts before overflow compaction archives their messages', async () => {
+    const {s}=seed(1000);let ordinary=0,jobId='';
+    respond=(body,res)=>{
+      if(summaryRequest(body))return text(res,'The earlier command exited successfully.');
+      if(++ordinary===1)return overflow(res);
+      text(res,'Continued after the job finished.');
+    };
+    const message:Message={id:randomUUID(),sessionId:s.id,role:'assistant',content:'Earlier command',createdAt:3};
+    store.saveMessage(message);
+    jobId=runner.jobs.start(s.id,'sleep 0.1; echo CHECK_FINISHED',directory,{onSettled:job=>{message.content=`Earlier command exit ${job.exitCode}`;store.saveMessage(message);}}).id;
+    await run(s.id);
+    expect(runner.jobs.get(s.id,jobId)?.exitCode).toBe(0);
+    expect(calls.filter(summaryRequest)).toHaveLength(1);
+    expect(store.messages(s.id).some(item=>item.id===message.id)).toBe(false);
+    const archived=store.sessions('',true)[0];
+    expect(store.messages(archived.id).find(item=>item.content==='Earlier command exit 0')).toBeTruthy();
+  });
+
+  it('retries a reasoning-only summary and commits only the final text, preserving undo and usage', async () => {
+    const {s,before}=seed();let summaries=0;
+    respond=(body,res)=>{
+      if(!summaryRequest(body))return text(res,'Continued after recovery');
+      if(++summaries===1) {
+        res.writeHead(200,{'Content-Type':'text/event-stream'});delta(res,{reasoning_content:'PRIVATE_REASONING_ONLY'});
+        res.end(`data: ${JSON.stringify({choices:[{delta:{},finish_reason:'stop'}],usage:{prompt_tokens:1000,completion_tokens:50}})}\n\ndata: [DONE]\n\n`);
+      } else text(res,'Recovered continuation summary.');
+    };
+    await run(s.id);
+    expect(summaries).toBe(2);expect(store.sessions('',true)).toHaveLength(1);
+    const history=store.messages(s.id);expect(history[0].content).toContain('Recovered continuation summary.');
+    expect(JSON.stringify(history)).not.toContain('PRIVATE_REASONING_ONLY');
+    expect(calls.filter(summaryRequest)[1].messages[0].content).toContain('previous attempt produced no final text');
+    expect((store.db.prepare("SELECT count(*) as n FROM request_usage WHERE json_extract(data,'$.phase')='compaction'").get() as {n:number}).n).toBe(2);
+    await exactHistory(s.id,before);
   });
 
   it('progress uses one ephemeral assistant ID, reload reports running, and reset removes it before completion', async () => {

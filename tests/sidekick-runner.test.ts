@@ -171,7 +171,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(store.messages(session.id).at(-1)?.receipts).toMatchObject({checksFailed:[failed],unresolvedChecks:[],checksRun:[failed,retry]});
   });
 
-  it.each(['sidekick-fusion', 'team-fusion', 'expert-fusion'] as const)('finishes %s after retrying a timed-out test with a different tail length', async kind=>{
+  it.each(['sidekick-fusion', 'team-fusion', 'expert-fusion'] as const)('finishes %s without killing a slow test when the foreground wait expires', async kind=>{
     let step=0;
     respond=(body,res)=>{
       if(side(body)) {
@@ -185,7 +185,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     const session=await create({architecture});await run(session.id);
     const task=runner.delegations.list(session.id)[0], child=runner.delegations.transcript(session.id,task.id);
     expect(task.status).toBe('completed');
-    expect(child.messages.flatMap(m=>m.toolCalls??[]).map(t=>t.output)).toEqual(expect.arrayContaining([expect.stringContaining('Command timed out.'),expect.stringContaining('Exit code: 0')]));
+    expect(child.messages.flatMap(m=>m.toolCalls??[]).map(t=>t.output)).toEqual(expect.arrayContaining([expect.stringContaining('Command is still running as'),expect.stringContaining('Exit code: 0')]));
   });
 
   it('accepts repairOf for a completed assignment that failed driver review', async()=>{
@@ -226,7 +226,70 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
       else body.messages.some((m:any)=>m.role==='tool')?text(res):tools(res,[{name:'sidekick',args:{description:'Check',prompt:'Run npm test.'}}]);
     };
     const session=await create();await run(session.id);
-    expect(runner.delegations.list(session.id)[0]).toMatchObject({status:'failed',error:expect.stringContaining('Check did not pass: npm test | tail -8')});
+    expect(runner.delegations.list(session.id)[0]).toMatchObject({status:'completed',verificationNote:expect.stringContaining('Check did not pass: npm test | tail -8')});
+  });
+
+  it('resolves foreground npm test failures with real background Vitest completion and retains durable evidence', async()=>{
+    await mkdir(join(directory,'node_modules/.bin'),{recursive:true});
+    await writeFile(join(directory,'package.json'),JSON.stringify({scripts:{test:'vitest run'}}));
+    await writeFile(join(directory,'node_modules/.bin/vitest'),'#!/bin/sh\nif [ -f .attempted ]; then echo "Tests passed"; exit 0; fi\ntouch .attempted\necho "Tests failed"\nexit 1\n',{mode:0o755});
+    let step=0;
+    respond=(body,res)=>{
+      if(side(body)) {
+        const actions=[
+          {name:'bash',args:{command:'npm test 2>&1 | tail -50'}},
+          {name:'bash',args:{command:'npx vitest run 2>&1 | tail -80',run_in_background:true}},
+          {name:'wait',args:{job_ids:['job-2'],timeout_ms:3000}},
+          {name:'bash_output',args:{job_id:'job-2'}},
+        ];
+        if(step<actions.length)tools(res,[actions[step++]]);else text(res,'Rerun passed.');
+      }else body.messages.some((m:any)=>m.role==='tool')?text(res):tools(res,[{name:'sidekick',args:{description:'Check and retry',prompt:'Run the checks.'}}]);
+    };
+    const session=await create();await run(session.id);
+    const task=runner.delegations.list(session.id)[0];
+    expect(task.status).toBe('completed');expect(task.verificationNote).toBeUndefined();
+    const expected={checksFailed:['npm test 2>&1 | tail -50'],unresolvedChecks:[],checksRun:['npm test 2>&1 | tail -50','npx vitest run 2>&1 | tail -80']};
+    expect(store.messages(session.id).at(-1)?.receipts).toMatchObject(expected);
+    const reopened=new Store(store.directory);
+    try {expect(reopened.messages(session.id).at(-1)?.receipts).toMatchObject(expected);} finally {reopened.close();}
+    const executions=runner.delegations.transcript(session.id,task.id).messages.flatMap(m=>m.toolCalls??[]).flatMap(c=>c.execution?[c.execution]:[]);
+    expect(executions.map(e=>e.exitCode)).toEqual([1,0]);
+    expect(executions[0].checkKey).toBe(executions[1].checkKey);
+  });
+
+  it('falls back to the captured driver after two empty worker summaries and keeps the worker model for continuation', async()=>{
+    const configured=store.settings().providers[0];
+    store.saveSettings({providers:[{...configured,contextWindows:{'side-model':16384,model:200000}}]});
+    let summaryCalls=0;
+    respond=(body,res)=>{
+      if(String(body.messages?.[0]?.content).startsWith('Summarize the supplied conversation')) {
+        summaryCalls++;
+        if(side(body))stream(res,{reasoning_content:'PRIVATE_SUMMARY_THINKING'});
+        else text(res,'The preserved project decision is BRONZE_CEDAR.');
+      }else if(side(body))text(res,'BRONZE_CEDAR');
+      else body.messages.some((m:any)=>m.role==='tool')?text(res):tools(res,[{name:'sidekick',args:{description:'Continue',prompt:'Continue with the earlier decision.'}}]);
+    };
+    const session=await create();
+    const unsubscribe=runner.bus.subscribe(session.id,event=>{
+      if(event.type!=='delegation')return;
+      const d=event.data as {status:string;childSessionId:string};if(d.status!=='running')return;
+      const id=d.childSessionId;
+      if(store.messages(id).length>1)return;
+      store.replaceMessages(id,[
+        {id:'old-request',sessionId:id,role:'user',content:'Remember BRONZE_CEDAR.',createdAt:1},
+        {id:'old-report',sessionId:id,role:'assistant',content:'Old work '+ 'x'.repeat(65000),createdAt:2},
+        ...store.messages(id),
+      ]);
+    });
+    try {await run(session.id);} finally {unsubscribe();}
+    expect(summaryCalls).toBe(3);
+    const task=runner.delegations.list(session.id)[0];expect(task.status).toBe('completed');
+    const messages=store.messages(task.childSessionId);
+    expect(messages[0].content).toContain('BRONZE_CEDAR');expect(JSON.stringify(messages)).not.toContain('PRIVATE_SUMMARY_THINKING');
+    const summaries=calls.filter(body=>String(body.messages?.[0]?.content).startsWith('Summarize the supplied conversation'));
+    expect(summaries.map(body=>body.model)).toEqual(['side-model','side-model','model']);
+    expect(calls.findLast(side).messages[0].content).not.toContain('Summarize the supplied conversation');
+    expect(summaries.every(body=>body._sessionId===session.id)).toBe(true);
   });
 
   it.each(['repair', 'takeover'] as const)('resolves a failed Expert invocation through explicit %s and root verification', async recovery => {
@@ -237,7 +300,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
       if(side(body)) {
         const brief=body.messages.find((message:any)=>message.role==='user').content;
         if(body.messages.at(-1)?.role==='tool')text(res,'Worker report.');
-        else if(brief==='first')tools(res,[{name:'edit_file',args:{path:'note.txt',old_string:'missing text',new_string:'fixed'}}]);
+        else if(brief==='first'){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Model execution failed.'}}));}
         else tools(res,[{name:'write_file',args:{path:'note.txt',content:'fixed'}}]);
       }else {
         const count=body.messages.filter((message:any)=>message.role==='tool').length;
@@ -323,17 +386,17 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(runner.delegations.list(s.id)[0].status).toBe('completed');
   });
 
-  it('a denied mutation preserves its failed record and a later assignment gets a fresh context',async()=>{
+  it('a denied mutation remains visible as needing review and the sidekick keeps its context',async()=>{
     const s=await create({permissionMode:'ask'});runner.start(s.id,'ROOT guarded');
     await until(()=>runner.permissions(s.id).length===1);runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');
     await until(()=>runner.permissions(s.id).length===1);const write=runner.permissions(s.id)[0];runner.decide(s.id,write.id,'deny');await runner.whenIdle();
     await expect(readFile(join(directory,'note.txt'),'utf8')).rejects.toThrow();
-    const first=runner.delegations.list(s.id)[0];expect(first.status).toBe('failed');
+    const first=runner.delegations.list(s.id)[0];expect(first.status).toBe('completed');expect(first.verificationNote).toContain('denied');
     const before=first.childSessionId;
     runner.start(s.id,'ROOT retry');
     await until(()=>runner.permissions(s.id).length===1);runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');
     await until(()=>runner.permissions(s.id).length===1);runner.decide(s.id,runner.permissions(s.id)[0].id,'allow');await runner.whenIdle();
-    const after=runner.delegations.list(s.id);expect(after).toHaveLength(2);expect(after[0]).toEqual(first);expect(after[1].childSessionId).not.toBe(before);
+    const after=runner.delegations.list(s.id);expect(after).toHaveLength(2);expect(after[0]).toEqual(first);expect(after[1].childSessionId).toBe(before);
   });
 
   it('an interrupted sidekick is replaced by a fresh child instead of resuming a torn transcript',async()=>{
@@ -396,7 +459,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     store.saveSettings({hooks:[{event:'PreToolUse',matcher:'write_file',command:'exit 2'}]});
     const observed=vi.spyOn(runner.hooks,'run');const s=await create();await run(s.id);
     await expect(readFile(join(directory,'note.txt'),'utf8')).rejects.toThrow();
-    const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('failed');
+    const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('completed');expect(d.verificationNote).toBeTruthy();
     expect(observed.mock.calls[0][0]).toMatchObject({sessionId:s.id,actorSessionId:d.childSessionId,invocationId:d.id,tool:'write_file'});
   });
 
@@ -427,7 +490,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
   it('stops unfinished worker jobs before settling and reports incomplete verification',async()=>{
     respond=(body,res)=>{if(side(body)){if(body.messages.at(-1)?.role==='tool')text(res,'All done');else tools(res,[{name:'bash',args:{command:'sleep 60',run_in_background:true}}]);}else if(body.messages.at(-1)?.role==='tool')text(res);else tools(res,[{name:'sidekick',args:{description:'Background work',prompt:'SIDE run'}}]);};
     const s=await create();await run(s.id);
-    const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('failed');
+    const d=runner.delegations.list(s.id)[0];expect(d.status).toBe('completed');expect(d.verificationNote).toBeTruthy();
     expect(runner.jobs.list(d.childSessionId)).toHaveLength(1);
     expect(runner.jobs.list(d.childSessionId)[0].status).not.toBe('running');
     expect(store.messages(s.id).find(m=>m.role==='tool')?.content).toContain('unfinished background');

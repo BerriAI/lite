@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, type Server, type ServerResponse } from 'node:http';
@@ -75,6 +75,32 @@ describe('background shell jobs in the Runner', () => {
     expect(poll.output).toContain('POLLED_LINE');
     // Read-only bash_output never prompts (and auto mode never prompts for bash).
     expect(prompts(s.id)).toEqual([]);
+  });
+
+  it('waits for a yielded foreground command before sealing and records its complete file changes for Undo', async () => {
+    let step=0;
+    respond=(_body,res)=>step++===0?tools(res,[{name:'bash',args:{command:'sleep 0.15; echo completed > result.txt',timeout_ms:5}}]):text(res,'The command has completed.');
+    const session=await create({permissionMode:'auto'});await run(session.id);
+    const call=toolCalls(session.id).find(c=>c.name==='bash')!;
+    expect(call.output).toContain('Command is still running as');
+    expect(call.execution).toMatchObject({status:'exited',exitCode:0,timedOut:false});
+    expect(call.changes?.map(change=>change.path)).toContain('result.txt');
+    expect(await readFile(join(directory,'result.txt'),'utf8')).toBe('completed\n');
+    expect(calls).toHaveLength(3);
+    await runner.exclusive(session.id,()=>runner.history.undo(session.id,runner.history.state(session.id).undoId!));
+    await expect(readFile(join(directory,'result.txt'),'utf8')).rejects.toThrow();
+  });
+
+  it('cancels a yielded foreground command and reaps its process before turn cleanup', async () => {
+    let step=0;
+    respond=(_body,res)=>{if(step++===0)tools(res,[{name:'bash',args:{command:'sleep 5; echo too-late > result.txt',timeout_ms:5}}]);};
+    const session=await create({permissionMode:'auto'});runner.start(session.id,'Run a slow command');
+    await until(()=>calls.length===2);
+    const pid=runner.jobs.list(session.id)[0].pid!;
+    runner.cancel(session.id);await runner.whenIdle();
+    expect(runner.jobs.list(session.id)[0].status).toBe('killed');
+    expect(()=>process.kill(pid,0)).toThrow();
+    await expect(readFile(join(directory,'result.txt'),'utf8')).rejects.toThrow();
   });
 
   it('prompts for run_in_background in ask mode with the command visible, and a deny rule blocks it', async () => {

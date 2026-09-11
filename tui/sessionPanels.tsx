@@ -1,5 +1,6 @@
 /** @jsxImportSource @opentui/react */
 import { useTerminalDimensions } from '@opentui/react';
+import { goalTurnLabel } from '../shared/goals.js';
 import { TaskProgress } from './tasks.js';
 import { useState, useSyncExternalStore } from 'react';
 import { isRunning, type TerminalController } from './controller.js';
@@ -7,15 +8,15 @@ import { Dialog, Menu, TextPrompt, TextViewer } from './ui.js';
 
 export function GoalPanel({ controller, onClose }: { controller: TerminalController; onClose: () => void }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState), goal = state.sync.detail?.session.goal;
-  const [text, setText] = useState(''), [turns, setTurns] = useState(10), [view, setView] = useState('main'), [error, setError] = useState('');
+  const [text, setText] = useState(''), [turns, setTurns] = useState<number | undefined>(), [view, setView] = useState('main'), [error, setError] = useState('');
   const blocked = isRunning(state.sync.detail) || Boolean(state.pending) || Boolean(state.sync.detail?.history?.pendingRecovery);
   if (view === 'text') return <TextPrompt title="Goal objective" multiline value={text} onClose={() => setView('main')} onSave={value => { setText(value); setView('main'); }} />;
-  if (view === 'turns') return <TextPrompt title="Maximum turns (1–25)" error={error} value={String(turns)} onClose={() => setView('main')} onSave={value => { const n = Number(value); if (Number.isInteger(n) && n >= 1 && n <= 25) { setTurns(n); setError(''); setView('main'); } else setError('Enter a whole number from 1 to 25.'); }} />;
+  if (view === 'turns') return <TextPrompt title="Turn limit (blank for no limit)" error={error} value={turns === undefined ? '' : String(turns)} onClose={() => setView('main')} onSave={value => { const n = value.trim() ? Number(value) : undefined; if (n === undefined || (Number.isSafeInteger(n) && n >= 1)) { setTurns(n); setError(''); setView('main'); } else setError('Enter a positive whole number, or leave blank for no limit.'); }} />;
   if (view === 'details') return <TextViewer title="Session goal" text={`${goal?.text ?? ''}\n\n${goal?.lastReport?.note ?? ''}`} onClose={() => setView('main')} />;
   return <Menu title="Session goal" search={false} onClose={onClose} footer={state.notice || 'Set an objective, then send a message to begin. Stop pauses continuation.'} items={[
-    ...(goal && goal.status !== 'cleared' ? [{ id: 'current', label: `${goal.status} · ${goal.turns} / ${goal.maxTurns} turns`, description: goal.text, action: () => setView('details') }, { id: 'clear', label: 'Clear goal', disabled: blocked, action: () => { void controller.action('Clearing goal', () => controller.client.api(controller.path('/goal'), undefined, 'DELETE')); } }] : []),
+    ...(goal && goal.status !== 'cleared' ? [{ id: 'current', label: `${goal.status} · ${goalTurnLabel(goal.turns, goal.maxTurns)}`, description: goal.text, action: () => setView('details') }, { id: 'clear', label: 'Clear goal', disabled: blocked, action: () => { void controller.action('Clearing goal', () => controller.client.api(controller.path('/goal'), undefined, 'DELETE')); } }] : []),
     { id: 'text', label: 'New objective', description: text || 'One outcome to pursue across turns', disabled: goal?.status === 'active', action: () => setView('text') },
-    { id: 'turns', label: `Maximum turns: ${turns}`, disabled: goal?.status === 'active', action: () => setView('turns') },
+    { id: 'turns', label: `Turn limit: ${turns ?? 'None'}`, disabled: goal?.status === 'active', action: () => setView('turns') },
     { id: 'save', label: 'Set goal', separatorBefore: true, disabled: blocked || goal?.status === 'active' || !text.trim() || text.length > 2000, action: () => { void controller.action('Setting goal', () => controller.client.api(controller.path('/goal'), { text: text.trim(), maxTurns: turns })); } },
   ]} />;
 }

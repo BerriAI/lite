@@ -13,7 +13,7 @@ type Props = { task?: DelegationSummary; call: ToolCall; label: string; controll
 function WorkerActivity({ detail, error, retry, task, call, label, controller, width, needsApproval, defaultOpen = false, renderTranscript }: Props & { detail?: DelegationDetail | null; error?: string; retry?: () => void }) {
   const theme = useTheme(), [expanded, setExpanded] = useState<boolean | null>(null);
   const open = expanded ?? defaultOpen;
-  const status = task ? task.status === 'running' ? 'Working' : task.status.replaceAll('_', ' ') : needsApproval ? 'Needs approval' : call.status === 'pending' ? 'Queued' : call.status === 'running' ? 'Starting' : call.status;
+  const status = task ? task.status === 'running' ? 'Working' : task.status === 'completed' && task.verificationNote ? 'Completed · Needs review' : task.status.replaceAll('_', ' ') : needsApproval ? 'Needs approval' : call.status === 'pending' ? 'Queued' : call.status === 'running' ? 'Starting' : call.status;
   const description = task?.description || String(call.args.description || 'Assignment');
   const count = detail?.messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
   const summary = count === undefined ? description : count ? `${count} ${count === 1 ? 'step' : 'steps'}` : 'Response';
@@ -30,6 +30,7 @@ function WorkerActivity({ detail, error, retry, task, call, label, controller, w
         {error && <><text fg={toHex(theme.warning)} wrapMode="word">{terminalText(error, true)}</text>{retry && <Button onPress={retry}>Retry transcript</Button>}</>}
         {task && !detail && !error && <text fg={toHex(theme.textMuted)}>Connecting to transcript…</text>}
         {detail && renderTranscript(detail, Math.max(24, width - 2))}
+        {task?.verificationNote && <text fg={toHex(theme.warning)} wrapMode="word">{terminalText(task.verificationNote, true)}</text>}
         {!task && <text fg={toHex(call.status === 'error' ? theme.error : theme.textMuted)} wrapMode="word">{terminalText(call.output || (needsApproval ? 'Waiting for your approval.' : call.status === 'running' ? 'Starting this assignment…' : 'Waiting to start.'), true)}</text>}
       </>}
       {task?.error && <text fg={toHex(theme.error)} wrapMode="word">{terminalText(task.error, true)}</text>}

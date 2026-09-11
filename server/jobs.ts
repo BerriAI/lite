@@ -16,6 +16,7 @@ export type JobStatus = 'running' | 'exited' | 'killed' | 'failed';
 export interface JobView { id: string; command: string; status: JobStatus; pid?: number; startedAt: number; endedAt?: number; exitCode?: number; signal?: string; timedOut: boolean; truncated: boolean }
 
 interface Job {
+  hidden?: boolean;
   id: string; sessionId: string; command: string;
   child?: ChildProcess; pid?: number;
   startedAt: number; endedAt?: number;
@@ -26,6 +27,8 @@ interface Job {
   dropped: number;         // Bytes discarded from the head since cursor last read.
   consumed: boolean;       // Whether the completion notice has been drained.
   waiters: Set<() => void>;// Resolved on any status/output change.
+  onSettled?: (job: JobView) => void;
+  onProgress?: () => void;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -46,7 +49,7 @@ export class Jobs {
 
   /** Start a background job. cwd is validated by the caller (the bash tool path).
    * Rejects when the per-session running cap is reached. */
-  start(sessionId: string, command: string, cwd: string): JobView {
+  start(sessionId: string, command: string, cwd: string, callbacks?: { hidden?: boolean; onSettled?: (job: JobView) => void; onProgress?: () => void }): JobView {
     if (typeof command !== 'string' || !command.trim()) throw new Error('command must be a non-empty string.');
     if (command.length > COMMAND_LIMIT || command.includes('\0')) throw new Error('Command is too large or contains a null byte.');
     const session = this.forSession(sessionId);
@@ -59,16 +62,17 @@ export class Jobs {
     const count = (this.counters.get(sessionId) ?? 0) + 1;
     this.counters.set(sessionId, count);
     const id = `job-${count}`;
-    const job: Job = { id, sessionId, command, startedAt: Date.now(), status: 'running', timedOut: false, truncated: false, output: Buffer.alloc(0), cursor: 0, dropped: 0, consumed: false, waiters: new Set() };
+    const job: Job = { id, sessionId, command, startedAt: Date.now(), status: 'running', timedOut: false, truncated: false, output: Buffer.alloc(0), cursor: 0, dropped: 0, consumed: false, waiters: new Set(), ...callbacks };
     this.jobs.set(this.key(sessionId, id), job);
     // Same shell and environment as the foreground bash tool: /bin/bash -c with
     // harness credentials stripped. detached so we can signal the whole tree.
     let child: ChildProcess;
     try {
-      child = spawn(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', ['-c', command], { cwd, env: shellEnvironment(), detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+      child = spawn(process.platform === 'win32' ? 'bash.exe' : '/bin/bash', ['-o', 'pipefail', '-c', command], { cwd, env: shellEnvironment(), detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     } catch (error) {
       job.status = 'failed'; job.endedAt = Date.now();
       job.output = Buffer.from(`Could not start job: ${errorMessage(error)}`);
+      this.settle(job);
       return this.view(job);
     }
     job.child = child; job.pid = child.pid;
@@ -83,11 +87,13 @@ export class Jobs {
         job.cursor = Math.max(0, job.cursor - overflow);
       }
       this.wake(job);
+      job.onProgress?.();
     };
     child.stdout?.on('data', append);
     child.stderr?.on('data', append);
     child.once('error', error => { if (job.status === 'running') { job.status = 'failed'; job.endedAt = Date.now(); append(Buffer.from(`\n[Job process error: ${errorMessage(error)}]`)); this.settle(job); } });
-    child.once('exit', (code, signal) => {
+    child.once('exit', () => this.signalTree(job, 'SIGKILL'));
+    child.once('close', (code, signal) => {
       // A shell can exit before its background descendants. Reap the owned
       // process group now, while its identity still belongs to this job.
       this.signalTree(job, 'SIGKILL');
@@ -103,7 +109,11 @@ export class Jobs {
     return this.view(job);
   }
 
-  private settle(job: Job): void { if (job.timer) { clearTimeout(job.timer); job.timer = undefined; } this.wake(job); }
+  private settle(job: Job): void {
+    if (job.timer) { clearTimeout(job.timer); job.timer = undefined; }
+    const notify = job.onSettled; job.onSettled = undefined;
+    try { notify?.(this.view(job)); } finally { this.wake(job); }
+  }
   private wake(job: Job): void { for (const resolve of job.waiters) resolve(); job.waiters.clear(); }
   private waitChange(job: Job, ms: number): Promise<void> {
     if (job.status !== 'running' || ms <= 0) return Promise.resolve();
@@ -125,7 +135,19 @@ export class Jobs {
     return { id: job.id, command: job.command, status: job.status, pid: job.pid, startedAt: job.startedAt, endedAt: job.endedAt, exitCode: job.exitCode, signal: job.signal, timedOut: job.timedOut, truncated: job.truncated };
   }
   /** Detail-only projection for the session API. */
-  list(sessionId: string): JobView[] { return this.forSession(sessionId).sort((a, b) => a.startedAt - b.startedAt).map(job => this.view(job)); }
+  list(sessionId: string): JobView[] { return this.forSession(sessionId).filter(job => !job.hidden).sort((a, b) => a.startedAt - b.startedAt).map(job => this.view(job)); }
+
+  reveal(sessionId: string, jobId: string): void { const job = this.find(sessionId, jobId); if(job) job.hidden = false; }
+
+  get(sessionId: string, jobId: string): JobView | undefined { const job = this.find(sessionId, jobId); return job && this.view(job); }
+  async waitForExit(sessionId: string, jobId: string, waitMs: number, signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + waitMs;
+    while (this.find(sessionId, jobId)?.status === 'running' && Date.now() < deadline) {
+      signal?.throwIfAborted();
+      await this.waitChange(this.find(sessionId, jobId)!, Math.min(100, deadline - Date.now()));
+    }
+    signal?.throwIfAborted();
+  }
 
   private statusLine(job: Job): string {
     if (job.status === 'running') return `Status: running (pid ${job.pid ?? 'unknown'}).`;
@@ -183,7 +205,7 @@ export class Jobs {
   /** Completion drain: unconsumed finished jobs for this session, marked
    * consumed so the next-turn notice appears exactly once. */
   drainFinished(sessionId: string): JobView[] {
-    const finished = this.forSession(sessionId).filter(job => job.status !== 'running' && !job.consumed).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
+    const finished = this.forSession(sessionId).filter(job => !job.hidden && job.status !== 'running' && !job.consumed).sort((a, b) => (a.endedAt ?? 0) - (b.endedAt ?? 0));
     for (const job of finished) job.consumed = true;
     return finished.map(job => this.view(job));
   }

@@ -329,7 +329,7 @@ export function createApp(options:AppOptions = {}) {
   // Idle-only (runner.assertIdle inside setGoal/clearGoal); 409 while a run is
   // active or another goal is still 'active'. Goal text is a USER instruction.
   app.post('/api/sessions/:id/goal',(req,res)=>{
-    const input=z.object({text:z.string().min(1).max(2000),maxTurns:z.number().int().min(1).max(25).optional()}).strict().parse(req.body);
+    const input=z.object({text:z.string().min(1).max(2000),maxTurns:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional()}).strict().parse(req.body);
     res.json(runner.setGoal(req.params.id,input.text,input.maxTurns));
   });
   app.delete('/api/sessions/:id/goal',(req,res)=>res.json(runner.clearGoal(req.params.id)));

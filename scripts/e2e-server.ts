@@ -118,6 +118,7 @@ const mock=createServer(async(req,res)=>{
     // The persistent sidekick: writes a per-turn marker file, then reports.
     const turn=data.messages.filter((m:any)=>m.role==='user').length;
     if(data.messages.at(-1)?.role==='tool')emit({content:`Sidekick report for turn ${turn}: ${data.messages.at(-1).content}`});
+    else if(prompt.includes('FAILING_CHECK')){toolCall=true;emit({tool_calls:[{index:0,id:`sidekick-check-${turn}`,type:'function',function:{name:'bash',arguments:JSON.stringify({command:'npm test'})}}]});}
     else{toolCall=true;emit({tool_calls:[{index:0,id:`sidekick-write-${turn}`,type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'sidekick-note.txt',content:`sidekick turn ${turn}`})}}]});}
   }else if(prompt.includes('SIDEKICK_BROWSER')){
     if(data.messages.at(-1)?.role==='tool')emit({content:`Sidekick outcome: ${data.messages.at(-1).content}`});

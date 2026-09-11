@@ -91,7 +91,7 @@ Consecutive tools share an expandable work log. A change of agent starts a separ
 
 `/changes` shows recorded file changes, including worker edits. Wide terminals can show split diffs; narrower terminals use unified diffs. `/history` provides Undo, Redo, recovery details, and protected paths. The server checks external edits before restoring files. Undo/Redo never replay shell commands and do not reverse every external effect; see [history guarantees](local-data.md#undo-redo-and-recovery).
 
-Enter during a response queues a follow-up. `/queue` can pause, resume, or remove queued messages. Steering is separate and goes to the driver; it can stop delegated work so the driver can consider the new instruction. Session goals use a configurable turn limit and begin when you send a message. Stop pauses their continuation.
+Enter during a response queues a follow-up. `/queue` can pause, resume, or remove queued messages. Steering is separate and goes to the driver; it can stop delegated work so the driver can consider the new instruction. Session goals have no turn limit by default, allow an optional limit, and begin when you send a message. Stop pauses their continuation.
 
 ## Drafts and local context
 

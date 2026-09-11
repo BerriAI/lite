@@ -7,10 +7,12 @@ Litespeed keeps a task running across multiple context windows. Tool results are
 | Control | Litespeed behavior |
 | --- | --- |
 | Model steps | No fixed ceiling for the driver, sidekick, workers, experts, or researchers. Cancellation, repeated-failure guards, worker stall detection, and provider limits still apply. |
+| Session goals | No turn limit by default. Both clients accept an optional positive whole-number limit; existing saved limits remain in effect. Stop pauses continuation. |
 | Automatic compaction | On. Uses an exact-model context override, then discovered catalog limits, then a labeled 200,000-token planning fallback. Reserves output space before triggering. |
 | Input measurement | UTF-8 text estimate, corrected conservatively with the last matching provider-reported input count. Corrections do not cross provider/configuration changes or history rewrites. Images and opaque state remain uncertain. |
 | Long active turns | Preserve the original user message, delivered steering, and a recent complete continuation. Summarize earlier completed work within the same turn. Successful progress permits another compaction later. |
 | Stalled models and workers | Ten minutes without model/tool progress. New progress resets the timer; worker approval waits pause it. There is no total-duration cap for an actively progressing provider response or worker. |
+| Shell waits | Ten-second foreground wait by default. A slow command returns a job ID and keeps running, with process exit recorded separately. Shell jobs have a thirty-minute lifetime cap; they do not survive restart. |
 | Recovery | Prune older tool results first when useful. A rejected request can try pruning and summarization; an unsuccessful summary does not loop indefinitely. Partial provider responses are never automatically replayed. |
 | File reads | Default and maximum 2,000 lines per call, 256 KiB of selected content, and a 32 KiB UTF-8 preview with a paging receipt when needed. Later line ranges can start beyond the first 256 KiB of a file. Scanning to an offset is bounded to 32 MiB and five seconds. |
 | Bash results | 30,000 characters in the preview, with a stored-output receipt when needed. The process collector has its own byte limit. |
@@ -29,11 +31,11 @@ File reads also always loaded the first 256 KiB before applying the requested li
 
 ## Comparison with other harnesses
 
-This audit was performed on September 10, 2026. These are verified behaviors, not a claim that Litespeed reproduces another harness's private implementation.
+This audit was performed on September 10–11, 2026. These are verified behaviors, not a claim that Litespeed reproduces another harness's private implementation.
 
 ### Claude Code
 
-The official CLI reference states that agentic turns have no limit by default. Session persistence is enabled unless explicitly disabled. Litespeed now follows those defaults. [CLI reference](https://code.claude.com/docs/en/cli-reference).
+The official CLI reference states that agentic turns have no limit by default. Session persistence is enabled unless explicitly disabled. Litespeed follows those defaults. [CLI reference](https://code.claude.com/docs/en/cli-reference). The Agent SDK documents optional `max_turns`/`maxTurns`, counting tool-use round trips. Litespeed's optional goal limit counts whole continued responses instead; these are different units, with neither capped by default. [Agent loop](https://code.claude.com/docs/en/agent-sdk/agent-loop#turns-and-messages).
 
 Claude Code's automatic compaction window depends on the model, context configuration, and gateway. The documented cases include 200K-window sessions and roughly 967K-token compaction for native 1M sessions. Custom gateway aliases can require an explicit window override. Therefore, one universal 200K trigger would not reproduce its behavior. Litespeed uses provider limits and an output reservation; its unknown-model fallback and reservations are explicit planning policy, not Anthropic's model-specific tuning. [Model configuration](https://code.claude.com/docs/en/model-config#default-auto-compact-thresholds).
 
@@ -49,7 +51,7 @@ Claude Code also reloads several kinds of context after compaction, including ro
 
 ### Codex
 
-Codex exposes a model-specific automatic compaction threshold, an explicit context-window override, and a separate tool-output token budget. Its reference also describes a configurable skill-catalog budget and separate memory generation/use controls. Litespeed now has the basic long-turn continuation behavior, but does not implement every configurable context policy exposed by Codex. [Official configuration reference](https://developers.openai.com/codex/config-reference).
+Codex exposes a model-specific automatic compaction threshold, an explicit context-window override, and a separate tool-output token budget. Its reference also describes a configurable skill-catalog budget and separate memory generation/use controls. Litespeed has the basic long-turn continuation behavior, but does not implement every configurable context policy exposed by Codex. The reference does not establish a universal 25-turn goal limit, so Litespeed does not claim one as a Codex default. [Official configuration reference](https://developers.openai.com/codex/config-reference).
 
 ### OpenCode
 
@@ -62,6 +64,16 @@ Conversation persistence and gateway billing attribution are separate. Litespeed
 ## Verification
 
 The continuation integration test drives a real HTTP/SSE provider fixture through 70 tool steps, multiple compactions, steering, a follow-up turn, and a separate session. It checks the retained user request, complete tool/result groups, stable request headers, and undo availability. Additional regressions cover provider-usage calibration, opt-out persistence, Unicode truncation and paging, later file ranges, compaction failure/cancellation, and sidekick error propagation. These deterministic tests verify orchestration; they do not prove lossless model-generated summaries.
+
+Live gateway tests also exercise real `openai/gpt-6-astra` and `fireworks_ai/deepseek-v4-flash-0731` calls through the HTTP API, runner, local store, and worker handoffs. Each architecture is run with a large enough context window to avoid compaction and with a 16,384-token test override that forces automatic compaction. All eight cases retain four exact decisions from seeded older history. A second Sidekick pair reads project configuration, writes those decisions to a file, and runs an unchanged checker successfully. This is controlled end-to-end evidence, not a guarantee that every summary preserves every fact. The [development guide](development.md#real-gateway-compaction-tests) documents reproduction.
+
+## Summary recovery and command evidence
+
+A completed model response containing only reasoning is not a continuation summary. Litespeed retries it once on the same route; a worker can then try its driver model from the accepted turn's configuration. Only complete final text that fits the budget can replace history. Provider errors, partial responses, oversized summaries, and failed persistence leave the original history intact. After a failed automatic attempt, eight more model steps permit another attempt instead of disabling compaction for the entire turn. Every summary attempt is charged to the same root session's usage ledger. Running commands and their file snapshots settle before history is archived.
+
+Command verification uses host-recorded exit status, including background completion. A numeric `tail` only changes the displayed output; shell pipelines use `pipefail`, so a failed test cannot become successful because `tail` exited zero. A later successful rerun resolves an earlier failed attempt only when its command and working directory match. `npm test` and `npx vitest run` are treated as the same check only if the actual package test script is exactly `vitest run` without pre/post hooks. Different arguments, projects, unknown aliases, and compound shell scripts are not treated as equivalent. Earlier failures remain in the transcript even when a rerun resolves them.
+
+Completed workers can carry a separate verification note. A test failure or an unsuccessful edit does not turn a finished Sidekick into a failed model invocation. Unfinished agents still report their provider, cancellation, stall, or runtime error.
 
 ## Optional Shunt
 

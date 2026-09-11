@@ -17,6 +17,8 @@ export interface DelegationSummary {
   createdAt: number;
   finishedAt?: number;
   error?: string;
+  /** Completed execution can still need review; this is not an agent failure. */
+  verificationNote?: string;
   /** The child session is the context identity; this record identifies one
    * immutable handoff. Multiple handoffs may share a Sidekick context. */
   role?: WorkerRole;

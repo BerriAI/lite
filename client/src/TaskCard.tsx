@@ -9,7 +9,7 @@ import { LiteSpeed } from './ui';
 const statusLabels: Record<DelegationSummary['status'], string> = { running: 'Researching', completed: 'Completed', failed: 'Failed', cancelled: 'Cancelled', timed_out: 'Timed out', interrupted: 'Interrupted' };
 const sidekick = (task: DelegationSummary) => Boolean(task.role);
 const actor = (task: DelegationSummary) => task.role === 'expert' ? 'Expert' : task.role === 'worker' ? 'Worker' : 'Sidekick';
-const statusLabel = (task: DelegationSummary) => task.status === 'running' && sidekick(task) ? 'Working' : statusLabels[task.status];
+const statusLabel = (task: DelegationSummary) => task.status === 'running' && sidekick(task) ? 'Working' : task.status === 'completed' && task.verificationNote ? 'Completed · Needs review' : statusLabels[task.status];
 export const delegationPath = (task: DelegationSummary) => `/sessions/${encodeURIComponent(task.parentSessionId)}/delegations/${encodeURIComponent(task.id)}`;
 export function TaskCard({ task, tool, label, awaitingApproval, expanded, onCancel, cancelling, error }: { task?: DelegationSummary; tool?: ToolCall; label?: string; awaitingApproval?: boolean; expanded: boolean; onCancel: () => void; cancelling: boolean; error?: string }) {
   const running = task?.status === 'running';
@@ -23,6 +23,7 @@ export function TaskCard({ task, tool, label, awaitingApproval, expanded, onCanc
     {fusion && <div className="task-identity"><span className="task-actor"><Zap size={13} />{identity}</span><span className={`task-state${running ? ' active' : ''}`} role="status">{running && <span className="working-dot" />}{state}</span></div>}
     <div className="research-task-heading">{!fusion && <BookOpen size={16} />}<strong title={fusion ? `${identity} · edits and commands use this session’s permissions` : "Read-only research"}>{description}</strong>{!fusion && <span className="task-state" role="status">{!running && (task?.status === 'completed' ? <Check size={12} /> : <X size={12} />)}{state}</span>}<div className="research-task-actions">{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
     {failure && <p className="error-text" role="status">{failure}</p>}
+    {expanded && task?.verificationNote && <p className="muted" role="status">{task.verificationNote}</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {expanded && (task ? <TaskTranscript task={task} label={identity} /> : <div className="task-pending">
       <p>{awaitingApproval ? 'Waiting for permission to start.' : tool?.status === 'pending' ? 'Waiting to start. Its transcript will appear here.' : tool?.status === 'running' ? 'Starting this task…' : tool?.output || 'No live transcript is available for this task.'}</p>

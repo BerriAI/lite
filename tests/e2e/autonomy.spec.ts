@@ -31,6 +31,26 @@ async function done(request: APIRequestContext, session: Session) {
   await expect.poll(async () => (await detail(request, session)).session.status).not.toMatch(/running|waiting/); return detail(request, session);
 }
 async function open(page: Page, session: Session) { await page.goto(`/#session/${session.id}`); await expect(composer(page)).toBeVisible(); }
+
+test('goal setup defaults to unlimited and accepts an optional limit above 25', async ({page,request})=>{
+  const session=await create(request);await open(page,session);
+  const openGoal=async()=>{await page.getByRole('button',{name:'Session actions',exact:true}).click();await page.getByRole('button',{name:'Set session goal',exact:true}).click();};
+  await openGoal();
+  const dialog=page.getByRole('dialog',{name:'Set session goal'});
+  await expect(dialog.getByLabel('Turn limit (optional)')).toHaveValue('');
+  await dialog.getByLabel('Goal',{exact:true}).fill('Finish a long task');
+  await dialog.getByRole('button',{name:'Set goal',exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await detail(request,session)).session.goal?.maxTurns).toBeUndefined();
+  await expect(page.locator('.goal-banner-turns')).toHaveText('Turn 0');
+  await page.getByRole('button',{name:'Clear goal',exact:true}).click();
+  await openGoal();await dialog.getByLabel('Goal',{exact:true}).fill('Bounded task');
+  await dialog.getByLabel('Turn limit (optional)').fill('100');
+  await dialog.getByRole('button',{name:'Set goal',exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  expect((await detail(request,session)).session.goal?.maxTurns).toBe(100);
+  await page.reload();await expect(page.locator('.goal-banner-turns')).toHaveText('Turn 0 of 100');
+});
 async function send(page: Page, session: Session, text: string) {
   await composer(page).fill(text);
   const accepted = page.waitForResponse(response => response.url().endsWith(`/sessions/${session.id}/messages`) && response.request().method() === 'POST');

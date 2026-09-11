@@ -255,11 +255,11 @@ export class Delegations {
     });
     return { delegation: clone(summary), child, user };
   }
-  settle(id: string, status: TerminalStatus, output: string, error?: string): { delegation: DelegationSummary; assistant: Message; result: Message } {
+  settle(id: string, status: TerminalStatus, output: string, error?: string, verificationNote?: string): { delegation: DelegationSummary; assistant: Message; result: Message } {
     if ((status as DelegationStatus) === 'running' || !statuses.has(status) || typeof output !== 'string') throw invalid('Invalid researcher terminal result.');
-    return this.transaction(() => this.settleInside(this.row(id), status, output, error));
+    return this.transaction(() => this.settleInside(this.row(id), status, output, error, verificationNote));
   }
-  private settleInside(row: Row, status: TerminalStatus, output: string, error?: string) {
+  private settleInside(row: Row, status: TerminalStatus, output: string, error?: string, verificationNote?: string) {
     const data = this.data(row), origin = this.origin(data.summary, true);
     if (data.summary.status !== 'running') {
       if (!data.terminal) throw conflict('The researcher record is interrupted and cannot be resumed.');
@@ -283,7 +283,7 @@ export class Delegations {
     }
     const now = Date.now(), result: Message = { id: randomUUID(), sessionId: row.parent_session_id, role: 'tool', toolCallId: row.tool_call_id, content, createdAt: now };
     const call = origin.call; call.status = status === 'completed' ? 'completed' : 'error'; call.output = content; call.endedAt = now;
-    data.summary = { ...data.summary, activity:undefined, status, finishedAt: now, ...(prefix ? { error: error?.trim() ? bounded(error, 6000) : prefix } : {}) };
+    data.summary = { ...data.summary, activity:undefined, status, finishedAt: now, ...(verificationNote ? { verificationNote: bounded(verificationNote, 4000) } : {}), ...(prefix ? { error: error?.trim() ? bounded(error, 6000) : prefix } : {}) };
     data.terminal = { assistant: clone(origin.assistant), result, session: child, messages };
     // The terminal row and exactly one parent result are one commit. Events are
     // emitted by the caller only afterwards, so failed subscribers cannot replay.

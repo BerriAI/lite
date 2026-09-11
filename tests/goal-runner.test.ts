@@ -41,7 +41,7 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     const serialized = JSON.stringify(first.messages);
     expect(serialized).toContain('## Session goal');
     expect(serialized).toContain('Ship the widget');
-    expect(serialized).toContain('Turn 1 of 10. Report progress with update_goal before finishing.');
+    expect(serialized).toContain('Turn 1. Report progress with update_goal before finishing.');
     expect(first.tools.some((t: any) => t.function.name === 'update_goal')).toBe(true);
   });
 
@@ -57,14 +57,14 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     expect(calls).toHaveLength(4);
     // The continuation turn is host-authored through the normal acceptance path.
     const turnTwo = JSON.stringify(calls[2].messages);
-    expect(turnTwo).toContain('Continue working toward the session goal. Turn 2 of 10.');
-    expect(turnTwo).toContain('Turn 2 of 10. Report progress with update_goal before finishing.');
+    expect(turnTwo).toContain('Continue working toward the session goal. Turn 2.');
+    expect(turnTwo).toContain('Turn 2. Report progress with update_goal before finishing.');
     const goal = store.session(session.id).goal!;
     expect(goal.status).toBe('completed');
     expect(goal.turns).toBe(2);
     expect(goal.lastReport).toEqual({ status: 'complete', note: 'Migration done.' });
     // The host-continued user message is persisted like any accepted turn.
-    expect(store.messages(session.id).filter(m => m.role === 'user').map(m => m.content).at(-1)).toContain('Continue working toward the session goal. Turn 2 of 10.');
+    expect(store.messages(session.id).filter(m => m.role === 'user').map(m => m.content).at(-1)).toContain('Continue working toward the session goal. Turn 2.');
   });
 
   it('stops without continuation when the first report is complete or blocked', async () => {
@@ -97,6 +97,26 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     expect(store.messages(session.id).filter(m => m.role === 'user')).toHaveLength(2);
   });
 
+  it('continues beyond 25 turns without an implicit limit and preserves that setting on reopen', async () => {
+    const session = await create();
+    await api(`/sessions/${session.id}/goal`, { text: 'Finish a long task' });
+    const reopened = new Store(join(directory, 'state'));
+    try { expect(reopened.session(session.id).goal?.maxTurns).toBeUndefined(); } finally { reopened.close(); }
+    respond = (body, res) => toolResults(body) < users(body)
+      ? tools(res, [{ name: 'update_goal', args: { status: users(body) >= 27 ? 'complete' : 'continue', note: 'One step closer.' } }])
+      : text(res, 'Progress recorded.');
+    await run(session.id);
+    expect(store.session(session.id).goal).toMatchObject({ status: 'completed', turns: 27 });
+    expect(store.session(session.id).goal?.maxTurns).toBeUndefined();
+    expect(calls).toHaveLength(54);
+  });
+
+  it('accepts explicit limits above 25 without clamping them', async () => {
+    const session = await create();
+    expect((await api(`/sessions/${session.id}/goal`, { text: 'Long bounded task', maxTurns: 100 })).status).toBe(200);
+    expect(store.session(session.id).goal?.maxTurns).toBe(100);
+  });
+
   it('runs the bounded evaluator on a report-less turn and continues on its verdict', async () => {
     const session = await create();
     await api(`/sessions/${session.id}/goal`, { text: 'Investigate the flake' });
@@ -112,7 +132,7 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     expect(evaluator[0].tools).toBeUndefined();
     expect(evaluator[0].messages.filter((m: any) => m.role === 'user')).toHaveLength(1);
     expect(JSON.stringify(evaluator[0].messages)).toContain('Investigate the flake');
-    const turnTwo = calls.filter(body => !isEvaluator(body) && JSON.stringify(body.messages).includes('Continue working toward the session goal. Turn 2 of 10.'));
+    const turnTwo = calls.filter(body => !isEvaluator(body) && JSON.stringify(body.messages).includes('Continue working toward the session goal. Turn 2.'));
     expect(turnTwo.length).toBeGreaterThan(0);
     const goal = store.session(session.id).goal!;
     expect(goal.status).toBe('completed');
@@ -184,7 +204,7 @@ describe('goal mode: envelope, update_goal, host continuation and API', () => {
     expect((await api(`/sessions/${session.id}/goal`, undefined, 'DELETE')).status).toBe(409);
     runner.cancel(session.id); released!(); await running;
     expect((await api(`/sessions/${session.id}/goal`, { text: 'x'.repeat(2001) })).status).toBe(400);
-    expect((await api(`/sessions/${session.id}/goal`, { text: 'ok', maxTurns: 26 })).status).toBe(400);
+    expect((await api(`/sessions/${session.id}/goal`, { text: 'ok', maxTurns: 0 })).status).toBe(400);
     expect((await api(`/sessions/${session.id.replace(/./g, '0')}/goal`, undefined, 'DELETE')).status).toBe(404);
   });
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test, expect, type APIRequestContext, type Page } from './fixtures';
@@ -96,4 +96,20 @@ test('the sidekick tool is advertised only when the architecture is selected', a
   const fusion = await create(request, { permissionMode: 'auto' });
   await open(page, fusion); await send(page, fusion, 'ADVERTISE_ONLY');
   expect((await done(request, fusion)).messages.at(-1)?.content).toContain('Sidekick tool is available');
+});
+
+test('an actual failing check leaves Sidekick completed with a review note across reloads', async ({page,request}) => {
+  await writeFile(join(workspace,'package.json'),JSON.stringify({scripts:{test:'node -e "process.exit(1)"'}}));
+  const session=await create(request,{permissionMode:'auto'});await open(page,session);await send(page,session,'FAILING_CHECK');
+  await done(request,session);
+  const task=await latest(request,session);
+  expect(task.status).toBe('completed');expect(task.error).toBeUndefined();
+  expect(task.verificationNote).toContain('Check did not pass: npm test');
+  for(let reload=0;reload<2;reload++){
+    if(reload)await page.reload();
+    await expandSteps(page);
+    await expect(sidekickCard(page).locator('.task-identity')).toContainText('Completed · Needs review');
+    await expect(sidekickCard(page)).toContainText('Check did not pass: npm test');
+    await expect(sidekickCard(page).locator('.error-text')).toHaveCount(0);
+  }
 });

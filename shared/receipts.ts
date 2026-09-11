@@ -27,6 +27,20 @@ export interface TurnReceipts {
   unreadFilesChanged: string[];
 }
 
+/** Host-recorded process evidence. Never parsed from model text or stdout. */
+export interface CommandExecution {
+  command: string;
+  cwd: string;
+  startedAt: number;
+  endedAt?: number;
+  status: 'running' | 'exited' | 'killed' | 'failed';
+  exitCode?: number;
+  signal?: string;
+  timedOut: boolean;
+  jobId?: string;
+  checkKey?: string;
+}
+
 /** Conservative verification heuristic. A bash command counts as a check when
  * it starts with — or contains, after a shell separator (;, &, |, (, or
  * whitespace) — one of these known checker invocations:
@@ -38,7 +52,10 @@ export interface TurnReceipts {
 const CHECKERS = ['npm test', 'npx vitest', 'npx tsc', 'npx playwright test', 'npm run test', 'npm run typecheck', 'npm run lint', 'npm run check', 'pytest', 'cargo test', 'cargo check', 'go test', 'make test', 'make check'];
 // Word boundaries on both sides so 'echo test', 'pytest-cov' and 'npm run checkstyle' never match.
 const CHECK_PATTERN = new RegExp(`(?:^|[;&|(\\s])(?:${CHECKERS.map(checker => checker.replace(/ /g, '\\s+')).join('|')})(?=$|[;&|)\\s])`);
-export const isCheckCommand = (command: string): boolean => CHECK_PATTERN.test(command);
+export const isCheckCommand = (command: string, atStart = false): boolean => {
+  const match = CHECK_PATTERN.exec(command);
+  return Boolean(match && (!atStart || match.index === 0));
+};
 
 /** A numeric tail only changes the displayed output. Keep the check, cwd,
  * arguments, and shell control flow intact; unfamiliar syntax stays exact. */
