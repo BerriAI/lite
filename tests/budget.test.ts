@@ -21,10 +21,10 @@ describe('scoped context window limits', () => {
     expect(resolveContextBudget(configured, 'model', cache)).toEqual({ contextWindow: 48_000, outputReserve: 4096, limitSource: 'override' });
     cache.remember(provider, [{ id: 'model', name: 'Model', providerId: provider.id, contextWindow: 32_000 }]);
     expect(resolveContextBudget(provider, 'model', cache)).toEqual({ contextWindow: 32_000, outputReserve: 4096, limitSource: 'catalog' });
-    expect(resolveContextBudget(provider, 'model-alias', cache)).toEqual({ outputReserve: 4096, limitSource: 'unknown' });
-    expect(resolveContextBudget({ ...provider, id: 'another' }, 'model', cache).limitSource).toBe('unknown');
+    expect(resolveContextBudget(provider, 'model-alias', cache)).toEqual({ contextWindow: 200_000, outputReserve: 4096, limitSource: 'default' });
+    expect(resolveContextBudget({ ...provider, id: 'another' }, 'model', cache).limitSource).toBe('default');
     const inherited = Object.create({ model: 99_000 });
-    expect(resolveContextBudget({ ...provider, contextWindows: inherited }, 'model', new ModelCatalogCache()).limitSource).toBe('unknown');
+    expect(resolveContextBudget({ ...provider, contextWindows: inherited }, 'model', new ModelCatalogCache()).limitSource).toBe('default');
   });
   it('budgets against an input-only catalog cap with a distinct honest source', () => {
     const cache = new ModelCatalogCache();
@@ -36,7 +36,7 @@ describe('scoped context window limits', () => {
     expect(resolveContextBudget(provider, 'input-only', cache)).toEqual({ contextWindow: 200_000, outputReserve: 4096, limitSource: 'catalog-input' });
     // A real total window outranks the input cap for the same model.
     expect(resolveContextBudget(provider, 'both', cache)).toEqual({ contextWindow: 128_000, outputReserve: 4096, limitSource: 'catalog' });
-    expect(resolveContextBudget(provider, 'invalid-input', cache).limitSource).toBe('unknown');
+    expect(resolveContextBudget(provider, 'invalid-input', cache).limitSource).toBe('default');
     // Explicit override still wins over any catalog metadata.
     expect(resolveContextBudget({ ...provider, contextWindows: { 'input-only': 64_000 } }, 'input-only', cache)).toEqual({ contextWindow: 64_000, outputReserve: 4096, limitSource: 'override' });
   });
@@ -144,14 +144,14 @@ describe('advisory proactive compaction decisions', () => {
     expect(resolveContextBudget({ ...withWindow(1024), kind: 'anthropic' }, 'model').outputReserve).toBe(8192);
     expect(resolveContextBudget(withWindow(1024), 'model').outputReserve).toBe(256);
     expect(compactionLimits({ ...withWindow(1024), kind: 'anthropic' }, 'model')).toBeUndefined();
-    expect(compactionLimits(provider, 'unknown')).toEqual({ maxSourceChars: 48_000, maxSummaryChars: 24_000 });
-    expect(compactionLimits(withWindow(32_768), 'model')).toEqual({ maxSourceChars: 48_000, maxSummaryChars: 16_384 });
+    expect(compactionLimits(provider, 'unknown')).toEqual({ maxSourceChars: Math.floor((200_000-4096)*0.9)*4-2048, maxSummaryChars: 16_384 });
+    expect(compactionLimits(withWindow(32_768), 'model')).toEqual({ maxSourceChars: Math.floor((32_768-4096)*0.9)*4-2048, maxSummaryChars: 16_384 });
   });
   it.each([[10_240, 9216, true], [10_240, 9217, false], [20_000, 18_001, false], [20_000, 18_000, true], [1000, 0, false], [Infinity, 0, false], [10_000, -1, false]])('requires absolute AND proportional savings (%i→%i)', (before, after, expected) => {
     expect(hasMeaningfulSavings(before as number, after as number)).toBe(expected);
   });
-  it('triggers at the exact eighty-percent threshold with a meaningful safe older prefix', () => {
-    const configured = withWindow(32_768), threshold = Math.floor((32_768 - 4096) * 0.8);
+  it('triggers at the input threshold after reserving output with a meaningful safe older prefix', () => {
+    const configured = withWindow(32_768), threshold = (32_768 - 4096);
     const retained = [text('latest')];
     const input = request([text('x'.repeat((threshold - 24) * 4))], configured);
     expect(estimateRequest(input).estimatedInputTokens).toBe(threshold);
@@ -161,12 +161,12 @@ describe('advisory proactive compaction decisions', () => {
   });
   it('unknown limits, huge latest turns, system/tool overhead and uncertain inputs never block or loop', () => {
     const huge = text('x'.repeat(150_000));
-    expect(assessContext(request([huge], provider)).limitSource).toBe('unknown');
+    expect(assessContext(request([huge], provider)).limitSource).toBe('default');
     expect(assessContext(request([huge])).action).toBe('continue');
     expect(assessContext(request([huge]), { retainedMessages: [huge] }).reason).toContain('latest turn');
     expect(assessContext({ ...request([huge]), system: 's'.repeat(150_000) }, { retainedMessages: [text('latest')] }).action).toBe('continue');
     const opaque = { ...huge, role: 'assistant' as const, providerMetadata: { providerId: provider.id, model: 'model', thinking_blocks: [{ type: 'redacted_thinking', data: 'unknown' }] } };
-    expect(assessContext(request([opaque]), { retainedMessages: [text('latest')] })).toMatchObject({ uncertain: true, action: 'continue' });
+    expect(assessContext(request([opaque]), { retainedMessages: [text('latest')] })).toMatchObject({ uncertain: true, action: 'compact' });
     expect(assessContext(request([huge], { ...withWindow(1024), kind: 'anthropic' })).reason).toContain('not blocked');
   });
   it('preserves deterministic latest-turn tool groups and performs no network or mutation', () => {

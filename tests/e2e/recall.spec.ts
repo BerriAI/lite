@@ -18,7 +18,7 @@ test.afterEach(async ({ request }) => {
     await request.post(`/api/sessions/${session.id}/cancel`, { data: {} });
     await expect.poll(async () => (await detail(request, session)).session.status).not.toMatch(/running|waiting/);
   }
-  expect((await request.patch('/api/settings', { data: { memoryEnabled: baseline.memoryEnabled ?? false } })).ok()).toBe(true);
+  expect((await request.patch('/api/settings', { data: { memoryEnabled: baseline.memoryEnabled ?? true, permissionRules: baseline.permissionRules ?? {version:1,rules:[]} } })).ok()).toBe(true);
   await rm(workspace, { recursive: true, force: true });
   expect(browserErrors).toEqual([]);
 });
@@ -62,7 +62,8 @@ test('an unmatched search reports indexed counts and does not claim absence', as
   expect(toolResults(result)).toMatch(/indexed/i);
 });
 
-test('memory tools are absent by default and appear only when enabled', async ({ page, request }) => {
+test('memory tools honor an explicit opt-out and can be enabled again', async ({ page, request }) => {
+  expect((await request.patch('/api/settings', { data: { memoryEnabled: false } })).ok()).toBe(true);
   const before = await create(request); await open(page, before);
   await send(page, before, 'MEMORY_BROWSER MEMORY_ADVERTISE');
   const withoutMemory = (await done(request, before)).messages.at(-1)?.content ?? '';
@@ -75,9 +76,10 @@ test('memory tools are absent by default and appear only when enabled', async ({
   for (const tool of ['memory_remember', 'memory_forget', 'memory_recall']) expect(withMemory).toContain(tool);
 });
 
-test('remember asks in ask mode, the fact persists, recall finds it, and settings can delete it', async ({ page, request }) => {
+test('an explicit memory ask rule prompts, the fact persists, recall finds it, and settings can delete it', async ({ page, request }) => {
   expect((await request.patch('/api/settings', { data: { memoryEnabled: true } })).ok()).toBe(true);
   const session = await create(request); await open(page, session);
+  expect((await request.patch('/api/settings', { data: { permissionRules: {version:1,rules:[{tool:'memory_remember',decision:'ask'}]} } })).ok()).toBe(true);
   await send(page, session, 'MEMORY_BROWSER REMEMBER[This project prefers tabs over spaces.]');
   const approval = page.getByRole('region', { name: 'Permission requested', exact: true });
   await expect(approval).toBeVisible();

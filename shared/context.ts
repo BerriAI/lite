@@ -4,10 +4,14 @@ export interface ContextSnapshot {
   providerId: string;
   model: string;
   estimatedInputTokens: number;
+  /** Conservative planning count, calibrated against the last matching request. */
+  budgetedInputTokens?: number;
+  requestIdentity?: string;
+  historyRevision?: number;
   contextWindow?: number;
   /** Native Anthropic request cap; an advisory reservation for other adapters. */
   outputReserve: number;
-  limitSource: 'override' | 'catalog' | 'catalog-input' | 'unknown';
+  limitSource: 'override' | 'catalog' | 'catalog-input' | 'default' | 'unknown';
   /** Images, opaque replay state, unsupported data, or bounded estimation omitted input. */
   uncertain: boolean;
   action: 'continue' | 'compact';

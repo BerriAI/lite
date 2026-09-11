@@ -13,7 +13,7 @@ import type { ExternalTools, ExternalToolLease } from './external.js';
 export const MCP_LIMITS = {
   servers: 30, operations: 8, operationMs: 30_000, requestMs: 15_000,
   pages: 20, tools: 1000, catalogBytes: 1024 * 1024,
-  toolMs: 60_000, outputBytes: 60_000,
+  toolMs: 60_000, outputBytes: 100_000,
   frameBytes: 2 * 1024 * 1024, schemaDepth: 64,
 } as const;
 

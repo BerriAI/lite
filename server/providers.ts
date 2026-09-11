@@ -12,6 +12,7 @@ export interface ProviderMessage {
 }
 export interface CompletionOptions {
   provider: Provider; model: string; messages: ProviderMessage[]; tools?: ToolDefinition[];
+  sessionId?: string;
   signal: AbortSignal; system?: string; reasoningEffort?: ReasoningEffort;
   /** Reports a scheduled retry, not a guarantee that a failed attempt was unbilled. */
   onRetry?: (retry: ProviderRetry) => void;
@@ -441,6 +442,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
   signal.throwIfAborted();
   if (!model) throw new ProviderError('Select a model before sending a message.');
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+  if (options.sessionId) headers['x-litellm-session-id'] = options.sessionId;
   let body: any, url: string;
   if (provider.kind === 'anthropic') {
     if (!provider.apiKey) throw new ProviderError('Anthropic requires an API key. Subscription login is not supported for third-party applications.');
@@ -456,7 +458,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
   } else if (provider.kind === 'codex') {
     Object.assign(headers, codexHeaders(await getCodexCredential(provider)));
-    headers['session-id'] = randomUUID();
+    headers['session-id'] = options.sessionId ?? randomUUID();
     body = { model, ...(options.reasoningEffort ? { reasoning: { effort: options.reasoningEffort } } : {}), instructions: [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n') || 'You are a helpful coding assistant.',
       input: codexInput(messages, provider.id, model), stream: true, store: false, include: ['reasoning.encrypted_content'],
       ...(tools?.length ? { tools: tools.map(t => ({ type: 'function', name: t.function.name, description: t.function.description, parameters: t.function.parameters, strict: false })), tool_choice: 'auto', parallel_tool_calls: true } : {}) };
@@ -489,9 +491,9 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
  * can never be steered by transcript content, and the timeout bounds spend.
  * Provider errors and timeouts throw; the CALLER decides the fallback (the
  * goal evaluator, for example, treats any failure as 'continue'). */
-export async function boundedReview(options: { provider: Provider; model: string; system: string; prompt: string; timeoutMs?: number; signal?: AbortSignal; reasoningEffort?: ReasoningEffort; onUsage?: (usage:Usage)=>void }): Promise<string> {
+export async function boundedReview(options: { sessionId?: string; provider: Provider; model: string; system: string; prompt: string; timeoutMs?: number; signal?: AbortSignal; reasoningEffort?: ReasoningEffort; onUsage?: (usage:Usage)=>void }): Promise<string> {
   let text = '';
-  for await (const chunk of streamCompletion({ provider: options.provider, model: options.model, reasoningEffort:options.reasoningEffort, signal: AbortSignal.any([...(options.signal?[options.signal]:[]),AbortSignal.timeout(options.timeoutMs ?? 15_000)]),
+  for await (const chunk of streamCompletion({ sessionId: options.sessionId, provider: options.provider, model: options.model, reasoningEffort:options.reasoningEffort, signal: AbortSignal.any([...(options.signal?[options.signal]:[]),AbortSignal.timeout(options.timeoutMs ?? 15_000)]),
     system: options.system, messages: [{ role: 'user', content: options.prompt }] })) {
     if (chunk.type === 'text') text += chunk.text || '';
     if (chunk.type === 'usage'&&chunk.usage)options.onUsage?.(chunk.usage);

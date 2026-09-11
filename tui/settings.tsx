@@ -11,7 +11,7 @@ import { Profiles } from './profiles.js';
 
 function Rules({ initial, onSave, onClose, feedback }: { initial: PermissionRuleSet | undefined; onSave: (rules: PermissionRuleSet) => void; onClose: () => void; feedback: string }) {
   const [rules, setRules] = useState(initial?.rules ?? []), [index, setIndex] = useState<number | null>(null), [view, setView] = useState('main');
-  const tools = ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash', 'web_fetch', 'todo_read', 'todo_write', 'task'];
+  const tools = ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash', 'web_fetch', 'todo_read', 'todo_write', 'task', 'memory_remember', 'memory_forget', 'memory_recall'];
   const rule = index === null ? null : rules[index];
   const update = (patch: Partial<PermissionRule>) => setRules(rules.map((rule, offset) => offset === index ? { ...rule, ...patch } : rule));
   if (view === 'tool') return <Menu title="Tool" onClose={() => setView('main')} items={tools.map(tool => ({ id: tool, label: tool, action: () => { if (index === null) { setRules([...rules, { tool, decision: 'ask' }]); setIndex(rules.length); } else update({ tool }); setView('main'); } }))} />;
@@ -57,7 +57,7 @@ export function SettingsPanel({ controller, onClose }: { controller: TerminalCon
   if (view === 'providers') return <Providers controller={controller} onClose={back} />;
   if (view === 'profiles' && controller.detail) return <Profiles controller={controller} initial={controller.detail.session} onClose={back} />;
   if (view === 'rules') return <Rules initial={settings.permissionRules} onClose={() => setView('permissions')} feedback={feedback} onSave={rules => { void run(() => save({ permissionRules: rules }, 'permissions')); }} />;
-  if (view === 'workspace' || view === 'steps') return <TextPrompt title={view === 'workspace' ? 'Default workspace for new sessions' : 'Maximum steps per turn'} value={view === 'workspace' ? settings.workspace : String(settings.maxSteps)} error={feedback} onClose={() => setView('general')} onSave={value => { void run(() => save(view === 'workspace' ? { workspace: value } : { maxSteps: Number(value) }, 'general')); }} />;
+  if (view === 'workspace') return <TextPrompt title="Default workspace for new sessions" value={settings.workspace} error={feedback} onClose={() => setView('general')} onSave={value => { void run(() => save({ workspace: value }, 'general')); }} />;
   if (view === 'mcp-config') return <TextPrompt title="MCP configuration" multiline value={JSON.stringify(settings.mcpServers, null, 2)} error={feedback} onClose={() => setView('integrations')} onSave={value => { void run(() => save({ mcpServers: JSON.parse(value), expectedMcpConfigRevision: settings.mcpConfigRevision }, 'integrations')); }} />;
   if (view === 'integrations' && review) {
     const config = settings.mcpServers[review.name];
@@ -99,8 +99,7 @@ export function SettingsPanel({ controller, onClose }: { controller: TerminalCon
   ]} />;
   if (view === 'general') return <Menu title="General" search={false} onClose={back} footer={feedback || 'Workspace and defaults apply to new sessions.'} items={[
     { id: 'workspace', label: 'Default workspace', description: settings.workspace, action: () => setView('workspace') },
-    { id: 'steps', label: `Maximum steps: ${settings.maxSteps}`, action: () => setView('steps') },
-    { id: 'memory', label: `Memory: ${settings.memoryEnabled ? 'On' : 'Off'}`, action: () => { void run(() => save({ memoryEnabled: !settings.memoryEnabled }, 'general')); } },
+    { id: 'memory', label: `Memory: ${settings.memoryEnabled !== false ? 'On' : 'Off'}`, action: () => { void run(() => save({ memoryEnabled: settings.memoryEnabled === false }, 'general')); } },
     { id: 'facts', label: 'Manage project memory', action: () => setView('memory') },
     { id: 'notifications', label: `Notifications: ${settings.notifications ? 'On' : 'Off'}`, action: () => { void run(() => save({ notifications: !settings.notifications }, 'general')); } },
   ]} />;

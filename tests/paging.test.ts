@@ -73,7 +73,7 @@ describe('lossless tool-output paging', () => {
       expect(Buffer.byteLength(stored!.content)).toBeGreaterThan(32_768);
       const total = Buffer.byteLength(stored!.content, 'utf8');
       const prefix = sha256(stored!.content).slice(0, 16);
-      expect(result).toContain(`[Output truncated at 32 KiB of ${total} bytes (sha256 ${prefix}). Read the rest with tool_output_page, call_id "${callId}".]`);
+      expect(result).toContain(`[Output truncated at 30000 characters of ${total} UTF-8 bytes (sha256 ${prefix}). Read the rest with tool_output_page, call_id "${callId}", starting at byte offset `);
       // The full pre-truncation output is recoverable byte-for-byte.
       const { chunks } = pageAll(store, sessionId, callId, 16_384);
       expect(Buffer.concat(chunks).toString('utf8')).toBe(stored!.content);

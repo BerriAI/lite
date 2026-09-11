@@ -101,8 +101,10 @@ export class Store {
     const settings: Settings = row ? JSON.parse(row.data) : {
       providers: process.env.LITELLM_BASE_URL ? [{ id: 'litellm', name: 'LiteLLM', kind: 'openai', baseUrl: process.env.LITELLM_BASE_URL }] : [],
       defaultProvider: 'litellm', defaultModel: process.env.SPEEDRAIL_MODEL || '', workspace: resolve(process.env.SPEEDRAIL_WORKSPACE || process.cwd()),
-      permissionMode: 'ask', maxSteps: 40, theme: 'system', mcpServers: {},
+      permissionMode: 'ask', theme: 'system', mcpServers: {},
     };
+    delete settings.maxSteps; // Legacy step ceilings no longer stop interactive work.
+    settings.memoryEnabled ??= true;
     settings.providers = settings.providers.map(p => p.id === 'litellm' ? { ...p, apiKey: p.apiKey ?? process.env.LITELLM_API_KEY } : p);
     return settings;
   }

@@ -75,7 +75,7 @@ describe('context budget Runner and API integration', () => {
     expect(calls).toHaveLength(1); expect(summaryRequest(calls[0])).toBe(false); expect(store.sessions('', true)).toHaveLength(0);
     expect(store.messages(s.id).slice(0, before.length)).toEqual(before); expect(store.messages(s.id).find(message => message.role === 'user' && message.content === latest)).toBeTruthy();
     expect(snapshots(s.id).at(-1)?.action).toBe('continue'); expect(snapshots(s.id).at(-1)?.reason).toBeTruthy();
-    if (kind === 'unknown') expect(snapshots(s.id).at(-1)).toMatchObject({ limitSource: 'unknown' });
+    if (kind === 'unknown') expect(snapshots(s.id).at(-1)).toMatchObject({ limitSource: 'default' });
   });
 
   it.each(['empty', 'oversized', 'nonimproving', 'provider', 'sql'])('failed proactive summary (%s) preserves original and sends normal completion once', async failure => {
@@ -171,7 +171,7 @@ describe('context budget Runner and API integration', () => {
     store.saveSettings({ providers: [{ ...provider, contextWindows: {} }] });
     const result = await api(endpoint, endpoint.startsWith('/models') ? 'GET' : 'POST', endpoint.startsWith('/models') ? undefined : { providerId: provider.id }); expect(result.status).toBe(200); expect(catalogs).toBe(1);
     const s = store.createSession(); await run(s.id); expect(snapshots(s.id).at(-1)).toMatchObject({ limitSource: 'catalog', contextWindow: 16384 }); expect(catalogs).toBe(1);
-    store.saveSettings({ providers: [{ ...provider, contextWindows: {}, apiKey: 'different-test-identity' }] }); const changed = store.createSession(); await run(changed.id); expect(snapshots(changed.id).at(-1)?.limitSource).toBe('unknown'); expect(catalogs).toBe(1);
+    store.saveSettings({ providers: [{ ...provider, contextWindows: {}, apiKey: 'different-test-identity' }] }); const changed = store.createSession(); await run(changed.id); expect(snapshots(changed.id).at(-1)?.limitSource).toBe('default'); expect(catalogs).toBe(1);
   });
 
   it.each(['/models?providerId=budget', '/providers/test'])('Codex %s discovery clears account-unscoped catalog limits but preserves exact overrides', async endpoint => {
@@ -182,7 +182,7 @@ describe('context budget Runner and API integration', () => {
     modelCatalog.remember(codex, discovered); expect(resolveContextBudget(codex, 'budget-model').limitSource).toBe('catalog');
     const result = await api(endpoint, endpoint.startsWith('/models') ? 'GET' : 'POST', endpoint.startsWith('/models') ? undefined : { providerId: codex.id });
     expect(result.status).toBe(200); expect(discovery).toHaveBeenCalledOnce();
-    expect(resolveContextBudget(codex, 'budget-model').limitSource).toBe('unknown'); expect(resolveContextBudget(codex, 'budget-model').contextWindow).toBeUndefined();
+    expect(resolveContextBudget(codex, 'budget-model').limitSource).toBe('default'); expect(resolveContextBudget(codex, 'budget-model').contextWindow).toBe(200_000);
     expect(resolveContextBudget({ ...codex, contextWindows: { 'budget-model': 65536 } }, 'budget-model')).toMatchObject({ limitSource: 'override', contextWindow: 65536 });
     expect(catalogs).toBe(0); expect(calls).toHaveLength(0);
   });
@@ -191,7 +191,7 @@ describe('context budget Runner and API integration', () => {
     store.saveSettings({ providers: [{ ...provider, contextWindows: {} }] }); await api('/models?providerId=budget');
     const cached = Date.now(); vi.spyOn(Date, 'now').mockReturnValue(cached + 600001);
     const s = store.createSession(); await run(s.id);
-    expect(catalogs).toBe(1); expect(snapshots(s.id).at(-1)?.limitSource).toBe('unknown'); expect(calls).toHaveLength(1);
+    expect(catalogs).toBe(1); expect(snapshots(s.id).at(-1)?.limitSource).toBe('default'); expect(calls).toHaveLength(1);
   });
 
   it('settings validates overrides, preserves an omitted API key, and exposes no secret', async () => {

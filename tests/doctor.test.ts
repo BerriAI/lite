@@ -22,7 +22,7 @@ describe('doctor diagnostics report', () => {
     expect(report.database).toMatchObject({ exists: true, sessions: 1, messages: 1, integrity: 'ok' });
     expect(report.database.sizeBytes).toBeGreaterThan(0);
     expect(report.database.path).toBe(join(directory, 'state', 'speedrail.db'));
-    expect(report.settings).toMatchObject({ memoryEnabled: false, hookCount: 0, sidecarCount: 0, pluginCount: 0, permissionRuleCount: 0 });
+    expect(report.settings).toMatchObject({ memoryEnabled: true, hookCount: 0, sidecarCount: 0, pluginCount: 0, permissionRuleCount: 0 });
     expect(report.workspace.path).toBe(store.settings().workspace);
   });
 

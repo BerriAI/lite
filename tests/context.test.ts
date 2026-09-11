@@ -163,8 +163,20 @@ describe('pure context compaction planning', () => {
     expect(plan.source).toContain('[data URL omitted]'); expect(plan.source).not.toContain('DO_NOT_LEAK');
     expect(plan.source).toContain('keep-me'); expect(plan.source).toContain('nested arguments omitted');
   });
-  it.each([0, 100, 511, 48001, -1, 1024.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid budget %s', limit => {
-    expect(() => planCompaction([message('a', 'assistant', 'one')], { retainLatestTurn: false, maxSourceChars: limit })).toThrow('between 512 and 48000');
+  it('preserves the middle of long messages in a full-source summary when they fit', () => {
+    const content = 'a'.repeat(18000) + ' IMPORTANT_MIDDLE_DECISION ' + 'b'.repeat(18000);
+    const plan = planCompaction([message('u', 'user', 'old'), message('a', 'assistant', content), message('next', 'user', 'continue')], { fullSource: true, maxSourceChars: 48000 });
+    expect(plan.source).toContain(content);
+    expect(plan.source).not.toContain('[…');
+  });
+  it.each([512, 4096, 48000])('bounds full-source Unicode at %i UTF-8 bytes', maxSourceChars => {
+    const plan = planCompaction([message('u', 'user', '😀'.repeat(30000)), message('a', 'assistant', '漢'.repeat(30000)), message('next', 'user', 'continue')], { fullSource: true, maxSourceChars });
+    expect(Buffer.byteLength(plan.source)).toBeLessThanOrEqual(maxSourceChars);
+    expect(plan.source).toContain('omitted');
+    expect(Buffer.from(plan.source).toString('utf8')).toBe(plan.source);
+  });
+  it.each([0, 100, 511, 4000001, -1, 1024.5, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid budget %s', limit => {
+    expect(() => planCompaction([message('a', 'assistant', 'one')], { retainLatestTurn: false, maxSourceChars: limit })).toThrow('between 512 and 4000000');
   });
 });
 

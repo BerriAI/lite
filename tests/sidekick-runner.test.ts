@@ -26,7 +26,7 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
   beforeEach(async()=>{
     directory=await realpath(await mkdtemp(join(tmpdir(),'speedrail-sidekick-runner-')));store=new Store(join(directory,'state'));calls=[];
     respond=(body,res)=>{if(side(body)){if(body.messages.at(-1)?.role==='tool')text(res,'Sidekick report: wrote the file');else tools(res,[{name:'write_file',args:{path:'note.txt',content:`turn ${body.messages.filter((m:any)=>m.role==='user').length}`}}]);}else if(body.messages.at(-1)?.role==='tool')text(res);else tools(res,[{name:'sidekick',args:{description:'Write the note',prompt:`SIDE task ${body.messages.filter((m:any)=>m.role==='user').length}`}}]);};
-    provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push(body);respond(body,res);});
+    provider=createServer(async(req,res)=>{const chunks:Buffer[]=[];for await(const part of req)chunks.push(part);const body=JSON.parse(Buffer.concat(chunks).toString());calls.push({...body,_sessionId:req.headers['x-litellm-session-id']});respond(body,res);});
     store.saveSettings({workspace:directory,providers:[{id:'test',name:'Test',kind:'openai',baseUrl:await listen(provider),apiKey:'fake-accepted-key'}],defaultProvider:'test',defaultModel:'model'});
     const external:ExternalTools={capture:vi.fn(()=>({definitions:[],scope:()=>'',assertCurrent:()=>{},execute:async()=>'',release:()=>{}}))} as any;const app=createApp({store,external});runner=app.runner;server=createServer(app.app);url=await listen(server);
   });
@@ -389,4 +389,20 @@ describe('Sidekick Fusion persistent delegated executor',()=>{
     expect(runner.delegations.transcript(s.id,first.id).messages).toEqual(before.messages);
     expect(store.messages(first.childSessionId).some(m=>m.content.startsWith('Session context summary'))).toBe(true);
   });
+  it('surfaces the provider failure on the durable sidekick card and keeps root session attribution', async () => {
+    respond=(body,res)=>{
+      if(side(body)){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{message:'Rejected fake-accepted-key',type:'authentication_error'}}));}
+      else if(body.messages.at(-1)?.role==='tool')text(res,'The sidekick could not authenticate.');
+      else tools(res,[{name:'sidekick',args:{description:'Inspect',prompt:'SIDE inspect'}}]);
+    };
+    const s=await create();await run(s.id);
+    const task=runner.delegations.list(s.id)[0];
+    expect(task.status).toBe('failed');
+    expect(task.error).toMatch(/401|authentication|API key/i);
+    expect(task.error).not.toBe('Sidekick failed.');
+    expect(JSON.stringify(task)).not.toContain('fake-accepted-key');
+    expect(new Set(calls.map(call=>call._sessionId))).toEqual(new Set([s.id]));
+    expect(runner.delegations.transcript(s.id,task.id).delegation.error).toBe(task.error);
+  });
+
 });

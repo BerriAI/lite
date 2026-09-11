@@ -114,9 +114,9 @@ describe('foreground bounded researcher Runner/API integration',()=>{
     runner.start(sessions[4].id,'ROOT fifth');await until(()=>!runner.active(sessions[4].id));expect(runner.delegations.list(sessions[4].id)).toEqual([]);expect(store.messages(sessions[4].id).filter(m=>m.role==='tool')[0].content).toContain('Four researchers');runner.stopAll();await runner.whenIdle();expect(sessions.every(s=>!runner.active(s.id))).toBe(true);
   });
 
-  it('child model steps are cumulatively bounded across serial launches',async()=>{
-    respond=(body,res)=>{if(child(body))tools(res,[{name:'read_file',args:{path:'research.txt',offset:body.messages.length}}]);else if(body.messages.at(-1)?.role==='tool')text(res);else tools(res,Array.from({length:3},(_,i)=>({name:'task',args:{description:`Inspect ${i}`,prompt:`CHILD ${i}`}})));};
-    const s=await create();await run(s.id);expect(calls.filter(child)).toHaveLength(24);expect(runner.delegations.list(s.id)).toHaveLength(2);expect(store.messages(s.id).filter(m=>m.role==='tool')).toHaveLength(3);expect(store.queue(s.id).paused).toBe(true);
+  it('researchers can exceed the former per-child and shared model-step ceilings',async()=>{
+    respond=(body,res)=>{if(child(body)){if(body.messages.filter((m:any)=>m.role==='tool').length>=15)text(res,'Research complete');else tools(res,[{name:'read_file',args:{path:'research.txt',offset:body.messages.length}}]);}else if(body.messages.at(-1)?.role==='tool')text(res);else tools(res,Array.from({length:3},(_,i)=>({name:'task',args:{description:`Inspect ${i}`,prompt:`CHILD ${i}`}})));};
+    const s=await create();await run(s.id);expect(calls.filter(child)).toHaveLength(48);expect(runner.delegations.list(s.id)).toHaveLength(3);expect(runner.delegations.list(s.id).every(task=>task.status==='completed')).toBe(true);expect(store.messages(s.id).filter(m=>m.role==='tool')).toHaveLength(3);
   });
 
   it('child final report has a UTF8 byte bound and complete stored transcript',async()=>{

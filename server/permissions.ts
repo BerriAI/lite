@@ -4,7 +4,7 @@ import { PERMISSION_LIMITS } from '../shared/permissions.js';
 
 // Tools a rule may target. Exact names only — a rule can never invent a tool,
 // auto-approve a connected (mcp_*) tool, or bypass the researcher/task checks.
-export const RULE_TOOLS = ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash', 'web_fetch', 'todo_read', 'todo_write', 'task'] as const;
+export const RULE_TOOLS = ['read_file', 'write_file', 'edit_file', 'glob', 'grep', 'bash', 'web_fetch', 'todo_read', 'todo_write', 'task', 'memory_remember', 'memory_forget', 'memory_recall'] as const;
 const pattern = z.string().min(1).max(PERMISSION_LIMITS.patternLength).refine(value => value === value.trim() && !/[\p{Cc}\p{Cf}]/u.test(value), 'Patterns must be single-line printable text.');
 const ruleSchema = z.object({
   tool: z.enum(RULE_TOOLS),

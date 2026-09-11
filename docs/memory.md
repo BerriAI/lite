@@ -1,6 +1,6 @@
 # Optional agent memory
 
-Memory lets the agent record small, durable facts about a project — conventions, decisions, gotchas — and recall them in later sessions. It is **off by default**. Enable it in Settings; nothing is recorded or recalled until you do.
+Memory lets the agent record small, durable facts about a project — conventions, decisions, gotchas — and recall them in later sessions. It is **on by default**. The agent can record and recall local notes automatically. Turn it off in Settings to stop both, or add explicit Ask/Deny rules for memory tools. An existing choice to disable memory is preserved.
 
 ## What memory is, and is not
 
@@ -12,7 +12,7 @@ Standing project instructions (AGENTS.md, profiles, instruction skills) remain t
 
 - Facts are scoped to a workspace and stored locally in Speedrail's database. Nothing leaves your machine except as part of ordinary model requests when a recall is included.
 - Each fact has a slug name, a one-line description, and a body up to 6,000 bytes. A workspace holds at most 500 facts.
-- The `remember` and `forget` tools follow the ordinary permission flow — in ask mode the agent must ask before writing or deleting a fact, and permission rules apply to them like any other tool. `recall` is read-only.
+- The `memory_remember` and `memory_forget` tools run automatically when memory is enabled in Build mode. Explicit Ask/Deny rules override that default; Plan mode cannot write facts. `memory_recall` is read-only.
 - Before a turn, Speedrail may automatically recall up to 4 facts (at most 2,400 bytes) matched against your request, clearly labeled as background memory. Automatic recall is bounded and advisory; the agent can always `recall` explicitly for more.
 - Researcher (task) children do not receive memory tools.
 

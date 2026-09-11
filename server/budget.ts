@@ -6,7 +6,7 @@ export const BUDGET_LIMITS = {
   minContextWindow: 1024, maxContextWindow: 10_000_000,
   catalogTtlMs: 10 * 60_000, catalogProviders: 30, catalogModels: 2000,
   maxEstimateChars: 4 * 1024 * 1024, maxEstimateNodes: 100_000,
-  proactiveRatio: 0.8, minSavingsTokens: 1024, minSavingsRatio: 0.1,
+  defaultContextWindow: 200_000, minSavingsTokens: 1024, minSavingsRatio: 0.1,
 } as const;
 export function validContextWindow(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= BUDGET_LIMITS.minContextWindow && value <= BUDGET_LIMITS.maxContextWindow;
@@ -17,6 +17,8 @@ export interface BudgetRequest {
   messages: readonly ProviderMessage[];
   system?: string;
   tools?: readonly ToolDefinition[];
+  /** Last measured input, adjusted for estimated history growth, when available. */
+  inputTokenFloor?: number;
 }
 export interface RequestEstimate { estimatedInputTokens: number; uncertain: boolean; }
 export interface ContextBudget {
@@ -32,6 +34,10 @@ function providerIdentity(provider: Provider): string {
     apiKey: provider.apiKey, models: provider.models,
     contextWindows: provider.contextWindows ? Object.entries(provider.contextWindows).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0) : undefined,
   })).digest('hex');
+}
+
+export function contextIdentity(request: BudgetRequest): string {
+  return createHash('sha256').update(JSON.stringify([providerIdentity(request.provider), request.model, request.system, request.tools])).digest('hex');
 }
 /** A bounded in-memory observation cache. Only successful explicit model discovery
  * populates it; get never fetches, falls back by model name, or refreshes its TTL. */
@@ -80,8 +86,8 @@ export function resolveContextBudget(provider: Provider, model: string, cache = 
   // a total context window: the distinct limitSource keeps the label honest,
   // and the shared reserve arithmetic below stays conservative against it.
   const catalog = limit?.contextWindow ?? limit?.maxInputTokens;
-  const contextWindow = validContextWindow(override) ? override : catalog;
-  const limitSource = validContextWindow(override) ? 'override' : limit?.contextWindow !== undefined ? 'catalog' : limit?.maxInputTokens !== undefined ? 'catalog-input' : 'unknown';
+  const contextWindow = validContextWindow(override) ? override : catalog ?? BUDGET_LIMITS.defaultContextWindow;
+  const limitSource = validContextWindow(override) ? 'override' : limit?.contextWindow !== undefined ? 'catalog' : limit?.maxInputTokens !== undefined ? 'catalog-input' : 'default';
   // Anthropic currently sends max_tokens:8192. Other adapters have no enforced
   // output cap; this is only a bounded advisory reserve, never a request rejection.
   const outputReserve = provider.kind === 'anthropic' ? 8192 : contextWindow === undefined ? 4096 : Math.min(4096, Math.floor(contextWindow / 4));
@@ -201,13 +207,21 @@ export function hasMeaningfulSavings(beforeEstimate: number, afterEstimate: numb
   return Number.isFinite(beforeEstimate) && Number.isFinite(afterEstimate) && afterEstimate >= 0 &&
     beforeEstimate - afterEstimate >= BUDGET_LIMITS.minSavingsTokens && beforeEstimate - afterEstimate >= beforeEstimate * BUDGET_LIMITS.minSavingsRatio;
 }
+
+export function compactionThreshold(budget: ContextBudget): number {
+  return (budget.contextWindow ?? BUDGET_LIMITS.defaultContextWindow) - budget.outputReserve;
+}
+
+export function recentContextChars(provider: Provider, model: string): number {
+  return Math.max(512, Math.min(32_000, Math.floor(compactionThreshold(resolveContextBudget(provider, model)) * 0.2) * 4));
+}
 export function compactionLimits(provider: Provider, model: string, cache = modelCatalog): { maxSourceChars: number; maxSummaryChars: number } | undefined {
   const { contextWindow, outputReserve } = resolveContextBudget(provider, model, cache);
   if (contextWindow === undefined) return { maxSourceChars: 48_000, maxSummaryChars: 24_000 };
   const remaining = contextWindow - outputReserve;
   // Heuristic source allowance reserves space for summary instructions and output.
   // These remain character ceilings, not a promise that a provider will accept it.
-  const maxSourceChars = Math.min(48_000, Math.floor(remaining * 0.7) * 4 - 2048);
+  const maxSourceChars = Math.min(4_000_000, Math.floor(remaining * 0.9) * 4 - 2048);
   const maxSummaryChars = Math.min(24_000, Math.floor(Math.min(outputReserve, remaining * 0.2)) * 4);
   if (maxSourceChars < 512 || maxSummaryChars < 512) return undefined;
   return { maxSourceChars, maxSummaryChars };
@@ -218,24 +232,23 @@ export function compactionLimits(provider: Provider, model: string, cache = mode
  * mutates, fetches, rejects a prompt, or authorizes another compaction attempt. */
 export function assessContext(request: BudgetRequest, options: { retainedMessages?: readonly ProviderMessage[]; autoCompactionAttempted?: boolean } = {}, cache = modelCatalog): ContextSnapshot {
   const estimate = estimateRequest(request), budget = resolveContextBudget(request.provider, request.model, cache);
+  const budgetedInputTokens = Math.max(estimate.estimatedInputTokens, Number.isFinite(request.inputTokenFloor) && request.inputTokenFloor! >= 0 ? request.inputTokenFloor! : 0);
   // The component split reuses the same bounded heuristic per part; it is a
   // readability aid for the /context view, never a second budgeting authority.
   const system = estimateRequest({ messages: [], system: request.system }).estimatedInputTokens;
   const tools = estimateRequest({ messages: [], tools: request.tools }).estimatedInputTokens;
-  const snapshot: ContextSnapshot = { providerId: request.provider.id, model: request.model, ...estimate, ...budget, action: 'continue',
+  const snapshot: ContextSnapshot = { providerId: request.provider.id, model: request.model, ...estimate, ...budget, budgetedInputTokens, requestIdentity: contextIdentity(request), action: 'continue',
     components: { system, tools, history: Math.max(0, estimate.estimatedInputTokens - system - tools) } };
   const continuation = (reason: string) => ({ ...snapshot, reason });
-  if (budget.contextWindow === undefined) return continuation('Context window is unknown. This text estimate is advisory; the provider decides whether the request fits.');
   const limits = compactionLimits(request.provider, request.model, cache);
   if (!limits) return continuation('The configured context window leaves too little room for safe automatic summarization. The request is not blocked.');
-  const threshold = Math.floor((budget.contextWindow - budget.outputReserve) * BUDGET_LIMITS.proactiveRatio);
-  if (estimate.estimatedInputTokens < threshold) return estimate.uncertain ? continuation('Text-only estimate excludes images or opaque provider state; actual input usage may differ.') : snapshot;
-  if (options.autoCompactionAttempted) return continuation('Automatic compaction was already attempted this turn. No further estimate-triggered request will be made.');
-  if (estimate.uncertain) return continuation('Input includes images, opaque state, or unestimated data. Automatic compaction is skipped; the provider can still accept the request.');
+  const threshold = compactionThreshold(budget);
+  if (budgetedInputTokens < threshold) return estimate.uncertain ? continuation('Text-only estimate excludes images or opaque provider state; actual input usage may differ.') : budget.limitSource === 'default' ? continuation('Using a 200,000-token planning window until the gateway reports a limit or you configure this model’s context window.') : snapshot;
+  if (options.autoCompactionAttempted) return continuation('Automatic compaction was already attempted for this request. No consecutive summary retry will be made.');
   if (!options.retainedMessages?.length) return continuation('No safe older prefix is available to compact. The latest turn is preserved and the request is not blocked.');
   const retained = estimateRequest({ ...request, messages: options.retainedMessages });
   const after = retained.estimatedInputTokens + Math.ceil(limits.maxSummaryChars / 4) + 128;
-  if (retained.uncertain || after > threshold) return continuation('The latest turn, instructions, tools, and summary allowance may still exceed the advisory budget. Shorten large inputs or choose a larger-context model; nothing is trimmed.');
-  if (!hasMeaningfulSavings(estimate.estimatedInputTokens, after)) return continuation('Compacting the safe older prefix would not provide meaningful estimated savings. The request is unchanged.');
-  return { ...snapshot, action: 'compact', reason: 'Estimated input is near the context budget. Summarize a safe older prefix once while keeping the latest turn intact.' };
+  if (after > threshold) return continuation('The latest turn, instructions, tools, and summary allowance may still exceed the advisory budget. Shorten large inputs or choose a larger-context model; nothing is trimmed.');
+  if (!hasMeaningfulSavings(budgetedInputTokens, after)) return continuation('Compacting the safe older prefix would not provide meaningful estimated savings. The request is unchanged.');
+  return { ...snapshot, action: 'compact', reason: 'Input is near the context budget. Summarize completed work while preserving the current request, steering, and recent continuation.' };
 }

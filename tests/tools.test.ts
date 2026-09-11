@@ -178,6 +178,12 @@ describe('workspace resolution and discovery', () => {
 });
 
 describe('file reads and reversible edits', () => {
+  it('reads later line ranges beyond the original 256 KiB prefix with CRLF and UTF-8 intact', async () => {
+    await put('beyond.txt', ('prefix '.repeat(100)+'\r\n').repeat(500)+'café 😀 target\r\nlast');
+    expect(await tool('read_file', { path: 'beyond.txt', offset: 501, limit: 1 })).toBe('501\tcafé 😀 target\n[File truncated; request a narrower range or use grep.]');
+    expect(await tool('read_file', { path: 'beyond.txt', offset: 502, limit: 1 })).toBe('502\tlast');
+  });
+
   it('reads raw content through the API and numbered, paginated lines through the tool', async () => {
     await put('note.txt', 'one\r\ntwo\r\nthree\r\n');
     expect(await readFile(workspace, 'note.txt')).toEqual({ path: 'note.txt', content: 'one\r\ntwo\r\nthree\r\n' });
@@ -466,7 +472,7 @@ describe('public HTTP fetching', () => {
     expect(await tool('web_fetch', { url: 'https://example.com/missing' })).toContain('HTTP 404\nNot found');
     await expect(tool('web_fetch', { url: 'https://example.com/image' })).rejects.toThrow(/binary/);
     const large = await tool('web_fetch', { url: 'https://example.com/large' });
-    expect(large.length).toBeLessThan(33_000);
+    expect(large.length).toBeLessThan(50_100);
     expect(large).toContain('truncated');
   });
   it('times out a stalled response and permits cancellation during DNS lookup', async () => {

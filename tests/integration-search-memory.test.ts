@@ -114,7 +114,8 @@ describe('history_search, memory tools and session-context envelope integration'
     expect(attempt.output).toContain(source.id);
   });
 
-  it('memory tools are absent by default and present when memoryEnabled at acceptance', async () => {
+  it('memory tools honor explicit opt-out and re-enable at acceptance', async () => {
+    await api('/settings', { memoryEnabled: false }, 'PATCH');
     const off = await create(); await run(off.id);
     for (const name of MEMORY_TOOLS) expect(names(calls[0])).not.toContain(name);
     await api('/settings', { memoryEnabled: true }, 'PATCH');
@@ -123,9 +124,10 @@ describe('history_search, memory tools and session-context envelope integration'
     for (const name of MEMORY_TOOLS) expect(names(calls[0])).toContain(name);
   });
 
-  it('memory_remember prompts in ask mode and the acceptance snapshot survives a mid-run settings flip', async () => {
+  it('an explicit memory ask rule prompts and the acceptance snapshot survives a mid-run settings flip', async () => {
     await api('/settings', { memoryEnabled: true }, 'PATCH');
     respond = oneCallThenText('memory_remember', { name: 'indent-style', description: 'Indentation preference', body: 'This project uses two-space indentation.' });
+    await api('/settings', { permissionRules: { version: 1, rules: [{ tool: 'memory_remember', decision: 'ask' }] } }, 'PATCH');
     const s = await create(); runner.start(s.id, 'Remember the style');
     await until(() => runner.permissions(s.id).length === 1);
     expect(runner.permissions(s.id)[0].tool).toBe('memory_remember');
@@ -142,9 +144,9 @@ describe('history_search, memory tools and session-context envelope integration'
     for (const name of MEMORY_TOOLS) expect(names(calls[0])).not.toContain(name);
   });
 
-  it('remember executes without prompting in auto mode; forget removes; recall renders facts', async () => {
+  it('remember executes without prompting in ask mode with memory enabled; forget removes; recall renders facts', async () => {
     await api('/settings', { memoryEnabled: true }, 'PATCH');
-    const s = await create({ permissionMode: 'auto' });
+    const s = await create({ permissionMode: 'ask' });
     respond = oneCallThenText('memory_remember', { name: 'deploy-cmd', description: 'Deploy command', body: 'Deploy with npm run ship' });
     await run(s.id, 'Remember');
     expect(prompts(s.id)).toEqual([]);

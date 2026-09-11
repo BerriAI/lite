@@ -18,10 +18,11 @@ export function TaskCard({ task, tool, label, awaitingApproval, expanded, onCanc
   const worker = tool?.name === 'delegate' || task?.role === 'worker' || task?.role === 'expert';
   const description = task?.description || String(tool?.args.description || `${identity} task`);
   const state = cancelling ? 'Cancelling…' : task ? running ? task.activity || statusLabel(task) : statusLabel(task) : awaitingApproval ? 'Needs approval' : tool?.status === 'pending' ? 'Queued' : tool?.status === 'running' ? 'Starting' : tool?.status === 'error' ? 'Failed' : tool?.status === 'denied' ? 'Not started' : 'Completed';
+  const failure=task?.error || (!task && tool?.status==='error' ? tool.output : undefined);
   return <section className={`research-task${worker ? ' worker-task' : ''}`} role="region" aria-label={`${identity} task`}>
     {fusion && <div className="task-identity"><span className="task-actor"><Zap size={13} />{identity}</span><span className={`task-state${running ? ' active' : ''}`} role="status">{running && <span className="working-dot" />}{state}</span></div>}
     <div className="research-task-heading">{!fusion && <BookOpen size={16} />}<strong title={fusion ? `${identity} · edits and commands use this session’s permissions` : "Read-only research"}>{description}</strong>{!fusion && <span className="task-state" role="status">{!running && (task?.status === 'completed' ? <Check size={12} /> : <X size={12} />)}{state}</span>}<div className="research-task-actions">{running && <button className="text-button" disabled={cancelling} onClick={onCancel}>Cancel task</button>}</div></div>
-    {task?.error && <p className="error-text" role="status">{task.error}</p>}
+    {failure && <p className="error-text" role="status">{failure}</p>}
     {error && <p className="error-text" role="alert">{error}</p>}
     {expanded && (task ? <TaskTranscript task={task} label={identity} /> : <div className="task-pending">
       <p>{awaitingApproval ? 'Waiting for permission to start.' : tool?.status === 'pending' ? 'Waiting to start. Its transcript will appear here.' : tool?.status === 'running' ? 'Starting this task…' : tool?.output || 'No live transcript is available for this task.'}</p>

@@ -62,6 +62,7 @@ Choose any connected model for each role. An optional **Planner model** handles 
 - [Providers](docs/providers.md) · [CLI and scripting](docs/cli.md) · [Terminal controls](docs/tui.md)
 - [Permissions](docs/permissions.md) · [Undo/redo, recovery, and local data](docs/local-data.md)
 - [Project profiles and skills](docs/profiles.md) · [MCP connections](docs/mcp.md) · [Hooks and plugins](docs/design-hooks-plugins.md)
+- [Context management and harness comparison](docs/context-management.md)
 - [Agent memory](docs/memory.md) · [History search](docs/search.md) · [Research tasks](docs/delegation.md)
 - [Feature coverage and known gaps](docs/coverage.md) · [Development and tests](docs/development.md)
 

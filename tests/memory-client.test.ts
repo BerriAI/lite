@@ -51,18 +51,18 @@ beforeEach(() => { document.body.innerHTML = ''; vi.stubGlobal('IS_REACT_ACT_ENV
 afterEach(async () => { await act(async () => roots.splice(0).forEach(root => root.unmount())); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('memory settings section', () => {
-  it('renders the toggle off by default with the low-authority hint and saves memoryEnabled only when touched', async () => {
+  it('renders the toggle on by default with the automatic-memory hint and saves memoryEnabled only when touched', async () => {
     const api = server(); const view = await mount(); await press('Workspace');
     const checkbox = el<HTMLInputElement>('.memory-toggle input[type="checkbox"]');
-    expect(checkbox.checked).toBe(false);
+    expect(checkbox.checked).toBe(true);
     const text = document.body.textContent!;
-    expect(text).toContain('off by default'); expect(text).toContain('low-authority background data'); expect(text).toContain('normal tool permissions');
+    expect(text).toContain('On by default'); expect(text).toContain('background context'); expect(text).toContain('Ask and Deny rules');
     await press('Save settings');
     expect(api.patches()).toHaveLength(1); expect(api.patches()[0].body).not.toHaveProperty('memoryEnabled');
     expect(view.onClose).toHaveBeenCalledTimes(1);
   });
   it('PATCHes memoryEnabled true after the toggle is enabled and saved', async () => {
-    const api = server(); const view = await mount(); await press('Workspace');
+    const disabled={...base,memoryEnabled:false}; const api = server(disabled); const view = await mount(disabled); await press('Workspace');
     await toggle('.memory-toggle input[type="checkbox"]');
     expect(el<HTMLInputElement>('.memory-toggle input[type="checkbox"]').checked).toBe(true);
     await press('Save settings');
@@ -96,7 +96,7 @@ describe('memory settings section', () => {
     const api = server(); api.intercept = (path, method) => path.startsWith('/api/memory') && method === 'GET' ? Promise.reject(new Error('memory store offline')) : undefined;
     const view = await mount(); await press('Workspace');
     expect(el('[aria-label="Agent memory"] [role="alert"]').textContent).toContain('memory store offline');
-    expect(el<HTMLInputElement>('.memory-toggle input[type="checkbox"]').checked).toBe(false);
+    expect(el<HTMLInputElement>('.memory-toggle input[type="checkbox"]').checked).toBe(true);
     await fill('input[placeholder="/absolute/path/to/your/project"]', '/workspace');
     api.intercept = undefined;
     await press('Save settings');

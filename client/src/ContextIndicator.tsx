@@ -12,7 +12,7 @@ export function ContextIndicator({ context }: { context: ContextSnapshot }) {
   const knownWindow = context.limitSource !== 'unknown' && Number.isInteger(context.contextWindow) && context.contextWindow! >= 1024 && context.contextWindow! <= 10_000_000;
   const window = knownWindow ? context.contextWindow!.toLocaleString() : null;
   const inputOnly = knownWindow && context.limitSource === 'catalog-input';
-  const source = !knownWindow ? 'Unknown' : context.limitSource === 'override' ? 'Provider setting · exact-model override' : inputOnly ? 'Model catalog · input limit (max_input_tokens)' : 'Model catalog';
+  const source = !knownWindow ? 'Unknown' : context.limitSource === 'default' ? 'Default planning window · gateway limit not verified' : context.limitSource === 'override' ? 'Provider setting · exact-model override' : inputOnly ? 'Model catalog · input limit (max_input_tokens)' : 'Model catalog';
   const cache = context.cache;
   const cached = cache && typeof cache.cachedTokens === 'number' ? tokenCount(cache.cachedTokens) : null;
   const cachedOf = cache && typeof cache.inputTokens === 'number' && cache.inputTokens > 0 ? tokenCount(cache.inputTokens) : null;
@@ -26,7 +26,7 @@ export function ContextIndicator({ context }: { context: ContextSnapshot }) {
       <dl>
         <div><dt>Estimated input</dt><dd>{input ? `≈${input} tokens` : 'Unavailable'}</dd></div>
         {context.components && <div><dt>Breakdown</dt><dd>{`system ≈${tokenCount(context.components.system) ?? 0} · tools ≈${tokenCount(context.components.tools) ?? 0} · history ≈${tokenCount(context.components.history) ?? 0}`}</dd></div>}
-        <div><dt>Context window</dt><dd>{window ? `${window} tokens${inputOnly ? ' · input limit' : ''}` : 'Unknown · no verified limit'}</dd></div>
+        <div><dt>Context window</dt><dd>{window ? `${window} tokens${inputOnly ? ' · input limit' : context.limitSource === 'default' ? ' · planning default' : ''}` : 'Unknown · no verified limit'}</dd></div>
         <div><dt>Output reserve</dt><dd>{reserve ? `${reserve} tokens` : 'Unavailable'}</dd></div>
         <div><dt>Limit source</dt><dd>{source}</dd></div>
         <div><dt>Model</dt><dd>{context.model}</dd></div>
