@@ -39,7 +39,7 @@ litespeed --url http://localhost:3210
 
 1. On first launch, enter your LiteLLM gateway URL and API key, then choose your setup and models. Sidekick Fusion is recommended: a powerful driver plus an efficient coding workhorse. Single model is also available. Configured launches open chat directly, including in another project.
 2. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will handle the next turn.
-3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Consecutive tools stay open while working and collapse at the next text response. Click a tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
+3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Click a worker, expert, research, or Sidekick card to reveal its assignment-scoped read-only transcript; click a nested tool row to inspect its arguments and result. Consecutive tools stay open while working and collapse at the next text response. Click any tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
 
 Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to complete, and Esc to dismiss. Built-in commands, workspace templates, and registered skill IDs appear together.
 
@@ -99,6 +99,8 @@ Project templates in `.litespeed/commands` and `.claude/commands` appear in Ctrl
 
 Use `/skills` (or `/skill`) to select, preview, and apply registered project skills, or `/<skill-id>` alone to activate one without sending a message. Built-ins and project templates win name conflicts. Skills stay pinned for the session; remove them through `/skills`. See [skill definitions and activation](profiles.md#slash-commands-terminal-and-web).
 
+Use `/skills` (or `/skill`) to select, preview, and apply registered project skills, or `/<skill-id>` alone to activate one without sending a message. Built-ins and project templates win name conflicts. Skills stay pinned for the session; remove them through `/skills`. See [skill definitions and activation](profiles.md#slash-commands-terminal-and-web).
+
 ## Settings and appearance
 
 Settings has consistent sections for Providers, General, Permissions, Project profiles, Integrations, and Usage. Profiles can be created, edited, previewed, and applied, including recommended models and skills. MCP configuration is reviewed before an explicit connect or refresh. Usage counts provider-reported tokens; memory is off until enabled.
@@ -133,6 +135,6 @@ This replacement has been exercised on macOS with Node 26 and Bun 1.4.2. Linux t
 
 ### Activity and permissions
 
-The header identifies the active driver, Sidekick, or worker count. Handoffs appear where they happened in the conversation; worker text is muted and italic. Each Sidekick handoff keeps its own transcript even when the model reuses context. Worker transcripts stream live. Old responses do not reparse merely because you type a draft.
+The header identifies the active driver, Sidekick, or worker count. Handoffs appear where they happened in the conversation. Expand a handoff card to read that invocation’s full transcript and inspect its tool calls in place. Each Sidekick handoff keeps its own transcript even when the model reuses context. Worker transcripts stream live. Old responses do not reparse merely because you type a draft.
 
 Use `/permissions` or the footer to switch between **Ask first** and **Allow all tools**, even during a run. Approval prompts say whether a grant applies to a tool for the session or one external path; `4` selects Allow all tools. Explicit ask/deny rules still apply. `/queue` lets you promote a queued text message to **Steer driver now**.
