@@ -10,7 +10,8 @@ import { Onboarding } from './Onboarding';
 import { ModelPicker } from './ModelPicker';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
-import type { ApplyProfileRequest, ProfileChoice } from '../../shared/profiles';
+import type { ApplyProfileRequest, ProfileChoice, ProfileCatalog, ProjectSkill } from '../../shared/profiles';
+import { addSkill, checkSkillSource, skillCommand, skillCommands } from '../../shared/skill-commands';
 import { Conversation } from './Conversation';
 import { QuestionCard, emptyQuestionDraft, type QuestionDraft } from './QuestionCard';
 import type { QuestionAnswer, QuestionRequest } from '../../shared/questions';
@@ -49,7 +50,7 @@ export default function App() {
   const configOperation = useRef(false);
   const [configBusy, setConfigBusy] = useState(false);
   const [newProfile, setNewProfile] = useState<{ workspace: string; choice: ProfileChoice } | null>(null);
-  const [profileDialog, setProfileDialog] = useState<{ id: string | null; workspace: string; revision: number; choice: ProfileChoice; selection: Selection; view: number } | null>(null);
+  const [profileDialog, setProfileDialog] = useState<{ id: string | null; workspace: string; revision: number; choice: ProfileChoice; selection: Selection; view: number; skillsOnly?: boolean } | null>(null);
   const closeProfiles = useCallback(() => setProfileDialog(null), []);
   const { draft, notice: draftNotice, setText, setAttachments, clearSubmitted, prepareDelete } = useSessionDraft(activeId);
   const { text, attachments } = draft;
@@ -108,6 +109,7 @@ export default function App() {
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [skills, setSkills] = useState<ProjectSkill[]>([]);
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const importInput = useRef<HTMLInputElement>(null);
   const pendingSession = useRef<Session | null>(null);
@@ -127,6 +129,12 @@ export default function App() {
   const composerDisabled = busy || historyBusy || configBusy || Boolean(history?.pendingRecovery);
   const selectionDisabled = historyDisabled || answering.size > 0 || Boolean(history?.pendingRecovery || (!activeId && pendingSession.current));
   const workspace = detail?.session.workspace ?? (!activeId ? pendingSession.current?.workspace : undefined) ?? settings?.workspace ?? '';
+
+  useEffect(() => {
+    let live = true; setSkills([]);
+    if (workspace) void api<ProfileCatalog>(`/profiles?${query({ workspace })}`).then(catalog => { if (live) setSkills(catalog.skills); }).catch(() => {});
+    return () => { live = false; };
+  }, [workspace, detail?.session.configRevision, Boolean(profileDialog)]);
 
   useEffect(() => {
     const session = detail?.session;
@@ -317,16 +325,16 @@ export default function App() {
       current?.session.status === 'running' || current?.session.status === 'waiting' || Boolean(current?.history?.pendingRecovery) ||
       (!currentId.current && Boolean(pendingSession.current));
   }
-  function openProfiles() {
+  function openProfiles(skillsOnly = false) {
     const selectedProfile = activeId ? detail?.session.profile : newProfile?.workspace === workspace ? newProfile.choice : null;
     if (selectionDisabled || configurationLocked()) return;
     const current = detailRef.current?.session;
     setProfileDialog({ id: activeId, workspace, revision: current?.configRevision ?? 0,
       choice: selectedProfile ? { profileId: selectedProfile.profileId, skillIds: [...selectedProfile.skillIds] } : { profileId: null, skillIds: [] },
-      selection: { ...selection }, view: selectionRequest.current });
+      selection: { ...selection }, view: selectionRequest.current, skillsOnly });
   }
-  async function applyProfile(choice: ProfileChoice, defaults?: ApplyProfileRequest['selection']) {
-    const dialog = profileDialog;
+  async function applyProfile(choice: ProfileChoice, defaults?: ApplyProfileRequest['selection'], target = profileDialog) {
+    const dialog = target;
     if (!dialog || configurationLocked() || currentId.current !== dialog.id || selectionRequest.current !== dialog.view) throw new Error('Session changed or another operation is pending.');
     if (!dialog.id) {
       setNewProfile(choice.profileId || choice.skillIds.length ? { workspace: dialog.workspace, choice } : null);
@@ -354,6 +362,27 @@ export default function App() {
       configOperation.current = false; setConfigBusy(false);
     }
     if (failure && !accepted && stillHere()) { setError(failure); throw new Error(failure); }
+  }
+  async function activateSkill(id: string) {
+    if (selectionDisabled || configurationLocked()) { setToast('Finish the response before changing skills.'); return; }
+    const session = detailRef.current?.session;
+    const selected = activeId ? session?.profile : newProfile?.workspace === workspace ? newProfile.choice : null;
+    if (selected?.skillIds.includes(id)) { setToast(`Skill ${id} is already active.`); setText(''); return; }
+    const target = { id: activeId, workspace, revision: session?.configRevision ?? 0, choice: selected ?? { profileId: null, skillIds: [] }, selection: { ...selection }, view: selectionRequest.current, skillsOnly: true };
+    const originalDraft = currentDraft.current;
+    configOperation.current = true; setConfigBusy(true);
+    try {
+      const catalog = await api<ProfileCatalog>(`/profiles?${query({ workspace })}`);
+      if (currentId.current !== target.id || selectionRequest.current !== target.view) return;
+      checkSkillSource(session?.profile, catalog.revision);
+      if (!target.id && selected && 'catalogRevision' in selected && selected.catalogRevision && selected.catalogRevision !== catalog.revision) throw new Error('Project instructions changed. Open /skills to review them.');
+      const choice = addSkill(selected, id, catalog);
+      // Hand the operation lock directly to the normal revision-checked apply path.
+      configOperation.current = false;
+      await applyProfile(choice, undefined, target);
+      if (currentId.current === target.id && currentDraft.current === originalDraft) setText('');
+    } catch (e) { setToast(errorMessage(e)); }
+    finally { configOperation.current = false; setConfigBusy(false); }
   }
   async function saveSetup(next: Selection) {
     if (!setup || configurationLocked()) throw new Error('Finish the response before changing setup.');
@@ -628,6 +657,7 @@ export default function App() {
   const builtins = [
     { name: 'models', description: 'Choose models and how they work together', disabled: selectionDisabled, run: () => setModelsOpen(true) },
     { name: 'setup', description: 'Connect a gateway and choose your setup', disabled: selectionDisabled, run: () => setSetup({selection, id:activeId, revision:detail?.session.configRevision ?? 0, workspace}) },
+    { name: 'skills', description: 'Browse and use project skills', disabled: selectionDisabled, run: () => openProfiles(true) },
     { name: 'settings', description: 'Providers, preferences, and permissions', run: () => setSettingsOpen(true) },
     { name: 'new', description: 'Start a new session', run: newSession },
     { name: 'plan', description: 'Switch to read-only planning', disabled: selectionDisabled, run: () => void changeSelection({...selection, mode:'plan'}) },
@@ -638,11 +668,17 @@ export default function App() {
     { name: 'import', description: 'Import a saved session', run: () => importInput.current?.click() },
     { name: 'help', description: 'Browse actions and project commands', run: () => setPaletteOpen(true) },
   ];
-  const composerCommands = [...builtins, ...commands.filter(command => !builtins.some(item => item.name === command.name))];
+  const reservedCommands = [...builtins.map(item => item.name), 'skill', ...commands.map(item => item.name)];
+  const composerCommands = [...builtins, ...commands.filter(command => !builtins.some(item => item.name === command.name)), ...skillCommands(skills, reservedCommands)];
   function runCommand(content: string) {
     const match = content.trim().match(/^\/([\w-]+)$/);
-    const command = match && builtins.find(item => item.name === match[1]);
-    if (!command) return false;
+    const name = match && (match[1] === 'skill' ? 'skills' : match[1]);
+    const command = name && builtins.find(item => item.name === name);
+    if (!command) {
+      const skill = skillCommand(content, skills, reservedCommands);
+      if (!skill) return false;
+      void activateSkill(skill); return true;
+    }
     if (command.disabled) { setToast('That command is unavailable right now.'); return true; }
     setText(''); command.run(); return true;
   }
@@ -686,7 +722,7 @@ export default function App() {
       </div>{workspaceOpen && settings && <Workspace workspace={workspace} sessionId={activeId ?? undefined} todos={detail?.todos ?? []} refreshKey={refreshKey} onClose={() => setWorkspaceOpen(false)} onUndo={legacyUndo ? () => askHistory('legacy') : undefined} running={historyDisabled} />}</div>
     </main>
     <input type="file" accept="application/json,.json" hidden tabIndex={-1} ref={importInput} aria-label="Import session JSON" onChange={e => { const f = e.target.files?.[0]; if (f) void importSession(f); e.target.value = ''; }} />
-    {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
+    {!settingsOpen && profileDialog && profileDialog.id === activeId && <ProfilePicker skillsOnly={profileDialog.skillsOnly} key={`${profileDialog.id ?? 'new'}-${profileDialog.view}`} workspace={profileDialog.workspace} sessionId={profileDialog.id} initialChoice={profileDialog.choice} selection={profileDialog.selection} disabled={selectionDisabled} onClose={closeProfiles} onApply={applyProfile} />}
     {contextSession && contextSession === activeId && !running && latestContext && <Modal title="Context details" onClose={() => setContextSession(null)}><div className="context-dialog"><ContextIndicator context={latestContext} /></div></Modal>}
     {modelsOpen && settings && <ModelPicker settings={settings} selection={selection} disabled={selectionDisabled} onChange={value => void changeSelection(value)} onClose={() => setModelsOpen(false)} onSettings={() => setSettingsOpen(true)} workspace={workspace} />}
     {setup && settings && <Onboarding key={`${setup.id}:${setup.workspace}`} selection={setup.selection} settings={settings} quick={setup.quick} onSave={saveSetup} onSettings={saveSettings} onClose={() => setSetup(null)} renderProviders={close => <Settings settings={settings} onClose={close} onSave={saveSettings} />} />}

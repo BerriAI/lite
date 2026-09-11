@@ -41,7 +41,7 @@ speedrail --url http://localhost:3210
 2. Type a task and press Enter. Build asks before changes; Plan uses read-only tools. The header shows the model that will handle the next turn.
 3. Follow tool activity inline. Each worker has its own label, assignment, live transcript, and Stop control. Consecutive tools stay open while working and collapse at the next text response. Click a tool row for its result, or use **Alt+O** to show tool details. **Changed files** and **File history** remain in Ctrl+P.
 
-Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to complete, and Esc to dismiss. Built-in commands and workspace templates appear together.
+Type `/` for inline command suggestions; use ↑/↓ to choose, Tab or Enter to complete, and Esc to dismiss. Built-in commands, workspace templates, and registered skill IDs appear together.
 
 Use `/models` to change models or add Sidekick, workers, experts, a separate planner, reasoning, or an output style. `/setup` opens the full guided configuration. **Settings → Providers** supports other APIs and ChatGPT device sign-in; keys stay masked.
 
@@ -67,6 +67,7 @@ Ctrl+P is the main navigation surface: search actions or project commands, use �
 | Follow the agent's task list / set a session goal | `/todos` / `/goal` |
 | Add workspace context | Type `@filename`, then Tab; or `/files` |
 | Attach a local text file or image | `/attach`, or `/attach path/to/file` |
+| Browse/select instruction skills / activate one | `/skills` (or `/skill`) / `/<skill-id>` |
 | Restore a previous submitted message | `/drafts` |
 | Read a long notice in full | `/notice` |
 | Scroll / return to latest output | Page Up / Page Down; Ctrl+G |
@@ -95,6 +96,8 @@ Workspace references are read by the server when the message is accepted. Local 
 `/editor` uses `$VISUAL`, then `$EDITOR`, then `vi`. Saving and leaving the editor returns the text to the composer without submitting it. If the editor fails, Speedrail preserves the temporary file and reports its path. `/shell` hands the terminal to an interactive shell in the workspace; type `exit` to return. These shell commands are your direct actions and are outside agent file-history tracking.
 
 Project templates in `.speedrail/commands` and `.claude/commands` appear in Ctrl+P. `/command arguments` expands `$ARGUMENTS` and `$1` through `$9` using the web composer's substitution rules. Built-in terminal commands take precedence on name conflicts; unrecognized slash text is sent literally.
+
+Use `/skills` (or `/skill`) to select, preview, and apply registered project skills, or `/<skill-id>` alone to activate one without sending a message. Built-ins and project templates win name conflicts. Skills stay pinned for the session; remove them through `/skills`. See [skill definitions and activation](profiles.md#slash-commands-terminal-and-web).
 
 ## Settings and appearance
 

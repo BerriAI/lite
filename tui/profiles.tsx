@@ -37,14 +37,14 @@ function ProfileEditor({ controller, catalog, initial, settings, onClose, onSave
   ]} />;
 }
 
-export function Profiles({ controller, initial, onClose }: { controller: TerminalController; initial: Session; onClose: () => void }) {
+export function Profiles({ controller, initial, onClose, skillsOnly = false, onCatalog }: { controller: TerminalController; initial: Session; skillsOnly?: boolean; onCatalog?: (catalog: ProfileCatalog) => void; onClose: () => void }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState), [catalog, setCatalog] = useState<ProfileCatalog | null>(null);
   const [choice, setChoice] = useState<ProfileChoice>({ profileId: initial.profile?.profileId ?? null, skillIds: initial.profile?.skillIds ?? [] });
   const [editing, setEditing] = useState<{ profile: EditableProfile | null } | null>(null), [revision, setRevision] = useState(0);
   const [view, setView] = useState('main'), [preview, setPreview] = useState<ProfileDetail | null>(null), [error, setError] = useState('');
   const [active, setActive] = useState<ProfileDetail | null>(null);
   const back = () => setView('main');
-  useEffect(() => { let live = true; Promise.all([controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(initial.workspace)}`), controller.client.api<ProfileDetail>(`/sessions/${encodeURIComponent(initial.id)}/profile`)]).then(([catalog, active]) => { if (live) { setCatalog(catalog); setActive(active); } }).catch(error => { if (live) setError(error.message); }); return () => { live = false; }; }, [revision]);
+  useEffect(() => { let live = true; Promise.all([controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(initial.workspace)}`), controller.client.api<ProfileDetail>(`/sessions/${encodeURIComponent(initial.id)}/profile`)]).then(([catalog, active]) => { if (live) { setCatalog(catalog); setActive(active); onCatalog?.(catalog); } }).catch(error => { if (live) setError(error.message); }); return () => { live = false; }; }, [revision]);
   const run = async (operation: () => Promise<unknown>) => { setError(''); try { await operation(); } catch (error) { setError((error as Error).message); } };
   if (!catalog) return <TextViewer title="Project profiles" text={error || 'Loading project profiles…'} onClose={onClose} />;
   if (editing && state.settings) return <ProfileEditor controller={controller} catalog={catalog} settings={state.settings} initial={editing.profile} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); setRevision(value => value + 1); }} />;
@@ -53,9 +53,18 @@ export function Profiles({ controller, initial, onClose }: { controller: Termina
   if (view === 'preview') return <TextViewer title="Profile preview" text={preview ? [preview.pinned?.instructions || 'No profile instructions.', ...(preview.pinned?.skills ?? []).map(skill => `${skill.name}\n${skill.body}`), ...preview.diagnostics.map(item => `${item.path}: ${item.message}`)].join('\n\n') : error || 'Loading preview…'} onClose={back} />;
   const apply = async (defaults: boolean) => {
     controller.configurationReady();
-    if (await controller.action('Applying profile', () => controller.client.api(controller.path('/profile'), { expectedConfigRevision: initial.configRevision ?? 0, choice: { ...choice, catalogRevision: catalog.revision }, ...(defaults && profile ? { selection: { ...profile.defaultModel, ...(profile.defaultMode ? { mode: profile.defaultMode } : {}) } } : {}) }))) onClose();
+    if (controller.sessionId !== initial.id) throw new Error('Session changed. Reopen /skills.');
+    if (await controller.action('Applying profile', () => controller.client.api(`/sessions/${encodeURIComponent(initial.id)}/profile`, { expectedConfigRevision: initial.configRevision ?? 0, choice: { ...choice, catalogRevision: catalog.revision }, ...(defaults && profile ? { selection: { ...profile.defaultModel, ...(profile.defaultMode ? { mode: profile.defaultMode } : {}) } } : {}) }))) onClose();
     else setError(controller.getState().notice);
   };
+  if (skillsOnly) return <Menu title="Skills for this session" onClose={onClose} footer={error || (active?.source.status !== 'current' && active?.source.status !== 'inactive' ? `Pinned source is ${active?.source.status}. Preview before applying. ` : '') + (catalog.diagnostics.map(item => item.message).join(' · ') || 'Select up to 8. Apply reloads selected instructions; model, mode, and profile selection stay unchanged.')} items={[
+    ...catalog.skills.map(skill => ({ id: `skill:${skill.id}`, label: `${choice.skillIds.includes(skill.id) ? '☑' : '☐'} ${skill.name}`, description: `/${skill.id} · ${skill.description}`, disabled: !choice.skillIds.includes(skill.id) && choice.skillIds.length >= 8, action: () => setChoice({ ...choice, skillIds: choice.skillIds.includes(skill.id) ? choice.skillIds.filter(id => id !== skill.id) : [...choice.skillIds, skill.id] }) })),
+    ...choice.skillIds.filter(id => !catalog.skills.some(skill => skill.id === id)).map(id => ({ id: `missing:${id}`, label: `☑ ${id} (source unavailable; remove)`, action: () => setChoice({ ...choice, skillIds: choice.skillIds.filter(value => value !== id) }) })),
+    ...(!catalog.skills.length ? [{ id: 'empty', label: 'No project skills found', description: 'Add skills to .speedrail/profiles.json and .speedrail/skills/<id>/SKILL.md', disabled: true, action: () => {} }] : []),
+    { id: 'preview', label: 'Preview instructions', action: () => { setView('preview'); setPreview(null); void run(async () => setPreview(await controller.client.api<ProfileDetail>('/profiles/preview', { workspace: initial.workspace, choice: { ...choice, catalogRevision: catalog.revision } }))); } },
+    { id: 'apply', label: 'Use skills', disabled: Boolean(state.pending), action: () => { void run(() => apply(false)); } },
+    { id: 'refresh', label: 'Refresh catalog', action: () => setRevision(value => value + 1) },
+  ]} />;
   const items: MenuItem[] = [
     { id: 'off', label: `${!choice.profileId ? '●' : '○'} No profile`, description: 'Use the standard tool set and project guidance', action: () => setChoice({ ...choice, profileId: null }) },
     ...catalog.profiles.map(item => ({ id: item.id, label: `${choice.profileId === item.id ? '●' : '○'} ${item.name}`, description: item.description, action: () => setChoice({ ...choice, profileId: item.id }) })),
