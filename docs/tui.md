@@ -58,10 +58,11 @@ Ctrl+P is the main navigation surface: search actions or project commands, use �
 | Send, or queue during work | Enter |
 | New line | Shift+Enter or Ctrl+J |
 | Steer a running response with the current draft | Alt+Enter, or Ctrl+P → Send draft as steering |
-| Stop the response and its workers | Escape twice |
+| Interrupt the response and its workers, then send the next queued message | Escape |
+| Take queued messages back into the draft | Up on the first visual row of the input |
 | Quit while leaving the server available | Ctrl+C twice, or Ctrl+X then Q |
 | Models / sessions / new session | Ctrl+X then M / L / N |
-| Queue pause, resume, or remove | Ctrl+X then P, or `/queue` |
+| Queue edit, pause, resume, or remove | Ctrl+X then P, or `/queue` |
 | External editor / workspace shell | Ctrl+X then E, or `/editor` / `/shell` |
 | Review edits / history / worker evidence | `/changes` / `/history` / `/workers` |
 | Follow the agent's task list / set a session goal | `/todos` / `/goal` |
@@ -91,7 +92,11 @@ Consecutive tools share an expandable work log. A change of agent starts a separ
 
 `/changes` shows recorded file changes, including worker edits. Wide terminals can show split diffs; narrower terminals use unified diffs. `/history` provides Undo, Redo, recovery details, and protected paths. The server checks external edits before restoring files. Undo/Redo never replay shell commands and do not reverse every external effect; see [history guarantees](local-data.md#undo-redo-and-recovery).
 
-Enter during a response queues a follow-up. Its preview appears above the composer; **Steer now** sends that queued message to the Driver immediately. `/queue` can pause, resume, remove, or steer individual queued messages. **Alt+Enter** steers with the current draft. Steering can stop delegated work so the Driver can consider the new instruction, and the update appears in the conversation under **You · update**. Session goals have no turn limit by default, allow an optional limit, and begin when you send a message. Stop pauses their continuation.
+Enter during a response queues a follow-up. Queued messages appear above the composer and run in order after the current response finishes. Press **Escape once** to interrupt the response and its workers; after cancellation and file-history cleanup finish, the oldest queued message starts automatically. An explicitly paused queue stays paused. `/stop` stops work and holds the queue until you resume it.
+
+Press **Up** from the first visual row of the input to take queued messages back for editing. Their text is placed one message per line ahead of your current draft, and attachments are preserved. Enter sends the edited draft, or queues it again if work is still running. `/queue` also lets you edit a single message, pause, resume, remove, or steer it. If the combined messages exceed one draft's limits, edit them individually through `/queue`.
+
+**Steer now** sends a queued message to the Driver during the current turn; **Alt+Enter** steers with the current draft. Steering can stop delegated work so the Driver can consider the new instruction, and the update appears in the conversation as a user message. Session goals have no turn limit by default, allow an optional limit, and begin when you send a message. Interrupting without queued work pauses their continuation.
 
 ## Drafts and local context
 

@@ -50,9 +50,10 @@ function LoadingScreen() {
   return <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column">{visible && <><Brand /><box marginTop={1} flexDirection="row" gap={1}><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>Connecting to Litespeed…</text></box></>}</box>;
 }
 
-function Composer({ controller, focused, onSubmit, onReference, commands }: { commands: {name: string; description: string}[]; controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void }) {
+function Composer({ controller, focused, onSubmit, onReference, onSuggestionsChange, commands }: { commands: {name: string; description: string}[]; controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void; onSuggestionsChange: (open: boolean) => void }) {
   const theme = useTheme(), editor = useRef<TextareaRenderable>(null);
-  const { draft, pending } = useSyncExternalStore(controller.subscribe, controller.getState);
+  const { draft, pending, sync } = useSyncExternalStore(controller.subscribe, controller.getState);
+  const queued = Boolean(sync.detail?.queue?.items.length);
   const { height, width } = useTerminalDimensions(), config = useConfig();
   const editorKeys = useMemo(() => new EditorKeys(config.keybinds), [config.keybinds]);
   useEffect(() => () => editorKeys.dispose(), [editorKeys]);
@@ -60,6 +61,7 @@ function Composer({ controller, focused, onSubmit, onReference, commands }: { co
   const [selected, setSelected] = useState(0), [dismissed, setDismissed] = useState(false);
   const token = draft.text.match(/^\/([\w-]*)$/);
   const matches = focused && token && !dismissed ? commands.filter(item => item.name.startsWith(token[1].toLowerCase())) : [];
+  useEffect(() => { onSuggestionsChange(matches.length > 0); return () => onSuggestionsChange(false); }, [matches.length > 0, onSuggestionsChange]);
   const highlighted = Math.min(selected, Math.max(0, matches.length - 1));
   const visibleCount = Math.min(6, Math.max(2, Math.floor(height / 4)));
   const start = Math.max(0, highlighted - visibleCount + 1);
@@ -76,7 +78,7 @@ function Composer({ controller, focused, onSubmit, onReference, commands }: { co
     </box>}
     <box width={config.prompt.max_width === 'auto' ? '100%' : Math.min(width, config.prompt.max_width)} alignSelf="center" border borderColor={toHex(focused ? theme.primary : theme.border)} height={rows + 2} paddingLeft={1} paddingRight={1} flexShrink={0}>
     <textarea ref={editor} focused={focused} initialValue={draft.text} wrapMode="word"
-      placeholder={pending ? `${pending}…` : isRunning(controller.detail) ? 'Queue a follow-up… (Alt+Enter to steer)' : 'Ask Litespeed to do something…'}
+      placeholder={pending ? `${pending}…` : queued ? 'Press Up to edit queued messages' : isRunning(controller.detail) ? 'Queue a follow-up… (Alt+Enter to steer)' : 'Ask Litespeed to do something…'}
       backgroundColor={toHex(theme.background)} textColor={toHex(theme.text)}
       onKeyDown={key => {
         if (!editor.current) return;
@@ -85,6 +87,11 @@ function Composer({ controller, focused, onSubmit, onReference, commands }: { co
           if (key.name === 'escape') setDismissed(true);
           else if (key.name === 'up' || key.name === 'down') setSelected((highlighted + (key.name === 'up' ? -1 : 1) + matches.length) % matches.length);
           else accept(matches[highlighted].name);
+          return;
+        }
+        if (key.name === 'up' && !key.ctrl && !key.meta && !key.shift && !key.super && queued && editor.current.visualCursor.visualRow === 0) {
+          key.preventDefault(); key.stopPropagation();
+          if (!pending) void controller.recallQueued();
           return;
         }
         const reference = /(?:^|\s)@([^\s]*)$/.exec(editor.current.plainText);
@@ -127,9 +134,10 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     return () => { live = false; };
   }, [detail?.session.workspace, detail?.session.configRevision]);
   const [promptOverlay, setPromptOverlay] = useState(false);
-  const [panel, setPanel] = useState<ReactNode>(null), [escPressed, setEscPressed] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [panel, setPanel] = useState<ReactNode>(null);
   const [settings, setSettings] = useState<TranscriptSettings>(DEFAULT_TRANSCRIPT_SETTINGS);
-  const lastCtrlC = useRef(0), escapeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastCtrlC = useRef(0);
   const pendingLeader = useSyncExternalStore(listener => router.subscribe(listener), () => router.pending.length > 0);
   const permission = detail?.permissions[0], question = !permission ? detail?.questions?.[0] : undefined;
   const close = () => setPanel(null);
@@ -140,7 +148,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   const sessions = () => setPanel(<Sessions controller={controller} onClose={close} />);
   const queue = () => {
     const current = controller.getState().sync.detail?.queue;
-    menu('Queued messages', [{ id: 'toggle', label: current?.paused ? 'Resume queue' : 'Pause queue', description: current?.reason, action: () => { close(); run(() => controller.queue(current?.paused ? 'resume' : 'pause')); } }, ...(current?.items ?? []).map(item => ({ id: item.id, label: terminalText(item.content), description: 'Steer the driver or remove from queue', action: () => menu('Queued message', [{id:'steer',label:'Steer driver now',disabled:!isRunning(controller.detail) || Boolean(item.attachments?.length),action:()=>{close();run(()=>controller.steerQueued(item.id));}},{id:'remove',label:'Remove from queue',action:()=>{close();run(()=>controller.queue('remove',item.id));}}]) }))]);
+    menu('Queued messages', [{ id: 'toggle', label: current?.paused ? 'Resume queue' : 'Pause queue', description: current?.reason, action: () => { close(); run(() => controller.queue(current?.paused ? 'resume' : 'pause')); } }, ...(current?.items ?? []).map(item => ({ id: item.id, label: terminalText(item.content), description: 'Edit, steer, or remove from queue', action: () => menu('Queued message', [{id:'edit',label:'Edit message',action:()=>{close();run(()=>controller.recallQueued(item.id));}},{id:'steer',label:'Steer driver now',disabled:!isRunning(controller.detail) || Boolean(item.attachments?.length),action:()=>{close();run(()=>controller.steerQueued(item.id));}},{id:'remove',label:'Remove from queue',action:()=>{close();run(()=>controller.queue('remove',item.id));}}]) }))]);
   };
   const permissions = () => menu('Permissions', [
     { id: 'ask', label: `${controller.detail?.session.permissionMode === 'ask' ? '●' : '○'} Ask first`, description: 'Review actions; remember tools you trust for this session.', action: () => { close(); run(() => controller.permissionMode('ask')); } },
@@ -244,7 +252,6 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     if (!detail || !state.settings || detail.messages.length || busy || setupSeen.current.has(detail.session.workspace) || !needsSetup(state.settings, detail.session)) return;
     setupSeen.current.add(detail.session.workspace); openSetup(true);
   }, [detail?.session.id, Boolean(state.settings)]);
-  useEffect(() => () => { if (escapeTimer.current) clearTimeout(escapeTimer.current); }, []);
   useKeyboard(key => {
     if (key.defaultPrevented) return;
     if ((key.super || (key.ctrl && key.shift)) && key.name === 'c') { key.preventDefault(); key.stopPropagation(); copyResponse(); return; }
@@ -255,7 +262,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       if (now - lastCtrlC.current < 2000) onQuit(); else { lastCtrlC.current = now; controller.notice('Ctrl+C again to exit. Running tasks continue on the server.'); }
       return;
     }
-    if (panel || promptOverlay) return;
+    if (panel || promptOverlay || key.name === 'escape' && suggestionsOpen) return;
     if (key.ctrl && key.name === 'd' && controller.getState().draft.text) return;
     if (key.meta && key.name === 'return' && busy && !permission && !question) { key.preventDefault(); key.stopPropagation(); run(() => controller.send('steer')); return; }
     const result = router.dispatch({ name: key.name, ctrl: key.ctrl, shift: key.shift, meta: key.meta });
@@ -265,8 +272,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     if (result.command === 'app.exit') return onQuit();
     if (result.command === 'command.palette.show' || result.command === 'help.show') return palette();
     if (result.command === 'session.interrupt' && busy) {
-      if (escPressed) { setEscPressed(false); run(() => controller.cancel()); }
-      else { setEscPressed(true); escapeTimer.current = setTimeout(() => setEscPressed(false), 2000); }
+      run(() => controller.interrupt());
       return;
     }
     const command = commands.find(item => item.id === KEY_COMMANDS[result.command ?? '']);
@@ -283,7 +289,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   const taskWidth = width >= 112 ? Math.min(44, Math.max(32, Math.floor(width / 4))) : 0;
   return <TranscriptSettingsProvider value={settings}><box width="100%" height="100%" flexDirection="column" backgroundColor={toHex(theme.background)}>
     {detail ? <>
-      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{modelLabel}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>{` ${actor} `}</text><InterruptHint pressed={escPressed} /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
+      <box height={1} flexDirection="row" flexShrink={0}><Button onPress={() => run(sessions)}>{terminalText(detail.session.title || 'New session').slice(0, Math.max(10, Math.floor((width - (busy ? 36 : 12)) / 2) - 4))}</Button><Button disabled={busy} onPress={() => run(openModels)}>{modelLabel}</Button><Button disabled={busy} onPress={() => run(() => controller.configure({ mode: detail.session.mode === 'plan' ? 'build' : 'plan' }))}>{detail.session.mode}</Button><box flexGrow={1} />{busy ? permission || question ? <text fg={toHex(theme.warning)}>waiting for you </text> : <><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>{` ${actor} `}</text><InterruptHint /></> : <text fg={toHex(theme.textMuted)}>idle </text>}</box>
       {!taskWidth && <TaskProgress detail={detail} controller={controller} compact />}
       <box flexDirection="row" flexGrow={1} minHeight={1}>
         <Transcript controller={controller} detail={detail} width={width - taskWidth} active={!panel} onInspect={inspect} onUsage={showUsage} />
@@ -291,12 +297,16 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
       </box>
       {detail.history?.pendingRecovery && <box border borderColor={toHex(theme.warning)}><text fg={toHex(theme.warning)}>History needs recovery. Your draft is saved. </text><Button onPress={() => run(() => controller.history('recover'))}>Recover history</Button></box>}
       {detail.session.goal && ['active', 'blocked'].includes(detail.session.goal.status) && <box height={1} flexShrink={0}><Button onPress={() => setPanel(<GoalPanel controller={controller} onClose={close} />)}>{`Goal ${detail.session.goal.status} · ${goalTurnLabel(detail.session.goal.turns, detail.session.goal.maxTurns)} · ${terminalText(detail.session.goal.text).slice(0, Math.max(10, width - 36))}`}</Button></box>}
-      {detail.queue?.items.length ? <box flexDirection="row" height={1} flexShrink={0}>
-        <Button tone="muted" onPress={queue}>{`${detail.queue.items.length} queued${detail.queue.paused ? ' · paused' : ' · next'}: ${terminalText(detail.queue.items[0].content).replace(/\s+/g, ' ').slice(0, Math.max(8, width - 45))}`}</Button>
-        {busy && !detail.queue.items[0].attachments?.length && <Button onPress={() => run(() => controller.steerQueued(detail.queue!.items[0].id))}>Steer now</Button>}
+      {detail.queue?.items.length ? <box flexDirection="column" flexShrink={0} paddingLeft={1} paddingRight={1}>
+        <box flexDirection="row" height={1}>
+          <Button tone="muted" onPress={queue}>{`${detail.queue.items.length} queued${detail.queue.paused ? ' · paused' : busy ? ' · Esc interrupts and sends next' : ' · next'}`}</Button>
+          {busy && !detail.queue.items[0].attachments?.length && <Button onPress={() => run(() => controller.steerQueued(detail.queue!.items[0].id))}>Steer now</Button>}
+        </box>
+        {detail.queue.items.slice(0, 3).map(item => <box key={item.id} height={1} backgroundColor={toHex(theme.backgroundElement)}><text fg={toHex(theme.textMuted)}>{terminalText(`› ${item.content || 'Attached context'}${item.attachments.length ? ` · ${item.attachments.length} attachment(s)` : ''}`).replace(/\s+/g, ' ').slice(0, Math.max(8, width - 4))}</text></box>)}
+        {detail.queue.items.length > 3 && <text height={1} fg={toHex(theme.textMuted)}>{`  +${detail.queue.items.length - 3} more · /queue to view all`}</text>}
       </box> : null}
       {state.draft.attachments.length > 0 && <text fg={toHex(theme.textMuted)}>{state.draft.attachments.map(item => `⌕ ${item.name}`).join('  ')}</text>}
-      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description})), ...skillCommands(skills, reserved)]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
+      {!panel && permission ? <PermissionPrompt key={permission.id} request={permission} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : !panel && question ? <QuestionPrompt key={question.id} request={question} controller={controller} onOverlayChange={setPromptOverlay} disabled={Boolean(state.pending)} /> : <Composer onSuggestionsChange={setSuggestionsOpen} commands={[...commands.map(item => ({name:item.id, description:item.label})), {name:'help', description:'Browse all commands'}, ...projectCommands.filter(item => !commands.some(command => command.id === item.name)).map(item => ({name:item.name, description:item.description})), ...skillCommands(skills, reserved)]} controller={controller} focused={!panel} onSubmit={submit} onReference={prefix => setPanel(<FilePicker controller={controller} initialQuery={prefix} onClose={close} onPick={file => { const draft = controller.getState().draft; if (draft.attachments.length >= 10) { controller.notice('A message can have up to 10 attachments.'); return; } controller.setDraft({ text: draft.text.replace(/@[^\s]*$/, ''), attachments: [...draft.attachments, { name: file.name, path: file.path }] }); close(); }} />)} />}
     </> : state.sync.phase === 'error' ? <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column"><text fg={toHex(theme.error)}>{state.sync.error}</text><Button onPress={() => run(() => controller.open(controller.sessionId))}>Reconnect</Button><Button onPress={palette}>Commands</Button></box> : <LoadingScreen />}
     <UpdateNotice controller={controller} onRestart={() => { process.send?.({ type: 'litespeed-restart', sessionId: controller.sessionId }); onQuit(75); }} />
     {(state.notice || pendingLeader || state.sync.connection === 'reconnecting') && <text height={1} flexShrink={0} paddingLeft={1} fg={toHex(theme.warning)}>{terminalText(pendingLeader ? 'Leader…' : state.notice || 'Reconnecting… Showing the last known state.').replace(/\s+/g, ' ').slice(0, width - 2)}</text>}

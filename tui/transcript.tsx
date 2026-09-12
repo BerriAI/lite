@@ -407,11 +407,10 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
   return <box width={width} flexGrow={1} minHeight={1} flexDirection="column"><scrollbox ref={scroll} onMouseScroll={event => { if (event.scroll?.direction === 'up') follow(false); else if (event.scroll?.direction === 'down') queueMicrotask(resumeAtBottom); }} scrollAcceleration={acceleration} flexGrow={1} minHeight={1} stickyScroll={following} stickyStart="bottom" viewportCulling paddingLeft={width < 90 ? 1 : 2} paddingRight={width < 90 ? 1 : 2} paddingBottom={1}>{contents}</scrollbox>{!following && <Button onPress={latest}>↓ Latest · Ctrl+G</Button>}</box>;
 });
 
-/** Right-aligned interrupt affordance: `esc interrupt`, escalating after the
- * first press. */
-export function InterruptHint({ pressed }: { pressed: boolean }) {
+/** Right-aligned single-press interrupt affordance. */
+export function InterruptHint() {
   const theme = useTheme();
   return (
-    <text fg={toHex(theme.primary)}>{pressed ? 'esc again to interrupt' : 'esc interrupt'}</text>
+    <text fg={toHex(theme.primary)}>esc interrupt</text>
   );
 }

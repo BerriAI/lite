@@ -1,8 +1,8 @@
-import type { Attachment, PermissionRequest, QuestionAnswer, QuestionRequest, Session, SessionDetail, Settings } from '../shared/types.js';
+import type { Attachment, PermissionRequest, QuestionAnswer, QuestionRequest, QueuedMessage, Session, SessionDetail, Settings } from '../shared/types.js';
 import type { ProfileCatalog } from '../shared/profiles.js';
 import { addSkill, checkSkillSource } from '../shared/skill-commands.js';
 import { SessionSync, type SyncState } from './sync.js';
-import { LitespeedClient } from './client.js';
+import { ApiError, LitespeedClient } from './client.js';
 
 export interface Draft { text: string; attachments: Attachment[] }
 export interface DraftStorage { load(key: string): Draft; save(key: string, draft: Draft): void; remember?(text: string): void; history?(): string[] }
@@ -105,6 +105,33 @@ export class TerminalController {
     return accepted;
   }
   cancel() { return this.action('Stopping', () => this.client.api(this.path('/cancel'), {})); }
+  interrupt() {
+    const turnId=this.detail?.messages.findLast(message=>message.role==='user')?.id;
+    return turnId ? this.action('Interrupting', () => this.client.api(this.path('/interrupt'), {turnId})) : this.cancel();
+  }
+  async recallQueued(id?: string) {
+    const items=(this.detail?.queue?.items??[]).filter(item=>!id||item.id===id);
+    if(!items.length)return false;
+    const merge=(entries:QueuedMessage[]):Draft=>({text:[...entries.map(item=>item.content),this.state.draft.text].filter(Boolean).join('\n'),attachments:[...entries.flatMap(item=>item.attachments),...this.state.draft.attachments]});
+    const preview=merge(items);
+    if(preview.text.length>200000||preview.attachments.length>10||Buffer.byteLength(JSON.stringify(preview))>12*1024*1024) {
+      this.notice('These queued messages are too large for one draft. Use /queue to edit one message at a time.');return false;
+    }
+    return this.action('Editing queued messages',async()=>{
+      let recalled:QueuedMessage[];
+      try {({items:recalled}=await this.client.api<{items:QueuedMessage[]}>(this.path('/queue/recall'),{ids:items.map(item=>item.id)}));}
+      catch(error) {
+        // A lost response may follow a committed recall. Keep a visible copy
+        // rather than losing the user's input; definite rejections leave it queued.
+        if(!(error instanceof ApiError&&error.status&&error.status>=400&&error.status<500)) {
+          this.setDraft(merge(items));
+          throw new Error('Could not confirm queue recall. Messages were copied into your draft; review /queue before resending.');
+        }
+        throw error;
+      }
+      this.setDraft(merge(recalled));
+    });
+  }
   decide(request: PermissionRequest, decision: 'allow' | 'always' | 'deny') {
     return this.action('Recording decision', () => this.client.api(this.path(`/permissions/${encodeURIComponent(request.id)}`), { decision }));
   }

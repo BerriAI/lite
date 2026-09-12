@@ -99,10 +99,11 @@ try {
   await waitFor(() => screen().includes('Your answer'), 'custom answer input');
   terminal.write('Use an embedded database\r');
   await waitFor(async () => (await detail()).session.status === 'idle', 'custom answer completes');
+  await waitFor(() => screen().includes('idle') && screen().includes('Ask Litespeed to do'), 'composer after custom answer');
   terminal.write('slow response\r');
   await waitFor(async () => (await detail()).session.status === 'running', 'running response');
-  terminal.write('\x1b'); await new Promise(done => setTimeout(done, 200)); terminal.write('\x1b');
-  await waitFor(async () => (await detail()).session.status === 'idle', 'double escape cancels', 2000);
+  terminal.write('\x1b');
+  await waitFor(async () => (await detail()).session.status === 'idle', 'single escape interrupts', 2000);
   terminal.write('\x10');
   await waitFor(() => screen().includes('Choose models') && screen().includes('Search…'), 'command palette');
   await save('04-commands');
@@ -184,8 +185,8 @@ try {
   await waitFor(async () => (await detail()).queue.items.length === 1, 'follow-up queued');
   assert(screen().includes('queued follow-up')&&screen().includes('Steer now'),'queued content and direct steering stay visible');
   assert(screen().includes('Enter queue · Alt+Enter steer'),'running composer accurately labels both actions');
-  terminal.write('\x1b'); await new Promise(done => setTimeout(done, 150)); terminal.write('\x1b');
-  await waitFor(() => screen().includes('idle'), 'queue task stopped');
+  terminal.write('\x1b');
+  await waitFor(() => screen().includes('idle') && screen().includes('Press Up to edit') && !screen().includes('Interrupting'), 'queue task stopped');
   terminal.write('/queue\r');
   await waitFor(() => screen().includes('Resume queue'), 'queue manager');
   terminal.write('\r');
@@ -198,7 +199,7 @@ try {
   await waitFor(() => screen().includes('remove this queued message'), 'removable queued item');
   terminal.write('\x1b[B\r');
   await waitFor(() => screen().includes('Steer driver now'), 'queued message actions');
-  terminal.write('\x1b[B\r');
+  terminal.write('\x1b[B\x1b[B\r');
   await waitFor(async () => (await detail()).queue.items.length === 0, 'queued item removed');
   await waitFor(() => screen().includes('Ask Litespeed to do'), 'composer after queue removal');
   await waitFor(() => !screen().includes('×') && !screen().includes('Updating queue') && screen().includes('Ask Litespeed to do'), 'queue action finished');
@@ -218,7 +219,7 @@ try {
   }, 'steering note renders in the user message rail after the composer clears');
   assert(!screen().includes('[Steering]') && !screen().includes('You · update'), 'steering has no internal wrapper or extra identity label');
   await save('steering-user-message');
-  terminal.write('\x1b'); await new Promise(done => setTimeout(done, 180)); terminal.write('\x1b');
+  terminal.write('\x1b');
   await waitFor(() => screen().includes('idle') && screen().includes('Ask Litespeed to do'), 'steered task stops');
   await fusionCases({ api, terminal, screen, waitFor, save, settings, session, detail });
   terminal.write('/terminal-review "source files" tests\r');

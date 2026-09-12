@@ -30,6 +30,7 @@
     "test:e2e": "playwright test",
     "check": "npm run typecheck && npm test && npm run build",
     "test:tui": "node scripts/test-tui.mjs",
+    "test:tui:queue": "node scripts/test-tui-queue.mjs",
     "test:tui:flow": "node scripts/test-tui-flow.mjs",
     "test:tui:interactions": "node scripts/test-tui-interactions.mjs",
     "test:tui:startup": "npm run build && node scripts/test-tui-startup.mjs"

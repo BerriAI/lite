@@ -58,6 +58,8 @@ type ActiveRun = { clientSurface?: ClientSurface; turnId?: string; profile?: Pro
    * how many were already drained. In-memory only: cancellation or any run end
    * discards undelivered notes with the run. */
   commandJobs?: Map<string, { snapshot: string; message: Message; call: ToolCall }>;
+  /** Explicit interrupt may advance the queue only after cancellation and history sealing finish. */
+  advanceQueue?: boolean;
   verificationNote?: string; commandProgress?: () => void;
   toolFailures?: Set<string>; takeover?: { remaining: number; files: string[]; repairOf: string }; workerFailed?: boolean; unresolvedWorkers?: Set<string>; steering?: string[]; steeringDelivered?: number; approvalWaitStarted?: number; approvalWaitMs?: number;
   /** Consecutive evidence-free rounds (every call failed, was denied, or
@@ -235,18 +237,26 @@ export class Runner {
     finally {this.externalOperations.delete(controller);this.notifyIdle();}
   }
   cancel(id: string) { this.assertRoot(id);this.cancelRun(id); }
+  interrupt(id: string, turnId: string) {
+    this.assertRoot(id);this.assertOpen();this.store.session(id);
+    const run=this.runs.get(id);
+    if(!run||run.turnId!==turnId)throw conflict('The response changed. Refresh before interrupting it.');
+    if(run.controller.signal.aborted)return;
+    const queue=this.store.queue(id);
+    this.cancelRun(id,!run.compacting&&!queue.paused&&queue.items.length>0);
+  }
   deleteSessionJobs(id: string) {
     for(const row of this.store.db.prepare('SELECT DISTINCT child_session_id FROM delegations WHERE parent_session_id=?').all(id) as {child_session_id:string}[])this.jobs.killSession(row.child_session_id);
     this.jobs.killSession(id);
   }
-  private cancelRun(id: string) {
+  private cancelRun(id: string, advanceQueue = false) {
     this.configurationPreparations.get(id)?.abort();
     this.preparations.get(id)?.abort();
     for(const controller of this.queuePreparations.get(id)||[])controller.abort();
     const run = this.runs.get(id);
-    if (run) { run.progressMessage=undefined; run.controller.abort(); for (const p of run.approvals.values()) p.resolve(false); }
+    if (run) { run.advanceQueue=advanceQueue; run.progressMessage=undefined; run.controller.abort(); for (const p of run.approvals.values()) p.resolve(false); }
     this.store.session(id);
-    this.holdQueue(id,'Cancelled. Review and resume queued messages explicitly.',false);
+    if(!advanceQueue)this.holdQueue(id,'Cancelled. Review and resume queued messages explicitly.',false);
   }
   stopAll() {
     this.stopping=true;
@@ -334,6 +344,15 @@ export class Runner {
   }
   removeQueued(id: string, itemId: string) {
     this.assertRoot(id);const queue=this.store.removeQueued(id,itemId);this.bus.emit(id,'queue',queue);return queue;
+  }
+  recallQueued(id: string, ids: string[]) {
+    this.assertRoot(id);this.assertOpen();
+    const queue=this.store.queue(id), selected=new Set(ids);
+    if(!ids.length||selected.size!==ids.length||ids.some(itemId=>!queue.items.some(item=>item.id===itemId)))throw conflict('Queued messages changed. Refresh before editing them.');
+    const items=queue.items.filter(item=>selected.has(item.id));
+    const next=this.store.saveQueue(id,{...queue,items:queue.items.filter(item=>!selected.has(item.id))});
+    try {this.bus.emit(id,'queue',next);} catch { /* Recall is accepted; a refresh restores the queue snapshot. */ }
+    return {items};
   }
   /** GOAL MODE lifecycle. One goal at a time: a live 'active' goal must be
    * cleared (or settle as completed/blocked) before a replacement, so a stray
@@ -687,7 +706,7 @@ export class Runner {
     return !run.child ? (this.store.db.prepare('SELECT id FROM steering_notes WHERE session_id=? AND turn_id=? ORDER BY rowid LIMIT 1 OFFSET ?').get(id,run.turnId!,index) as {id:string}|undefined)?.id ?? randomUUID() : randomUUID();
   }
   private finishRun(id: string, run: ActiveRun) {
-    let succeeded=false;
+    let succeeded=false, advanceQueue=false;
     for(const pending of run.approvals.values())pending.resolve(false);
     run.approvals.clear();
     try {
@@ -722,9 +741,12 @@ export class Runner {
       // and live-settings gates live in notifyFinished.
       if(current.status!=='error'&&!run.controller.signal.aborted&&!this.stopping)this.notifyFinished(id,run);
       succeeded=Boolean(run.completed&&!run.blocked&&!run.controller.signal.aborted&&current.status!=='error'&&!this.stopping);
-      if(!succeeded)this.holdQueue(id,run.controller.signal.aborted?'Cancelled. Review and resume queued messages explicitly.':'Response stopped or encountered an error. Review before resuming queued messages.',false);
+      // An interrupted tool/approval may mark the run blocked. A real failure,
+      // unsealed history, shutdown, or a later queue pause still prevents promotion.
+      advanceQueue=Boolean(run.advanceQueue&&run.controller.signal.aborted&&!run.failure&&!history.pendingRecovery&&current.status!=='error'&&!this.stopping);
+      if(!succeeded&&!advanceQueue)this.holdQueue(id,run.controller.signal.aborted?'Cancelled. Review and resume queued messages explicitly.':'Response stopped or encountered an error. Review before resuming queued messages.',false);
       this.bus.emit(id,'done',{status:this.store.session(id).status});
-    } catch(error) {succeeded=false;this.failRun(id,run,error);}
+    } catch(error) {succeeded=false;advanceQueue=false;this.failRun(id,run,error);}
     finally {
       run.progressMessage=undefined;this.releaseExternal(run);
       this.runs.delete(id);
@@ -732,7 +754,7 @@ export class Runner {
       run.resolveDone?.();
       this.notifyIdle();
     }
-    if(succeeded&&!run.child) {
+    if((succeeded||advanceQueue)&&!run.child) {
       try {this.drainQueue(id);} catch(error) {this.failRun(id,run,error);}
     }
   }
