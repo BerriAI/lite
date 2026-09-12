@@ -13,8 +13,8 @@ import { Onboarding } from './Onboarding';
 import { ModelPicker } from './ModelPicker';
 import { Composer, type Selection } from './Composer';
 import { ProfilePicker } from './ProfilePicker';
-import type { ApplyProfileRequest, ProfileChoice, ProfileCatalog, ProjectSkill } from '../../shared/profiles';
-import { addSkill, checkSkillSource, skillCommand, skillCommands } from '../../shared/skill-commands';
+import type { ApplyProfileRequest, ProfileChoice, ProfileCatalog } from '../../shared/profiles';
+import { skillInvocation, skillCommands } from '../../shared/skill-commands';
 import { Conversation } from './Conversation';
 import { QuestionCard, emptyQuestionDraft, type QuestionDraft } from './QuestionCard';
 import type { QuestionAnswer, QuestionRequest } from '../../shared/questions';
@@ -113,7 +113,8 @@ export default function App() {
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting'>('connecting');
   const [refreshKey, setRefreshKey] = useState(0);
-  const [skills, setSkills] = useState<ProjectSkill[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<ProfileCatalog | null>(null);
+  const skills = skillCatalog?.skills ?? [];
   const [commands, setCommands] = useState<SlashCommand[]>([]);
   const importInput = useRef<HTMLInputElement>(null);
   const pendingSession = useRef<Session | null>(null);
@@ -135,8 +136,8 @@ export default function App() {
   const workspace = detail?.session.workspace ?? (!activeId ? pendingSession.current?.workspace : undefined) ?? settings?.workspace ?? '';
 
   useEffect(() => {
-    let live = true; setSkills([]);
-    if (workspace) void api<ProfileCatalog>(`/profiles?${query({ workspace })}`).then(catalog => { if (live) setSkills(catalog.skills); }).catch(() => {});
+    let live = true; setSkillCatalog(null);
+    if (workspace) void api<ProfileCatalog>(`/profiles?${query({ workspace })}`).then(catalog => { if (live) setSkillCatalog(catalog); }).catch(() => {});
     return () => { live = false; };
   }, [workspace, detail?.session.configRevision, Boolean(profileDialog)]);
 
@@ -367,27 +368,6 @@ export default function App() {
     }
     if (failure && !accepted && stillHere()) { setError(failure); throw new Error(failure); }
   }
-  async function activateSkill(id: string) {
-    if (selectionDisabled || configurationLocked()) { setToast('Finish the response before changing skills.'); return; }
-    const session = detailRef.current?.session;
-    const selected = activeId ? session?.profile : newProfile?.workspace === workspace ? newProfile.choice : null;
-    if (selected?.skillIds.includes(id)) { setToast(`Skill ${id} is already active.`); setText(''); return; }
-    const target = { id: activeId, workspace, revision: session?.configRevision ?? 0, choice: selected ?? { profileId: null, skillIds: [] }, selection: { ...selection }, view: selectionRequest.current, skillsOnly: true };
-    const originalDraft = currentDraft.current;
-    configOperation.current = true; setConfigBusy(true);
-    try {
-      const catalog = await api<ProfileCatalog>(`/profiles?${query({ workspace })}`);
-      if (currentId.current !== target.id || selectionRequest.current !== target.view) return;
-      checkSkillSource(session?.profile, catalog.revision);
-      if (!target.id && selected && 'catalogRevision' in selected && selected.catalogRevision && selected.catalogRevision !== catalog.revision) throw new Error('Project instructions changed. Open /skills to review them.');
-      const choice = addSkill(selected, id, catalog);
-      // Hand the operation lock directly to the normal revision-checked apply path.
-      configOperation.current = false;
-      await applyProfile(choice, undefined, target);
-      if (currentId.current === target.id && currentDraft.current === originalDraft) setText('');
-    } catch (e) { setToast(errorMessage(e)); }
-    finally { configOperation.current = false; setConfigBusy(false); }
-  }
   async function saveSetup(next: Selection) {
     if (!setup || configurationLocked()) throw new Error('Finish the response before changing setup.');
     const target = setup;
@@ -440,6 +420,7 @@ export default function App() {
     const view = selectionRequest.current, stillHere = () => currentId.current === activeId && selectionRequest.current === view;
     let id = activeId ?? pendingSession.current?.id;
     try {
+      const invoked = skillInvocation(content, skillCatalog, reservedCommands);
       if (!id) {
         const profile = newProfile?.workspace === workspace ? newProfile.choice : undefined;
         const session = await post<Session>('/sessions', { ...selection, workspace, title: content.slice(0, 70), ...(profile ? { profile } : {}) });
@@ -447,7 +428,7 @@ export default function App() {
         if (stillHere()) pendingSession.current = session;
         setSessions(list => [session, ...list]);
       }
-      await post(`/sessions/${id}/messages`, { content, attachments });
+      await post(`/sessions/${id}/messages`, { content, attachments, skills: invoked });
       clearSubmitted(draft);
       if (pendingSession.current?.id === id) pendingSession.current = null;
       if (!activeId && stillHere()) { setNewProfile(null); navigate(id); }
@@ -465,7 +446,7 @@ export default function App() {
     queueOperation.current = true; setQueueBusy(true); setError('');
     const cursor = detail?.lastEventId ?? 0;
     try {
-      const queue = await post<QueueState>(`/sessions/${id}/queue`, { content, attachments });
+      const queue = await post<QueueState>(`/sessions/${id}/queue`, { content, attachments, skills: skillInvocation(content, skillCatalog, reservedCommands) });
       clearSubmitted(draft);
       // The detail cursor survives journal pruning; a bare response must not replace newer SSE/snapshot state.
       setDetail(current => current?.session.id === id && (current.lastEventId ?? 0) <= cursor ? { ...current, queue } : current);
@@ -490,7 +471,7 @@ export default function App() {
     if (!id || queueOperation.current || configOperation.current || historyOperation.current) return false;
     queueOperation.current = true; setQueueBusy(true); setError('');
     try {
-      await post(`/sessions/${id}/steer`, { content });
+      await post(`/sessions/${id}/steer`, { content, skills: skillInvocation(content, skillCatalog, reservedCommands) });
       if (currentId.current === id) setToast('Steering sent to the driver.');
       return true;
     } catch (e) {
@@ -678,11 +659,7 @@ export default function App() {
     const match = content.trim().match(/^\/([\w-]+)$/);
     const name = match && (match[1] === 'skill' ? 'skills' : match[1]);
     const command = name && builtins.find(item => item.name === name);
-    if (!command) {
-      const skill = skillCommand(content, skills, reservedCommands);
-      if (!skill) return false;
-      void activateSkill(skill); return true;
-    }
+    if (!command) return false;
     if (command.disabled) { setToast('That command is unavailable right now.'); return true; }
     setText(''); command.run(); return true;
   }
@@ -743,7 +720,7 @@ export default function App() {
   </div>;
 }
 
-function CommandArea({ commands, text, setText, children }: { commands: {name: string; description: string}[]; text: string; setText: (value: string) => void; children: ReactNode }) {
+function CommandArea({ commands, text, setText, children }: { commands: {name: string; description: string; skill?: boolean}[]; text: string; setText: (value: string) => void; children: ReactNode }) {
   const [caret, setCaret] = useState(0);
   const acceptedCaret = useRef<number | null>(null);
   useLayoutEffect(() => {
@@ -787,7 +764,7 @@ function CommandArea({ commands, text, setText, children }: { commands: {name: s
   return <div className="command-area" onKeyDownCapture={keydown} onKeyUp={sync} onClick={sync} onInput={e => { sync(e); setDismissed(false); setSelected(0); }}>
     {open && <div className="command-popover" id="command-popover" role="listbox" aria-label="Slash commands">{matches.map((c, i) => <button key={c.name} id={`command-option-${i}`} role="option" aria-selected={i === highlighted} tabIndex={-1} className={i === highlighted ? 'selected' : ''} onMouseMove={() => setSelected(i)} onMouseDown={e => e.preventDefault()} onClick={() => accept(c)}><strong>/{c.name}</strong><small>{c.description}</small></button>)}</div>}
     {children}
-    {active && <div className="command-hint" role="status">Command: {active.name} — {active.description}</div>}
+    {active && <div className="command-hint" role="status">{active.skill ? 'Skill' : 'Command'}: {active.name} — {active.description}</div>}
   </div>;
 }
 

@@ -184,4 +184,70 @@ describe('profile Runner and API integration',()=>{
     try{const result=await api(`/sessions/${s.id}/profile`,{expectedConfigRevision:0,choice:await choice()});expect(result.status).toBe(200);expect(result.body.session.configRevision).toBe(1);}finally{store.db.exec('DROP TRIGGER fail_profile_event');}
     expect(store.profileSnapshot(s.id)?.active.profileId).toBe('review');expect(calls).toEqual([]);
   });
+  it('invokes a skill in the actual provider request while preserving the visible prompt and session profile',async()=>{
+    const session=await create(await choice('review'));
+    const before=store.session(session.id),skills={skillIds:['testing'],catalogRevision:(await catalog()).revision};
+    const content='/testing check the parser';
+    expect((await api(`/sessions/${session.id}/messages`,{content,skills,attachments:[{name:'example.txt',content:'FILE_CONTEXT'}]})).status).toBe(202);
+    await runner.whenIdle();
+    const message=store.messages(session.id).find(message=>message.role==='user')!;
+    expect(message.content).toBe(content);expect(message.attachments).toHaveLength(2);
+    expect(message.attachments?.[1]).toMatchObject({skillId:'testing',name:'Skill: testing'});
+    expect(JSON.stringify(calls[0].messages)).toContain('PINNED_SKILL');
+    expect(JSON.stringify(calls[0].messages)).toContain('Follow these instructions');
+    expect(JSON.stringify(calls[0].messages)).toContain('.litespeed/skills/testing');
+    expect(JSON.stringify(calls[0].messages)).toContain('FILE_CONTEXT');
+    expect(store.session(session.id)).toMatchObject({profile:before.profile,configRevision:before.configRevision,providerId:before.providerId,model:before.model,mode:before.mode,permissionMode:before.permissionMode});
+  });
+
+  it('rejects stale or unavailable skills before accepting a message or queue entry',async()=>{
+    const session=await create(),skills={skillIds:['testing'],catalogRevision:(await catalog()).revision};
+    await writeFile(join(directory,'.litespeed','skills','testing','SKILL.md'),'CHANGED_SKILL');
+    for(const suffix of ['messages','queue'])expect((await api(`/sessions/${session.id}/${suffix}`,{content:'/testing task',skills})).status).toBe(409);
+    expect((await api(`/sessions/${session.id}/messages`,{content:'/missing task',skills:{skillIds:['missing'],catalogRevision:(await catalog()).revision}})).status).toBe(400);
+    expect(store.messages(session.id)).toEqual([]);expect(store.queue(session.id).items).toEqual([]);expect(calls).toEqual([]);
+  });
+
+  it('pins queued skill instructions at acceptance and retains them across restart and source edits',async()=>{
+    const session=await create(),skills={skillIds:['testing'],catalogRevision:(await catalog()).revision};
+    expect((await api(`/sessions/${session.id}/queue`,{content:'/testing queued task',skills})).status).toBe(202);
+    await writeFile(join(directory,'.litespeed','skills','testing','SKILL.md'),'CHANGED_AFTER_QUEUE');
+    await restart();
+    runner.resumeQueue(session.id);await runner.whenIdle();
+    expect(JSON.stringify(calls[0].messages)).toContain('PINNED_SKILL');expect(JSON.stringify(calls[0].messages)).not.toContain('CHANGED_AFTER_QUEUE');
+    expect(store.messages(session.id).find(message=>message.role==='user')?.content).toBe('/testing queued task');
+    expect(store.session(session.id).profile).toBeUndefined();
+  });
+
+  it('drops recalled skill bodies and re-resolves only the skill references that are resubmitted',async()=>{
+    const session=await create(),skills={skillIds:['testing'],catalogRevision:(await catalog()).revision};
+    const queued=await api(`/sessions/${session.id}/queue`,{content:'/testing queued task',skills});
+    const recalled=await api(`/sessions/${session.id}/queue/recall`,{ids:[queued.body.items[0].id]});
+    const attachments=recalled.body.items[0].attachments;
+    attachments[0].content='FORGED_RECALLED_INSTRUCTIONS';
+    expect((await api(`/sessions/${session.id}/queue`,{content:'/testing edited task',skills,attachments})).status).toBe(202);
+    const queuedAgain=store.queue(session.id).items[0];
+    expect(queuedAgain.attachments).toHaveLength(1);expect(queuedAgain.attachments[0].content).toContain('PINNED_SKILL');
+    await api(`/sessions/${session.id}/queue/recall`,{ids:[queuedAgain.id]});
+    expect((await api(`/sessions/${session.id}/messages`,{content:'task without a skill',attachments})).status).toBe(202);
+    await runner.whenIdle();expect(JSON.stringify(calls[0].messages)).not.toContain('PINNED_SKILL');expect(JSON.stringify(calls[0].messages)).not.toContain('FORGED_RECALLED');
+  });
+
+  it('delivers skill instructions with steering and refuses to steer a replacement response',async()=>{
+    const session=await create(),skills={skillIds:['testing'],catalogRevision:(await catalog()).revision};
+    respond=()=>{};
+    runner.start(session.id,'First request');await until(()=>calls.length===1);
+    expect((await api(`/sessions/${session.id}/steer`,{content:'/testing inspect now',skills})).status).toBe(202);
+    const note=store.messages(session.id).find(message=>message.content.startsWith('[Steering]'))!;
+    expect(note.attachments?.[0].content).toContain('PINNED_SKILL');
+    let finish!:(input:{content:string})=>void;
+    const pending=runner.submitSteering(session.id,()=>new Promise(resolve=>{finish=resolve;}));
+    runner.cancel(session.id);
+    await until(()=>!runner.active(session.id));
+    runner.start(session.id,'Replacement request');
+    finish({content:'stale steering'});
+    await expect(pending).rejects.toThrow('response changed');
+    expect(store.messages(session.id).some(message=>message.content.includes('stale steering'))).toBe(false);
+  });
+
 });

@@ -19,6 +19,7 @@ import { Memory } from './memory.js';
 import { listModels } from './providers.js';
 import { modelCatalog } from './budget.js';
 import { readProfileCatalog, readEditableProfile, saveProjectProfile, saveProjectProfileSchema, resolveProfileChoice, profileSourceStatus, type ProfileSnapshot } from './profiles.js';
+import { skillInvocationSchema, snapshotSkillInvocation } from './skill-invocation.js';
 import { skillDiscover, skillPlan, skillApply } from './skill-import.js';
 import { validateRuleSet } from './permissions.js';
 import { validateHooks } from './hooks.js';
@@ -46,8 +47,8 @@ const sessionSchema = z.object({shunt:shuntSchema.nullable().optional(),modelRea
 const profileChoiceSchema=z.object({profileId:z.string().min(1).max(64).nullable(),skillIds:z.array(z.string().min(1).max(64)).max(100),catalogRevision:z.string().min(1).max(128).optional()}).strict().refine(choice=>new Set(choice.skillIds).size===choice.skillIds.length,'Skill IDs must be unique.').refine(choice=>(choice.profileId===null&&choice.skillIds.length===0)||Boolean(choice.catalogRevision),'Refresh the profile catalog before choosing profiles or skills.');
 const configRevisionSchema=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const profileSelectionSchema=z.object({providerId:z.string().min(1).max(64).optional(),model:z.string().min(1).max(250).optional(),mode:z.enum(['build','plan']).optional()}).strict();
-const attachmentSchema = z.object({name:z.string().max(255),path:z.string().max(4096).optional(),content:z.string().max(200000).optional(),mimeType:z.string().max(100).optional(),dataUrl:z.string().max(6000000).regex(/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/).optional()});
-const inputSchema = z.object({content:z.string().max(200000),attachments:z.array(attachmentSchema).max(10).optional()}).refine(v=>v.content.trim() || v.attachments?.length,'A message or attachment is required');
+const attachmentSchema = z.object({skillId:z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/).optional(),name:z.string().max(255),path:z.string().max(4096).optional(),content:z.string().max(200000).optional(),mimeType:z.string().max(100).optional(),dataUrl:z.string().max(6000000).regex(/^data:image\/(png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$/).optional()});
+const inputSchema = z.object({skills:skillInvocationSchema.optional(),content:z.string().max(200000),attachments:z.array(attachmentSchema).max(10).optional()}).refine(v=>v.content.trim() || v.attachments?.length,'A message or attachment is required');
 const queryString = (value:unknown) => typeof value === 'string' ? value : '';
 const httpError = (status:number,message:string) => Object.assign(new Error(message),{status});
 export interface AuthService {
@@ -310,9 +311,14 @@ export function createApp(options:AppOptions = {}) {
     req.on('close',()=>{clearInterval(heartbeat);unsubscribe();});
   });
   const snapshotInput=async(id:string,body:unknown,surface:unknown)=>{
-    const input=inputSchema.parse(body),session=store.session(id);
+    const {skills,...input}=inputSchema.parse(body),session=store.session(id);
+    // Recalled skill attachments are display snapshots, never instructions to trust on a new send.
+    input.attachments=(input.attachments??[]).filter(attachment=>!attachment.skillId);
+    const invoked=await snapshotSkillInvocation(session.workspace,skills);
+    if(!input.content.trim()&&!input.attachments.length&&!invoked.length)throw httpError(400,'A message or attachment is required.');
+    if(input.attachments.length+invoked.length>10)throw httpError(400,'A message can have up to 10 files and skills combined.');
     for(const attachment of input.attachments||[])if(attachment.path){const file=await readFile(session.workspace,attachment.path);attachment.content=file.content.slice(0,50000)+(file.truncated?'\n[Attachment truncated]':'');}
-    return {...input,clientSurface:clientSurface(surface)};
+    return {...input,attachments:[...input.attachments,...invoked],clientSurface:clientSurface(surface)};
   };
   app.post('/api/sessions/:id/messages',async(req,res)=>{
     const messageId=await runner.submit(req.params.id,()=>snapshotInput(req.params.id,req.body,req.get('X-Litespeed-Client')));
@@ -332,9 +338,9 @@ export function createApp(options:AppOptions = {}) {
   // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
   // is delivered between steps of the ACTIVE response. Child ids are already
   // rejected by the app-level child guard above; the runner 409s when idle.
-  app.post('/api/sessions/:id/steer',(req,res)=>{
-    const {content}=z.object({content:z.string().trim().min(1).max(4000)}).parse(req.body);
-    runner.steer(req.params.id,content,undefined,clientSurface(req.get('X-Litespeed-Client')));
+  app.post('/api/sessions/:id/steer',async(req,res)=>{
+    const input=z.object({content:z.string().trim().min(1).max(4000),skills:skillInvocationSchema.optional()}).parse(req.body);
+    await runner.submitSteering(req.params.id,()=>snapshotInput(req.params.id,input,req.get('X-Litespeed-Client')));
     res.status(202).json({ok:true});
   });
   // GOAL MODE: set one session objective pursued across host-continued turns.

@@ -309,7 +309,20 @@ export class Runner {
   }
   /** Steering belongs to the driver. Accept durably before releasing a worker
    * or removing a queued message, so failures cannot lose or duplicate input. */
-  steer(id: string, content: string, queueId?: string, surface?: ClientSurface) {
+  async submitSteering(id: string, snapshot: () => Promise<{ content: string; attachments?: Attachment[]; clientSurface?: ClientSurface }>) {
+    this.assertRoot(id);this.assertOpen();
+    const run=this.runs.get(id),controller=new AbortController();
+    if(!run||run.compacting||run.controller.signal.aborted)throw conflict('No active response to steer. Send a normal message instead.');
+    const pending=this.queuePreparations.get(id)||new Set<AbortController>();
+    if(pending.size>=20)throw conflict('Too many messages are being prepared. Wait before steering.');
+    pending.add(controller);this.queuePreparations.set(id,pending);
+    try {
+      const input=await snapshot();
+      if(controller.signal.aborted||this.runs.get(id)!==run)throw conflict('The response changed while preparing the steering note. Nothing was sent.');
+      return this.steer(id,input.content,undefined,input.clientSurface,input.attachments);
+    } finally {pending.delete(controller);if(!pending.size)this.queuePreparations.delete(id);this.notifyIdle();}
+  }
+  steer(id: string, content: string, queueId?: string, surface?: ClientSurface, attachments?: Attachment[]) {
     this.assertRoot(id);this.assertOpen();
     const run=this.runs.get(id);
     if(!run||run.compacting||run.controller.signal.aborted)throw conflict('No active response to steer. Send a normal message instead.');
@@ -320,7 +333,7 @@ export class Runner {
     if(queueId&&!item)throw conflict('Queued message is no longer available. It may already have started.');
     content=item?.content??content;
     const source=surface??item?.clientSurface??run.clientSurface;
-    const note:Message={clientSurface:source,id:randomUUID(),sessionId:id,turnId:run.turnId,role:'system',content:`[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: ${content}`,attachments:item?.attachments,createdAt:Date.now()};
+    const note:Message={clientSurface:source,id:randomUUID(),sessionId:id,turnId:run.turnId,role:'system',content:`[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: ${content}`,attachments:item?.attachments??attachments,createdAt:Date.now()};
     this.store.db.exec('BEGIN');
     try {
       this.store.db.prepare('INSERT INTO steering_notes(id,session_id,turn_id,content,created_at,attachments) VALUES(?,?,?,?,?,?)').run(note.id,id,run.turnId!,content,note.createdAt,JSON.stringify(note.attachments??[]));
