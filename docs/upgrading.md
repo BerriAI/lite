@@ -6,6 +6,8 @@ The coding agent is now **Litespeed**. Its package is `@litellm/litespeed`, its 
 
 ## Keep existing sessions and preferences
 
+If you also use Claude Code or Codex skills, you can carry them into a project after upgrading: open **/skills** (terminal) or **Settings → Project profiles** (browser) and use **Import a Claude/Codex skill…**. It copies a `SKILL.md` skill and its support files into `.litespeed/skills` and registers it; nothing is auto-activated. See [Project profiles and skills](profiles.md).
+
 Stop the old agent server first. From the updated checkout, run:
 
 ```sh

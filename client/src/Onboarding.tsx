@@ -8,10 +8,12 @@ import type { Selection } from './Composer';
 import { ModelField, ShuntSettings } from './ModelPicker';
 import { Logo, Modal } from './ui';
 import { errorMessage, post } from './api';
+import { SkillImporter } from './SkillImporter';
 
-export function Onboarding({ settings, selection, onSave, onClose, renderProviders, onSettings, quick = false }: { settings: Settings; quick?: boolean; selection: Selection; onSave: (next: Selection) => Promise<void>; onClose: () => void; onSettings: (settings: Settings) => void; renderProviders: (close: () => void) => ReactNode }) {
+export function Onboarding({ settings, selection, workspace, onSave, onClose, renderProviders, onSettings, quick = false }: { settings: Settings; quick?: boolean; selection: Selection; workspace: string; onSave: (next: Selection) => Promise<void>; onClose: () => void; onSettings: (settings: Settings) => void; renderProviders: (close: () => void) => ReactNode }) {
   const [shuntPending,setShuntPending]=useState(false);
   const [providers, setProviders] = useState(false);
+  const [skills, setSkills] = useState(false);
   const [simple, setSimple] = useState(quick);
   const [step, setStep] = useState(quick && settings.providers.some(p => p.id === selection.providerId && p.baseUrl) ? 2 : 0), [kind, setKind] = useState<'single' | ArchitectureKind>(selection.architecture?.kind ?? (quick || !selection.model ? 'sidekick-fusion' : 'single'));
   const [draft, setDraft] = useState(selection), [worker, setWorker] = useState(selection.architecture ? architectureWorker(selection.architecture) : null);
@@ -36,6 +38,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
     try { await onSave({ ...draft, architecture: kind === 'single' ? null : selectArchitecture(kind, worker!) }); onClose(); }
     catch (error) { setError(errorMessage(error)); } finally { setSaving(false); }
   }
+  if (skills) return <Modal title="Import a Claude/Codex skill" onClose={() => setSkills(false)}><SkillImporter workspace={workspace} onClose={() => setSkills(false)} onImported={() => setSkills(false)} /></Modal>;
   if (providers) return renderProviders(() => { const next = setupGateway(settings, settings.defaultProvider); setGateway(next); setBaseUrl(next.baseUrl); setApiKey(''); setProviders(false); });
   return <Modal title="Set up Litespeed" onClose={() => { if (!saving) onClose(); }}>
     <div className="setup-intro"><Logo /><div><p>{step === 0 ? 'Connect your LiteLLM gateway' : step === 1 ? 'How would you like to work?' : 'Choose your models'}</p><small>{simple ? step === 0 ? 'Enter your connection to get started.' : 'Choose a setup, then a model for each role.' : `${step + 1} of 3 · You can change this later.`}</small></div></div>
@@ -58,6 +61,7 @@ export function Onboarding({ settings, selection, onSave, onClose, renderProvide
         {simple && <button className="text-button" onClick={() => { setSimple(false); setStep(1); setOpen(null); }}>Customize setup</button>}</div>
         {!simple && <><label className="model-setting-row setup-permissions">Permissions<select aria-label="Setup permissions" value={draft.permissionMode} onChange={event => setDraft({ ...draft, permissionMode: event.target.value as 'ask' | 'auto' })}><option value="ask">Ask first</option><option value="auto">Allow all tools</option></select></label>
         <p className="field-hint">{SETUP_PERMISSIONS}</p></>}
+        <div className="setup-links"><button className="text-button" onClick={() => setSkills(true)}>Import Claude/Codex skills from your machine</button></div>
       </>}
       {step > 0 && connection && <p className="field-hint">{connection}</p>}
       {error && <p role="alert" className="error-text">{error}</p>}
