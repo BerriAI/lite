@@ -80,6 +80,22 @@ describe('foreground bounded researcher Runner/API integration',()=>{
   it('root cancellation waits for descendants and prevents queued follow-up',async()=>{
     let held=false;respond=(body,res)=>{if(child(body))held=true;else task(res);};const s=await create();runner.start(s.id,'ROOT');await until(()=>held);runner.enqueue(s.id,'Queued');const delegation=runner.delegations.list(s.id)[0];runner.cancel(s.id);await runner.whenIdle();expect(runner.active(s.id)).toBe(false);expect(runner.active(delegation.childSessionId)).toBe(false);expect(runner.delegations.get(s.id,delegation.id).status).toBe('cancelled');expect(calls).toHaveLength(2);expect(store.messages(s.id).filter(m=>m.role==='tool')).toHaveLength(1);expect(store.queue(s.id).items).toHaveLength(1);
   });
+  it('root interruption settles its researcher before promoting queued input',async()=>{
+    let held=false,childId='',settledBeforePromotion=false;
+    respond=(body,res)=>{
+      if(child(body)){held=true;return;}
+      if(body.messages.filter((message:{role:string})=>message.role==='user').at(-1)?.content==='Queued') {
+        settledBeforePromotion=!runner.active(childId);text(res,'Promoted response');
+      }else task(res);
+    };
+    const s=await create(),turnId=runner.start(s.id,'ROOT');await until(()=>held);
+    const delegation=runner.delegations.list(s.id)[0];childId=delegation.childSessionId;
+    runner.enqueue(s.id,'Queued');runner.interrupt(s.id,turnId);await runner.whenIdle();
+    await until(()=>!runner.active(s.id));
+    expect(settledBeforePromotion).toBe(true);expect(runner.delegations.get(s.id,delegation.id).status).toBe('cancelled');
+    expect(store.messages(s.id).at(-1)?.content).toBe('Promoted response');expect(store.queue(s.id).items).toEqual([]);
+    expect(store.messages(s.id).filter(message=>message.role==='tool')).toHaveLength(1);
+  });
 
   it('a child deadline settles timed_out without killing parent explanation',async()=>{
     const original=DELEGATION_LIMITS.idleMs;(DELEGATION_LIMITS as {idleMs:number}).idleMs=30;

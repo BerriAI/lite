@@ -182,6 +182,10 @@ const mock=createServer(async(req,res)=>{
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-question',type:'function',function:{name:'ask_user',arguments:JSON.stringify({question:'Which storage should this project use?',options:[{id:'sqlite',label:'SQLite',description:'A local database with no extra service.'},{id:'postgres',label:'PostgreSQL',description:'A separate database server.'}]})}}]});
   }else if(prompt.includes('ask fixture question')&&prompt.includes('then write')&&data.messages.at(-1)?.tool_call_id==='fixture-question'){
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-after-answer',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'answered.txt',content:'The answer did not grant tool permission.\n'})}}]});
+  }else if(prompt==='TUI_QUEUE_HOLD'){
+    emit({content:'Waiting for an interrupt.'});
+    await new Promise<void>(resolve=>res.once('close',resolve));
+    if(res.destroyed)return;
   }else if(prompt.includes('create fixture')&&data.messages.at(-1)?.role!=='tool'){
     toolCall=true;emit({tool_calls:[{index:0,id:'fixture-write',type:'function',function:{name:'write_file',arguments:JSON.stringify({path:'result.txt',content:`Created by the browser test.\n${prompt}\n`})}}]});
   }else{

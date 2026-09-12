@@ -324,6 +324,10 @@ export function createApp(options:AppOptions = {}) {
     res.status(202).json(queue);
   });
   app.delete('/api/sessions/:id/queue/:queueId',(req,res)=>res.json(runner.removeQueued(req.params.id,req.params.queueId)));
+  app.post('/api/sessions/:id/queue/recall',(req,res)=>{
+    const {ids}=z.object({ids:z.array(z.string().min(1).max(128)).min(1).max(20)}).strict().parse(req.body);
+    res.json(runner.recallQueued(req.params.id,ids));
+  });
   app.post('/api/sessions/:id/queue/:queueId/steer',(req,res)=>res.status(202).json(runner.steer(req.params.id,'',req.params.queueId,clientSurface(req.get('X-Litespeed-Client')))));
   // Mid-turn steering: unlike /queue (waits for the run to end), a steering note
   // is delivered between steps of the ACTIVE response. Child ids are already
@@ -344,6 +348,10 @@ export function createApp(options:AppOptions = {}) {
   app.post('/api/sessions/:id/queue/pause',(req,res)=>res.json(runner.pauseQueue(req.params.id)));
   app.post('/api/sessions/:id/queue/resume',(req,res)=>res.json(runner.resumeQueue(req.params.id)));
   app.post('/api/sessions/:id/cancel',(req,res)=>{runner.cancel(req.params.id);res.json({ok:true});});
+  app.post('/api/sessions/:id/interrupt',(req,res)=>{
+    const {turnId}=z.object({turnId:z.string().min(1).max(128)}).strict().parse(req.body);
+    runner.interrupt(req.params.id,turnId);res.json({ok:true});
+  });
   app.patch('/api/sessions/:id/permission-mode',(req,res)=>{
     const {permissionMode,expectedConfigRevision}=z.object({permissionMode:z.enum(['ask','auto']),expectedConfigRevision:configRevisionSchema}).strict().parse(req.body);
     res.json(runner.setPermissionMode(req.params.id,permissionMode,expectedConfigRevision));

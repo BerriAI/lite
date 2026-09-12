@@ -119,6 +119,77 @@ describe('local API and agent loop',()=>{
     await request(`/sessions/${s.id}/cancel`,{});await until(()=>!runner.active(s.id));expect(calls).toHaveLength(1);expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items[0].attachments[0].content).toBe('QUEUED_SNAPSHOT');
     expect((await request(`/sessions/${s.id}/messages`,{content:'Skip queue'})).status).toBe(409);mode='text';await request(`/sessions/${s.id}/queue/resume`,{});await until(()=>!runner.active(s.id));expect(calls).toHaveLength(2);expect(JSON.stringify(calls[1])).toContain('QUEUED_SNAPSHOT');expect(JSON.stringify(calls[1])).not.toContain('NEW_DISK_VALUE');
   });
+  it('interrupts a stream, waits for cleanup, then drains queued snapshots in order',async()=>{
+    mode='slow';const s=await session();
+    const first=await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>calls.length===1);
+    await writeFile(join(dir,'interrupt.txt'),'QUEUED_SNAPSHOT');
+    await request(`/sessions/${s.id}/queue`,{content:'Second',attachments:[{name:'context',path:'interrupt.txt'}]});
+    await request(`/sessions/${s.id}/queue`,{content:'Third'});await writeFile(join(dir,'interrupt.txt'),'CHANGED_ON_DISK');
+    let release!:()=>void,cleaning=false;const gate=new Promise<void>(resolve=>{release=resolve;});
+    const cleanup=vi.spyOn(runner.jobs,'stopSession').mockImplementationOnce(async()=>{cleaning=true;await gate;});
+    try {
+      mode='text';expect((await request(`/sessions/${s.id}/interrupt`,{turnId:first.data.messageId})).status).toBe(200);
+      await until(()=>cleaning);expect(calls).toHaveLength(1);expect(store.queue(s.id).items).toHaveLength(2);
+      expect(store.messages(s.id).filter(message=>message.role==='user').map(message=>message.content)).toEqual(['Initial']);
+    } finally {release();cleanup.mockRestore();}
+    await until(()=>!runner.active(s.id));
+    expect(store.messages(s.id).filter(message=>message.role==='user').map(message=>message.content)).toEqual(['Initial','Second','Third']);
+    expect(store.messages(s.id).some(message=>message.content==='Starting')).toBe(true);
+    expect(JSON.stringify(calls[1])).toContain('QUEUED_SNAPSHOT');expect(JSON.stringify(calls[1])).not.toContain('CHANGED_ON_DISK');
+    expect(store.queue(s.id).items).toEqual([]);expect(runner.history.state(s.id).pendingRecovery).toBeFalsy();
+  });
+  it('interrupts pending approval without executing it and promotes the queued message',async()=>{
+    mode='tool';const s=await session(),first=await request(`/sessions/${s.id}/messages`,{content:'Write'});
+    await until(()=>runner.permissions(s.id).length===1);await request(`/sessions/${s.id}/queue`,{content:'Instead answer this'});
+    mode='text';expect((await request(`/sessions/${s.id}/interrupt`,{turnId:first.data.messageId})).status).toBe(200);
+    await until(()=>!runner.active(s.id));expect(runner.permissions(s.id)).toEqual([]);
+    await expect(readFile(join(dir,'hello.txt'),'utf8')).rejects.toMatchObject({code:'ENOENT'});
+    expect(store.messages(s.id).filter(message=>message.role==='user').map(message=>message.content)).toEqual(['Write','Instead answer this']);
+  });
+  it('rejects a stale interrupt instead of stopping a different turn',async()=>{
+    mode='slow';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Current'});await until(()=>calls.length===1);
+    await request(`/sessions/${s.id}/queue`,{content:'Next'});
+    expect((await request(`/sessions/${s.id}/interrupt`,{turnId:'an-earlier-turn'})).status).toBe(409);
+    expect(runner.active(s.id)).toBe(true);expect(store.queue(s.id)).toMatchObject({paused:false});expect(calls).toHaveLength(1);
+  });
+  it.each(['pause','cancel','failure'] as const)('does not promote interrupted work after %s during cleanup',async action=>{
+    mode='slow';const s=await session(),first=await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>calls.length===1);
+    await request(`/sessions/${s.id}/queue`,{content:'Keep queued'});
+    let release!:()=>void,cleaning=false;const gate=new Promise<void>(resolve=>{release=resolve;});
+    const cleanup=vi.spyOn(runner.jobs,'stopSession').mockImplementationOnce(async()=>{cleaning=true;await gate;if(action==='failure')throw new Error('Cleanup failed');});
+    try {
+      await request(`/sessions/${s.id}/interrupt`,{turnId:first.data.messageId});await until(()=>cleaning);
+      if(action==='pause')await request(`/sessions/${s.id}/queue/pause`,{});
+      if(action==='cancel')await request(`/sessions/${s.id}/cancel`,{});
+    } finally {release();cleanup.mockRestore();}
+    await until(()=>!runner.active(s.id));expect(calls).toHaveLength(1);
+    expect(store.queue(s.id)).toMatchObject({paused:true,items:[{content:'Keep queued'}]});
+  });
+  it('keeps a manually paused queue paused when interrupted',async()=>{
+    mode='slow';const s=await session(),first=await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>calls.length===1);
+    await request(`/sessions/${s.id}/queue`,{content:'Paused'});await request(`/sessions/${s.id}/queue/pause`,{});
+    await request(`/sessions/${s.id}/interrupt`,{turnId:first.data.messageId});await until(()=>!runner.active(s.id));
+    expect(calls).toHaveLength(1);expect(store.queue(s.id)).toMatchObject({paused:true,manualPause:true,items:[{content:'Paused'}]});
+  });
+  it('recalls only the selected queued messages in order with their snapshots',async()=>{
+    const s=await session();await writeFile(join(dir,'recall.txt'),'SAVED_CONTEXT');
+    const first=await request(`/sessions/${s.id}/queue`,{content:'First',attachments:[{name:'file',path:'recall.txt'}]});
+    const second=await request(`/sessions/${s.id}/queue`,{content:'Second'});
+    await request(`/sessions/${s.id}/queue`,{content:'From another client'});await writeFile(join(dir,'recall.txt'),'NEW_CONTEXT');
+    const recalled=await request(`/sessions/${s.id}/queue/recall`,{ids:[second.data.items[1].id,first.data.items[0].id]});
+    expect(recalled.status).toBe(200);expect(recalled.data.items.map((item:{content:string})=>item.content)).toEqual(['First','Second']);
+    expect(recalled.data.items[0].attachments[0].content).toBe('SAVED_CONTEXT');
+    expect(store.queue(s.id).items.map(item=>item.content)).toEqual(['From another client']);expect(calls).toHaveLength(0);
+  });
+  it('rejects stale or duplicate recall IDs without partially removing input',async()=>{
+    const s=await session(),other=await session();
+    const queue=(await request(`/sessions/${s.id}/queue`,{content:'Keep me'})).data;
+    const foreign=(await request(`/sessions/${other.id}/queue`,{content:'Other'})).data.items[0];
+    for(const ids of [[queue.items[0].id,'already-started'],[queue.items[0].id,foreign.id],[queue.items[0].id,queue.items[0].id]]) {
+      expect((await request(`/sessions/${s.id}/queue/recall`,{ids})).status).toBe(409);
+      expect(store.queue(s.id)).toEqual(queue);
+    }
+  });
   it('pauses remaining queue after provider errors and denied tools',async()=>{
     mode='tool';const s=await session();await request(`/sessions/${s.id}/messages`,{content:'Initial'});await until(()=>runner.permissions(s.id).length===1);await request(`/sessions/${s.id}/queue`,{content:'Pending'});
     const permission=runner.permissions(s.id)[0];mode='error';await request(`/sessions/${s.id}/permissions/${permission.id}`,{decision:'allow'});await until(()=>!runner.active(s.id));expect(store.queue(s.id).paused).toBe(true);expect(store.queue(s.id).items).toHaveLength(1);expect(store.session(s.id).status).toBe('error');

@@ -102,7 +102,7 @@ export async function fusionCases({ api, terminal, screen, waitFor, save, settin
   terminal.write('FUSION_BROWSER terminal cancel worker\r');
   await approve();
   await waitFor(async () => (await detail()).permissions.some(item => item.tool === 'write_file') && screen().includes('wants to write a file'), 'worker awaiting decision before stop');
-  terminal.write('\x1b'); await new Promise(done => setTimeout(done, 180)); terminal.write('\x1b');
+  terminal.write('\x1b');
   await idle();
   assert.equal((await detail()).delegations.at(-1).status, 'cancelled');
   assert.equal((await detail()).permissions.length, 0);
