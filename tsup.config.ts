@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: ['server/index.ts'],
+  entry: ['server/index.ts', 'server/mcp-code-worker.ts'],
   format: ['esm'],
   platform: 'node',
   target: 'node22',

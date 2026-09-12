@@ -31,7 +31,7 @@ describe('external paths use normal tool permissions', () => {
     store.saveSettings({workspace,providers:[{id:'test',name:'Test',kind:'openai',baseUrl:await listen(provider),apiKey:'fake-key'}],defaultProvider:'test',defaultModel:'model'});
     const app=createApp({store});runner=app.runner;server=createServer(app.app);url=await listen(server);
   });
-  afterEach(async()=>{runner.stopAll();await runner.whenIdle();await close(server);await close(provider);store.close();await rm(directory,{recursive:true,force:true});});
+  afterEach(async()=>{runner.stopAll();await runner.whenIdle();await until(()=>!runner.jobs.active());await close(server);await close(provider);store.close();await rm(directory,{recursive:true,force:true});});
 
   it.each(['build','plan'] as const)('reads a sibling file after user approval in %s mode',async mode=>{
     setCall('read_file',{path:'../outside/package.json'});const s=create({mode});start(s.id);
