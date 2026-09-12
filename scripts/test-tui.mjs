@@ -212,6 +212,12 @@ try {
   terminal.write('Send draft as steering\r');
   await waitFor(async () => (await detail()).messages.some(message => message.role === 'system' && message.content.startsWith('[Steering]') && message.content.endsWith('driver steering from terminal')), 'steering reaches driver');
   await waitFor(() => !screen().includes('×'), 'steering palette closed');
+  await waitFor(() => {
+    const contents = screen();
+    return contents.includes('Queue a follow-up') && contents.split('\n').some(line => line.includes('┃') && line.includes('driver steering from terminal'));
+  }, 'steering note renders in the user message rail after the composer clears');
+  assert(!screen().includes('[Steering]') && !screen().includes('You · update'), 'steering has no internal wrapper or extra identity label');
+  await save('steering-user-message');
   terminal.write('\x1b'); await new Promise(done => setTimeout(done, 180)); terminal.write('\x1b');
   await waitFor(() => screen().includes('idle') && screen().includes('Ask Litespeed to do'), 'steered task stops');
   await fusionCases({ api, terminal, screen, waitFor, save, settings, session, detail });

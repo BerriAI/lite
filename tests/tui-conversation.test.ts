@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DelegationSummary, Message, SessionDetail } from '../shared/types.js';
 import { activityActors, activitySections, conversationGroups, taskInvocations, usageLabel, usageDetails } from '../tui/conversation.js';
+import { steeringContent } from '../shared/steering-presentation.js';
 const message = (id: string, extra: Partial<Message>): Message => ({ id, sessionId: 'root', role: 'assistant', content: id, createdAt: 1, ...extra });
 function detail(messages: Message[], status = 'idle'): SessionDetail { return { session: { id: 'root', status, model: 'new-model', mode: 'plan' }, messages, permissions: [], todos: [] } as unknown as SessionDetail; }
 describe('current task sidebar', () => {
@@ -18,6 +19,14 @@ describe('current task sidebar', () => {
   });
 });
 describe('terminal conversation parity', () => {
+  it('exposes steering as user content without mutating its delivered system message', () => {
+    const messages = [message('steer', { role: 'system', content: '[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: follow the latest plan' }), message('u', { role: 'user', content: 'ordinary question' })];
+    const groups = conversationGroups(detail(messages));
+    expect(groups).toHaveLength(2);
+    expect(groups[0].message.role).toBe('system');
+    expect(steeringContent(groups[0].message)).toBe('follow the latest plan');
+    expect(groups[0].message.content).toContain('[Steering]');
+  });
   it('groups multi-request turns once across system notices and exposes one family usage footer', () => {
     const messages = [message('u', { role: 'user', turnId: 't' }), message('a', { turnId: 't', usage: { inputTokens: 10, outputTokens: 2 }, toolCalls: [] }), message('notice', { role: 'system', turnId: 't' }), message('b', { turnId: 't', turnUsage: { inputTokens: 110, outputTokens: 12, requests: 2, reportedRequests: 2, breakdown: [] } })];
     const groups = conversationGroups(detail(messages));

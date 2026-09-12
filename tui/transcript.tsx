@@ -15,6 +15,7 @@ import {
   SCANNER_INTERVAL_MS, SPINNER_FRAMES, SPINNER_INTERVAL_MS,
 } from './transcriptModel.js';
 import { activityActors, activitySections, conversationGroups, usageLabel, type ActivityEntry } from './conversation.js';
+import { steeringContent } from '../shared/steering-presentation.js';
 import { Button } from './ui.js';
 import { terminalText } from './protocol.js';
 import { toolRow, reasoningSummary } from './transcriptModel.js';
@@ -376,12 +377,15 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
     {groups.length > limit && <Button onPress={() => setLimit(count => count + 120)}>Load earlier messages</Button>}
     {!groups.length && <box flexGrow={1} marginTop={2} paddingLeft={2} flexDirection="column"><Brand /><text marginTop={1} fg={toHex(theme.text)}><strong>A fresh start.</strong></text><text fg={toHex(theme.textMuted)}>Give Litespeed a task in this workspace.</text><text fg={toHex(theme.textMuted)}>{terminalText(detail.session.workspace)}</text></box>}
     {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
+      const steering = steeringContent(message);
+      if (steering !== undefined) {
+        previousActor = undefined;
+        return <UserRow key={message.id} message={{ ...message, role: 'user', content: steering }} first={index === 0} />;
+      }
       if (message.role === 'user') { previousActor = undefined; return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />; }
       if (message.role === 'system') {
         previousActor = undefined;
-        const steering = message.content.startsWith('[Steering]');
-        const content = message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '');
-        return <box key={message.id} marginTop={1} paddingLeft={3} flexDirection="column" flexShrink={0}>{steering && <text fg={toHex(theme.textMuted)}>You · update</text>}<text fg={toHex(steering ? theme.text : theme.textMuted)} wrapMode="word">{terminalText(content, true)}</text></box>;
+        return <box key={message.id} marginTop={1} paddingLeft={3} flexShrink={0}><text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(message.content, true)}</text></box>;
       }
       const usageMessage = steps.findLast(step => step.turnUsage) ?? steps.at(-1) ?? message;
       const content = withoutVerificationNotice(message.content, message.receipts);
