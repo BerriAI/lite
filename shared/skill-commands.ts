@@ -1,20 +1,29 @@
-import type { ActiveProfile, ProfileCatalog, ProfileChoice, ProjectSkill } from './profiles.js';
+import type { ProfileCatalog, ProjectSkill } from './profiles.js';
 
-/** Built-ins and project templates always own their names. */
+export interface SkillInvocation { skillIds: string[]; catalogRevision: string }
+
+/** Built-ins and project templates always own their slash names. */
 export function skillCommands(skills: ProjectSkill[], reserved: string[]) {
-  return skills.filter(skill => !reserved.includes(skill.id)).map(skill => ({ name: skill.id, description: `Use skill: ${skill.name}${skill.description ? ` — ${skill.description}` : ''}` }));
+  return skills.filter(skill => !reserved.includes(skill.id)).map(skill => ({ name: skill.id, description: `Use skill: ${skill.name}${skill.description ? ` — ${skill.description}` : ''}`, skill: true }));
 }
+
+/** A leading skill reference stays in the user's message; its arguments are unchanged. */
 export function skillCommand(text: string, skills: ProjectSkill[], reserved: string[]): string | undefined {
-  const match = text.trim().match(/^\/([a-z0-9][a-z0-9-]{0,63})$/);
-  return match && skillCommands(skills, reserved).some(skill => skill.name === match[1]) ? match[1] : undefined;
+  const match = text.trimStart().match(/^([/$])([a-z0-9][a-z0-9-]{0,63})(?=\s|$)/);
+  return match && (match[1] === '$' || !reserved.includes(match[2])) && skills.some(skill => skill.id === match[2]) ? match[2] : undefined;
 }
-export function addSkill(choice: ProfileChoice | null | undefined, id: string, catalog: ProfileCatalog): ProfileChoice {
-  if (!catalog.skills.some(skill => skill.id === id)) throw new Error('Skill unavailable. Open /skills to refresh the catalog.');
-  const ids = choice?.skillIds ?? [];
-  if (!ids.includes(id) && ids.length >= 8) throw new Error('Choose up to 8 skills. Open /skills to remove one first.');
-  return { profileId: choice?.profileId ?? null, skillIds: ids.includes(id) ? [...ids] : [...ids, id], catalogRevision: catalog.revision };
-}
-/** Direct activation must not silently reload an existing pinned configuration. */
-export function checkSkillSource(active: ActiveProfile | null | undefined, revision: string) {
-  if (active && active.revision !== revision) throw new Error('Project instructions changed. Open /skills to review and apply the updated snapshot.');
+
+export function skillInvocation(text: string, catalog: ProfileCatalog | null, reserved: string[]): SkillInvocation | undefined {
+  const skillIds = new Set<string>();
+  let fence = '';
+  for (const line of text.split('\n')) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) { if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length) fence = ''; continue; }
+    if (marker) { fence = marker[1]; continue; }
+    const reference = line.trimStart().match(/^([/$])([a-z0-9][a-z0-9-]{0,63})(?=\s|$)/);
+    if (!catalog && reference && (reference[1] === '$' || !reserved.includes(reference[2]))) throw new Error('Skill catalog is not loaded. Open /skills to refresh before sending a skill reference.');
+    const id = skillCommand(line, catalog?.skills ?? [], reserved);
+    if (id) skillIds.add(id);
+  }
+  return skillIds.size && catalog ? { skillIds: [...skillIds], catalogRevision: catalog.revision } : undefined;
 }

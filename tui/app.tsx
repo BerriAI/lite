@@ -7,8 +7,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { Message, Session } from '../shared/types.js';
 import { terminalText, parseSlash } from './protocol.js';
-import type { ProfileCatalog, ProjectSkill } from '../shared/profiles.js';
-import { skillCommand, skillCommands } from '../shared/skill-commands.js';
+import type { ProfileCatalog } from '../shared/profiles.js';
+import { skillInvocation, skillCommands } from '../shared/skill-commands.js';
 import { Profiles } from './profiles.js';
 import { TerminalController, effectiveModel, isRunning } from './controller.js';
 import { ConfigContext, ThemeContext, useConfig, useTheme } from './context.js';
@@ -50,7 +50,7 @@ function LoadingScreen() {
   return <box flexGrow={1} justifyContent="center" alignItems="center" flexDirection="column">{visible && <><Brand /><box marginTop={1} flexDirection="row" gap={1}><WorkingScanner color={toHex(theme.primary)} /><text fg={toHex(theme.textMuted)}>Connecting to Litespeed…</text></box></>}</box>;
 }
 
-function Composer({ controller, focused, onSubmit, onReference, onSuggestionsChange, commands }: { commands: {name: string; description: string}[]; controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void; onSuggestionsChange: (open: boolean) => void }) {
+function Composer({ controller, focused, onSubmit, onReference, onSuggestionsChange, commands }: { commands: {name: string; description: string; skill?: boolean}[]; controller: TerminalController; focused: boolean; onSubmit: () => void; onReference: (prefix: string) => void; onSuggestionsChange: (open: boolean) => void }) {
   const theme = useTheme(), editor = useRef<TextareaRenderable>(null);
   const { draft, pending, sync } = useSyncExternalStore(controller.subscribe, controller.getState);
   const queued = Boolean(sync.detail?.queue?.items.length);
@@ -82,7 +82,7 @@ function Composer({ controller, focused, onSubmit, onReference, onSuggestionsCha
       backgroundColor={toHex(theme.background)} textColor={toHex(theme.text)}
       onKeyDown={key => {
         if (!editor.current) return;
-        if (matches.length && !(key.name === 'return' && draft.text === `/${matches[highlighted].name}`) && !key.ctrl && !key.meta && !key.shift && ['up', 'down', 'tab', 'return', 'escape'].includes(key.name)) {
+        if (matches.length && !(key.name === 'return' && !matches[highlighted].skill && draft.text === `/${matches[highlighted].name}`) && !key.ctrl && !key.meta && !key.shift && ['up', 'down', 'tab', 'return', 'escape'].includes(key.name)) {
           key.preventDefault(); key.stopPropagation();
           if (key.name === 'escape') setDismissed(true);
           else if (key.name === 'up' || key.name === 'down') setSelected((highlighted + (key.name === 'up' ? -1 : 1) + matches.length) % matches.length);
@@ -125,11 +125,12 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   });
   useEffect(() => { const status = state.sync.detail?.session.status; if (config.attention.enabled && config.attention.sounds !== false && (!config.attention.focus_only || terminalFocused.current) && previousStatus.current === 'running' && (status === 'waiting' || status === 'idle' || status === 'error')) process.stdout.write('\x07'); previousStatus.current = status; }, [state.sync.detail?.session.status]);
   const detail = state.sync.detail, busy = isRunning(detail);
-  const [skills, setSkills] = useState<ProjectSkill[]>([]);
+  const [skillCatalog, setSkillCatalog] = useState<ProfileCatalog | null>(null);
+  const skills = skillCatalog?.skills ?? [];
   const [projectCommands, setProjectCommands] = useState<ProjectCommand[]>([]);
   useEffect(() => {
-    setProjectCommands([]); setSkills([]); let live = true;
-    if (detail) void controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(detail.session.workspace)}`).then(value => { if (live) setSkills(value.skills); }).catch(() => {});
+    setProjectCommands([]); setSkillCatalog(null); let live = true;
+    if (detail) void controller.client.api<ProfileCatalog>(`/profiles?workspace=${encodeURIComponent(detail.session.workspace)}`).then(value => { if (live) setSkillCatalog(value); }).catch(() => {});
     if (detail) void controller.client.api<{ commands: ProjectCommand[] }>(`/commands?workspace=${encodeURIComponent(detail.session.workspace)}`).then(value => { if (live) setProjectCommands(value.commands); }).catch(() => {});
     return () => { live = false; };
   }, [detail?.session.workspace, detail?.session.configRevision]);
@@ -189,7 +190,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'attachments', label: 'Manage draft attachments', action: () => menu('Draft attachments', controller.getState().draft.attachments.map((item, index) => ({ id: String(index), label: item.name, description: 'Select to remove', action: () => { const draft = controller.getState().draft; controller.setDraft({ ...draft, attachments: draft.attachments.filter((_, offset) => offset !== index) }); close(); } }))) },
     { id: 'editor', label: 'Open draft in external editor', description: 'Uses VISUAL or EDITOR, then returns to Litespeed', action: () => { close(); run(() => controller.action('Editing draft', async () => { const text = await editDraft(renderer, controller.getState().draft.text, controller.detail!.session.workspace); controller.setDraft({ ...controller.getState().draft, text }); })); } },
     { id: 'shell', label: 'Open workspace shell', description: 'Type exit to return to Litespeed', action: () => { close(); run(() => openShell(renderer, controller.detail!.session.workspace)); } },
-    { id: 'skills', label: 'Browse and use project skills', disabled: busy, action: () => run(() => { controller.configurationReady(); if (controller.detail) setPanel(<Profiles skillsOnly controller={controller} initial={controller.detail.session} onCatalog={catalog => setSkills(catalog.skills)} onClose={close} />); }) },
+    { id: 'skills', label: 'Browse and use project skills', disabled: busy, action: () => run(() => { controller.configurationReady(); if (controller.detail) setPanel(<Profiles skillsOnly controller={controller} initial={controller.detail.session} onCatalog={catalog => setSkillCatalog(catalog)} onClose={close} />); }) },
     { id: 'commands', label: 'Project command templates', description: 'Workspace prompt templates with argument substitution', action: () => menu('Project commands', projectCommands.map(item => ({ id: item.name, label: `/${item.name}`, description: item.description, action: () => { controller.setDraft({ ...controller.getState().draft, text: `/${item.name} ` }); close(); } }))) },
     { id: 'drafts', label: 'Input history', description: 'Restore a previous message to the composer', action: () => menu('Input history', controller.inputHistory().reverse().map((text, index) => ({ id: String(index), label: terminalText(text).slice(0, 100), action: () => { controller.setDraft({ ...controller.getState().draft, text }); close(); } }))) },
     { id: 'export', label: 'Export session', description: 'Save this conversation as JSON', action: () => prompt('Export to file (new file)', `litespeed-session-${controller.sessionId}.json`, async filename => { const data = await controller.client.api(controller.path('/export')); const path = resolve(controller.detail!.session.workspace, filename); await writeFile(path, JSON.stringify(data, null, 2), { flag: 'wx', mode: 0o600 }); controller.notice(`Exported to ${path}`); }) },
@@ -215,7 +216,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     { id: 'rename', label: 'Rename session', action: () => prompt('Rename session', detail?.session.title ?? '', title => controller.configure({ title })) },
     { id: 'mode', label: detail?.session.mode === 'plan' ? 'Switch to Build' : 'Switch to Plan', description: 'Plan investigates without changing project files', disabled: busy, action: () => { close(); run(() => controller.configure({ mode: detail?.session.mode === 'plan' ? 'build' : 'plan' })); } },
     { id: 'queue', label: 'Queued messages', description: 'Pause, resume, or remove follow-ups', action: queue },
-    { id: 'steer', label: 'Send draft as steering', description: 'Guide the current response without starting another turn', disabled: !busy, action: () => { close(); run(() => controller.send('steer')); } },
+    { id: 'steer', label: 'Send draft as steering', description: 'Guide the current response without starting another turn', disabled: !busy, action: () => { close(); run(() => send('steer')); } },
     { id: 'stop', label: 'Stop response', disabled: !busy, action: () => { close(); run(() => controller.cancel()); } },
     { id: 'undo', label: 'Undo last turn', disabled: busy || !detail?.history?.canUndo, description: detail?.history?.unavailableReason, action: () => { close(); run(() => controller.history('undo')); } },
     { id: 'redo', label: 'Redo turn', disabled: busy || !detail?.history?.canRedo, action: () => { close(); run(() => controller.history('redo')); } },
@@ -228,14 +229,13 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
   commands.sort((a, b) => COMMAND_ORDER.indexOf(a.id) - COMMAND_ORDER.indexOf(b.id));
   const reserved = [...commands.map(item => item.id), 'help', 'exit', 'skill', ...projectCommands.map(item => item.name)];
   const palette = () => menu('Commands', [...commands.map(item => ({ ...item, label: `${item.label}   /${item.id}` })), ...projectCommands.map(item => ({ id: `project:${item.name}`, label: `/${item.name}`, description: item.description, action: () => { controller.setDraft({ ...controller.getState().draft, text: `/${item.name} ` }); close(); } }))]);
+  const send = (kind: 'message' | 'queue' | 'steer' = 'message', content?: string) => controller.send(kind, content, skillInvocation(content ?? controller.getState().draft.text, skillCatalog, reserved));
   const submit = () => {
     if (state.pending) return;
     const slash = parseSlash(controller.getState().draft.text);
-    if (slash?.name === 'steer' && slash.args) { run(() => controller.send('steer', slash.args)); return; }
-    if (slash?.name === 'queue' && slash.args) { run(() => controller.send('queue', slash.args)); return; }
+    if (slash?.name === 'steer' && slash.args) { run(() => send('steer', slash.args)); return; }
+    if (slash?.name === 'queue' && slash.args) { run(() => send('queue', slash.args)); return; }
     if (slash?.name === 'attach' && slash.args) { controller.setDraft({ ...controller.getState().draft, text: '' }); run(() => attach(slash.args)); return; }
-    const skill = skillCommand(controller.getState().draft.text, skills, reserved);
-    if (skill) { run(() => controller.activateSkill(skill)); return; }
     if (slash) {
       if (slash.name === 'help') { controller.setDraft({ ...controller.getState().draft, text: '' }); palette(); return; }
       const command = commands.find(item => item.id === (slash.name === 'exit' ? 'quit' : slash.name === 'skill' ? 'skills' : slash.name));
@@ -243,9 +243,9 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
         if (command.disabled) { controller.notice('That action is unavailable while the current task is running or history is incomplete.'); return; }
         controller.setDraft({ ...controller.getState().draft, text: '' }); command.action(); return;
       }
-      run(() => controller.send('message', expandProjectCommand(controller.getState().draft.text, projectCommands))); return;
+      run(() => send('message', expandProjectCommand(controller.getState().draft.text, projectCommands))); return;
     }
-    run(() => controller.send());
+    run(() => send());
   };
   const setupSeen = useRef(new Set<string>());
   useEffect(() => {
@@ -264,7 +264,7 @@ function SessionApp({ controller, router, onQuit, chooseTheme, themeName, themeM
     }
     if (panel || promptOverlay || key.name === 'escape' && suggestionsOpen) return;
     if (key.ctrl && key.name === 'd' && controller.getState().draft.text) return;
-    if (key.meta && key.name === 'return' && busy && !permission && !question) { key.preventDefault(); key.stopPropagation(); run(() => controller.send('steer')); return; }
+    if (key.meta && key.name === 'return' && busy && !permission && !question) { key.preventDefault(); key.stopPropagation(); run(() => send('steer')); return; }
     const result = router.dispatch({ name: key.name, ctrl: key.ctrl, shift: key.shift, meta: key.meta });
     if (result.preventDefault) { key.preventDefault(); key.stopPropagation(); }
     if (result.pending) return;

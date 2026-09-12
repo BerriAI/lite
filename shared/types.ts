@@ -85,7 +85,7 @@ export interface ToolCall { waitingForWorkspace?: string; changes?: FileChange[]
    * the unmodified original is preserved here so the interception is auditable
    * in the transcript and visibly attributed on the activity card. */
   intercepted?: { by: string; originalArgs: Record<string,unknown>; reason: string }; }
-export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; }
+export interface Attachment { name: string; path?: string; content?: string; mimeType?: string; dataUrl?: string; /** Skill instructions captured at acceptance; re-resolved on resubmission. */ skillId?: string; }
 export interface Message { clientSurface?: ClientSurface; turnId?: string; turnUsage?: import('./usage.js').TurnUsage; context?: ContextSnapshot; activity?: string; providerMetadata?: Record<string,unknown>; id: string; sessionId: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; reasoning?: string; toolCalls?: ToolCall[]; toolCallId?: string; createdAt: number; attachments?: Attachment[]; usage?: Usage; error?: string;
   /** Host-computed end-of-turn evidence account. Only on the FINAL assistant message of a completed root turn; observation only, never persisted for children. */
   receipts?: TurnReceipts; }

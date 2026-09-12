@@ -290,34 +290,37 @@ describe('skill slash commands', () => {
     expect(api.details.get('a')!.session.mode).toBe('plan');
     expect(api.details.get('a')!.session.model).toBe('model');
   });
-  it('invokes a skill directly, pins it, pauses the queue, and sends no message', async () => {
+  it('invokes a skill directly without pinning it or pausing the queue', async () => {
     const api = server(); await mount(); await invoke('/testing');
-    expect(api.calls.filter(call => call.path === '/sessions/a/profile' && call.method === 'POST').map(call => call.body)).toEqual([
-      { expectedConfigRevision: 3, choice: { profileId: null, skillIds: ['testing'], catalogRevision: 'catalog-v1' } },
+    expect(api.calls.filter(call => call.path === '/sessions/a/messages').map(call => call.body)).toEqual([
+      {content:'/testing',attachments:[],skills:{skillIds:['testing'],catalogRevision:'catalog-v1'}},
     ]);
-    expect(api.calls.some(call => call.path.endsWith('/messages'))).toBe(false);
-    expect(api.details.get('a')!.queue?.paused).toBe(true);
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method==='POST')).toBe(false);
+    expect(api.details.get('a')!.queue?.paused).toBe(false);
     expect(el<HTMLTextAreaElement>('#message-input').value).toBe('');
   });
-  it('preserves a current named profile when adding a skill directly', async () => {
-    const active = profile(choice); active.active!.revision = catalog.revision;
+  it('preserves the named profile and session skills while invoking another skill', async () => {
+    const active = profile(choice);
     const api = server([detail('a', { profile: active.active! })]); api.profile = active;
-    await mount(); await invoke('/docs');
-    const request = api.calls.find(call => call.path.endsWith('/profile') && call.method === 'POST');
-    expect(request?.body.choice).toEqual({ profileId: 'review', skillIds: ['testing', 'docs'], catalogRevision: catalog.revision });
-    expect(request?.body.selection).toBeUndefined();
+    await mount(); await invoke('/docs explain the parser');
+    expect(api.calls.find(call => call.path.endsWith('/messages'))?.body.skills).toEqual({skillIds:['docs'],catalogRevision:catalog.revision});
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method==='POST')).toBe(false);
+    expect(api.details.get('a')!.session.profile).toEqual(active.active);
   });
-  it('does not reload stale pinned instructions through a direct command', async () => {
-    const active = profile(choice), api = server([detail('a', { profile: active.active! })]); api.profile = active;
-    await mount(); await invoke('/docs');
-    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
+  it('keeps the skill reference and task when the server rejects changed instructions', async () => {
+    const api = server();
+    api.intercept = path => path.endsWith('/messages') ? Promise.reject(new Error('Project instructions changed. Open /skills.')) : undefined;
+    await mount(); await invoke('/docs explain the parser');
     expect(document.body.textContent).toContain('Open /skills');
-    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('/docs');
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('/docs explain the parser');
   });
-  it('blocks skill activation during a running response', async () => {
-    const api = server([detail('a', { status: 'running' })]); await mount(); await invoke('/testing');
-    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
-    expect(api.calls.some(call => call.path.endsWith('/messages') || call.path.endsWith('/queue'))).toBe(false);
+  it('queues a skill invocation during a running response', async () => {
+    const api = server([detail('a', { status: 'running' })]);
+    api.intercept = path => path.endsWith('/queue') ? {items:[],paused:false} : undefined;
+    await mount(); await invoke('/testing check next');
+    expect(api.calls.find(call => call.path.endsWith('/queue'))?.body).toEqual({content:'/testing check next',attachments:[],skills:{skillIds:['testing'],catalogRevision:catalog.revision}});
+    expect(api.calls.some(call => call.path.endsWith('/profile') && call.method==='POST')).toBe(false);
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('');
   });
   it('gives builtins and project templates precedence over colliding skills', async () => {
     const api = server();
@@ -330,27 +333,30 @@ describe('skill slash commands', () => {
     expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
     expect(document.querySelector('[role="dialog"]')).not.toBeNull();
   });
-  it('selects a welcome-screen skill without creating a session or sending a turn', async () => {
+  it('invokes a welcome-screen skill in the first message of a new session', async () => {
     window.history.replaceState(null, '', '/');
-    const api = server(); await mount(); await invoke('/testing');
-    expect(api.calls.some(call => call.method === 'POST')).toBe(false);
-    await invoke('/skills');
-    expect(el<HTMLInputElement>('[aria-label="Test carefully"]').checked).toBe(true);
+    const api = server(); await mount(); await invoke('/testing first task');
+    expect(api.calls.filter(call=>call.method==='POST').map(call=>call.path)).toEqual(['/sessions','/sessions/new/messages']);
+    expect(api.calls.find(call=>call.path==='/sessions/new/messages')?.body.skills).toEqual({skillIds:['testing'],catalogRevision:catalog.revision});
+    expect(api.details.get('new')!.session.profile).toBeUndefined();
   });
-  it('discards a delayed lookup after switching sessions', async () => {
+  it('keeps a different session draft when a delayed skill send completes', async () => {
     const api = server(); await mount();
-    const pending = deferred<ProfileCatalog>();
-    api.intercept = path => path.startsWith('/profiles?') ? pending.promise : undefined;
+    const pending = deferred<object>();
+    api.intercept = path => path.endsWith('/messages') ? pending.promise : undefined;
     await invoke('/testing');
     await act(async () => { window.location.hash = '#session/b'; window.dispatchEvent(new HashChangeEvent('hashchange')); });
-    await act(async () => pending.resolve(catalog));
+    await fill('another session draft');
+    await act(async () => pending.resolve({}));
+    expect(el<HTMLTextAreaElement>('#message-input').value).toBe('another session draft');
     expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
   });
-  it('does not submit a ninth skill', async () => {
+  it('keeps all eight session-wide skills when invoking a message skill', async () => {
     const api = server([detail('a', { profile: { profileId: null, skillIds: Array.from({ length: 8 }, (_, i) => `s${i}`), revision: catalog.revision, tools: null } })]);
     await mount(); await invoke('/testing');
+    expect(api.calls.find(call=>call.path.endsWith('/messages'))?.body.skills.skillIds).toEqual(['testing']);
+    expect(api.details.get('a')!.session.profile?.skillIds).toHaveLength(8);
     expect(api.calls.some(call => call.path.endsWith('/profile') && call.method === 'POST')).toBe(false);
-    expect(document.body.textContent).toContain('Choose up to 8');
   });
   it('disables Use skills when catalog loading fails', async () => {
     const api = server();

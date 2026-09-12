@@ -165,6 +165,26 @@ describe('slash-command expansion at send', () => {
     expect(document.querySelector('.global-alert')).toBeNull();
   });
 
+  it('keeps the selected skill in the composer and sends its invocation with arguments', async () => {
+    const server = await mountApp();
+    await fill('/test'); await key('Enter');
+    expect(input().value).toBe('/testing ');expect(server.posts).toEqual([]);
+    await fill('/testing check the parser');await key('Enter');
+    expect(server.posts).toEqual([{path:'/api/sessions/a/messages',body:{content:'/testing check the parser',attachments:[],skills:{skillIds:['testing'],catalogRevision:'catalog-v1'}}}]);
+    expect(input().value).toBe('');
+  });
+
+  it('invokes a bare skill after autocomplete and supports a leading dollar reference', async () => {
+    const server = await mountApp();
+    await fill('/testing');await key('Enter');
+    expect(input().value).toBe('/testing ');expect(server.posts).toEqual([]);
+    await key('Enter');
+    expect(server.sent()).toEqual(['/testing']);
+    await fill('$testing check again');await key('Enter');
+    expect(server.posts[1].body.skills.skillIds).toEqual(['testing']);
+    expect(server.posts.every(post=>post.path.endsWith('/messages'))).toBe(true);
+  });
+
   it('keeps colliding skill ids out of autocomplete so templates and builtins stay first', async () => {
     await mountApp();
     await fill('/testing');
