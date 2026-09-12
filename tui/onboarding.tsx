@@ -28,7 +28,7 @@ export function Onboarding({ controller, initial, onClose, quick = false }: { co
 
   if (!state.settings) return null;
   const back = () => setView('main');
-  if (view === 'skills') return <SkillImporter controller={controller} workspace={initial.workspace} onClose={back} onImported={() => { setRevision(value => value + 1); }} />;
+  if (view === 'skills') return <SkillImporter controller={controller} workspace={initial.workspace} onClose={back} onImported={() => {}} />;
   if (view === 'providers') return <Providers controller={controller} onClose={back} />;
   if (view === 'advanced') return <ShuntSettings controller={controller} settings={state.settings} value={shunt} onChange={setShunt} onClose={back} />;
 
@@ -74,8 +74,8 @@ export function Onboarding({ controller, initial, onClose, quick = false }: { co
     ...(roles.includes('worker') ? [{ id: 'worker', label: `${workerLabel(kind)}: ${worker?.model || 'Choose a model'}`, description: modelGuidance(kind, 'worker'), action: () => openRole('worker', true) }] : []),
     { id: 'advanced', label: `Advanced settings · Shunt ${shunt.enabled ? 'On' : 'Off'}`, description: `${SHUNT_DESCRIPTION} ${shunt.enabled && !shuntConfigured(shunt, state.settings.providers) ? 'Choose a Shunt model to enable it.' : SHUNT_MODEL_HINT}`, action: () => setView('advanced') },
     ...(!quick ? [{ id: 'providers', label: 'Manage providers', description: 'Connect an API or sign in to ChatGPT', action: () => setView('providers') },
-    { id: 'permissions', label: `Permissions: ${permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}`, description: permissionMode === 'ask' ? 'Review actions and remember tools you trust' : 'No routine prompts; explicit project rules still apply', action: () => setPermissionMode(permissionMode === 'auto' ? 'ask' : 'auto') },
-    { id: 'import-skills', label: 'Import Claude/Codex skills…', description: 'Copy skills from your machine into this project', action: () => setView('skills') }] : []),
+    { id: 'permissions', label: `Permissions: ${permissionMode === 'auto' ? 'Allow all tools' : 'Ask first'}`, description: permissionMode === 'ask' ? 'Review actions and remember tools you trust' : 'No routine prompts; explicit project rules still apply', action: () => setPermissionMode(permissionMode === 'auto' ? 'ask' : 'auto') }] : []),
+    { id: 'import-skills', label: 'Import Claude/Codex skills…', description: 'Copy skills from your machine into this project', action: () => setView('skills') },
     { id: 'save', label: state.pending ? 'Saving…' : quick ? 'Start chatting' : 'Start with this setup', separatorBefore: true, disabled: Boolean(state.pending) || !canSave, action: () => { void save(); } },
   ]} />;
 
