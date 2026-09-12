@@ -1,5 +1,6 @@
 import { cacheHitLabel, usagePhase } from '../../shared/usage';
 import { shuntLabel } from '../../shared/shunt';
+import { steeringContent } from '../../shared/steering-presentation';
 import { conversationBlocks } from './conversation-blocks';
 import { memo, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { QuestionRequest } from '../../shared/questions';
@@ -117,14 +118,14 @@ function toolGroups(tools: ToolCall[]): ToolCall[][] {
   return groups;
 }
 function MessageView({ driver, workerNoun, message, running, grouped, tail, live, runUsage, steps, workActivity, onFork, disabled, readOnly, renderTask, inline, expanded, onExpand }: { expanded: boolean; onExpand: (open: boolean) => void; driver: boolean; workerNoun: string; message: Message; running: boolean; grouped: boolean; tail: boolean; live: boolean; runUsage?: Usage; steps: Message[]; workActivity?: string|false; onFork: () => void; disabled: boolean; readOnly?: boolean; inline?: boolean; renderTask?: (tool: ToolCall, message: Message, expanded: boolean) => ReactNode }) {
-  const steering = message.role === 'system' && message.content.startsWith('[Steering] ');
-  if (steering) message = { ...message, content: message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '') };
-  if (message.role === 'system' && !steering) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
+  const steering = steeringContent(message);
+  if (steering !== undefined) message = { ...message, content: steering };
+  if (message.role === 'system' && steering === undefined) return <div className="system-message"><Terminal size={12} />{message.content}</div>;
   const assistant = message.role === 'assistant';
   const content = assistant ? withoutVerificationNotice(message.content, message.receipts) : message.content;
   return <article className={`message ${assistant ? 'assistant-message' : 'user-message'}${grouped ? ' grouped' : ''}`} aria-label={assistant ? 'Assistant message' : inline ? 'Assignment from driver' : 'Your message'}>
     {assistant && !grouped && <div className="message-byline"><Logo small /><span>Litespeed</span></div>}
-    <div className="message-body">{assistant && driver && (message.content || !message.toolCalls?.some(tool => tool.name === 'delegate' || tool.name === 'sidekick')) && <div className="driver-identity">Driver</div>}{steering && <span className="steering-label">Steering</span>}
+    <div className="message-body">{assistant && driver && (message.content || !message.toolCalls?.some(tool => tool.name === 'delegate' || tool.name === 'sidekick')) && <div className="driver-identity">Driver</div>}
       {content && (inline && !assistant ? <details className="task-assignment"><summary>Assignment from driver</summary><div className="markdown"><Markdown content={content} /></div></details> : <div className="markdown"><Markdown content={content} /></div>)}
       {assistant && <WorkLog workerNoun={workerNoun} expanded={expanded} onExpand={onExpand} messages={steps} live={live} renderTask={renderTask} workActivity={workActivity} />}
       {message.attachments && message.attachments.length > 0 && <div className="message-attachments">{message.attachments.map((a, i) => a.dataUrl?.startsWith('data:image/') ? <a href={a.dataUrl} target="_blank" rel="noopener noreferrer" key={i}><img src={a.dataUrl} alt={a.name} /><span>{a.name}</span></a> : <span key={i}><File size={13} />{a.path || a.name}</span>)}</div>}

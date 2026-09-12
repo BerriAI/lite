@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { conversationBlocks } from '../client/src/conversation-blocks';
 import { workerLabels } from '../client/src/worker-presentation';
+import { steeringContent } from '../shared/steering-presentation';
 import type { Message, SessionDetail, ToolCall } from '../shared/types';
 
 const call = (id: string, name = 'read_file'): ToolCall => ({ id, name, args: { path: 'README.md' }, status: 'completed' });
@@ -27,6 +28,39 @@ describe('web conversation reading boundaries', () => {
     const blocks = conversationBlocks([first, next]);
     expect(blocks).toHaveLength(1); expect(blocks[0].message.id).toBe('first');
     expect(blocks[0]).toMatchObject({ endsRun: true, closesTranscript: true, runUsage: { inputTokens: 10, outputTokens: 5 } });
+  });
+});
+
+describe('steering presentation', () => {
+  it.each([
+    'The user sent this note to the running response. Update the ongoing task using this latest instruction',
+    'The user sent this note to the running response. It supersedes their earlier request in this turn; follow it as the user\'s latest instruction',
+    'This user note arrived before the response ended and still needs attention',
+    'The user sent this note before the response was interrupted. It still needs attention',
+  ] as const)('unwraps the %s prefix into the plain user note', prefix => {
+    const msg = message('steer', { role: 'system', content: `[Steering] ${prefix}: drop this prefix for me` });
+    expect(steeringContent(msg)).toBe('drop this prefix for me');
+  });
+
+  it('keeps the internal audit marker on the backend message while exposing only the note', () => {
+    const msg = message('steer', { role: 'system', content: '[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: stay on the fixture' });
+    const unwrapped = steeringContent(msg);
+    expect(unwrapped).toBe('stay on the fixture');
+    expect(msg.content).toContain('[Steering]'); // backend delivery semantics are untouched
+  });
+
+  it('renders an empty or attachment-only steering note as an empty user message, not a system notice', () => {
+    // '' is distinct from undefined: a matched wrapper with empty content must
+    // still be treated as a user message so attachment-only notes stay user rows.
+    expect(steeringContent(message('steer', { role: 'system', content: '[Steering] This user note arrived before the response ended and still needs attention: ' }))).toBe('');
+    expect(steeringContent(message('steer', { role: 'system', content: '[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: ' }))).toBe('');
+  });
+
+  it('leaves non-steering system messages and ordinary user messages alone', () => {
+    const notice = message('notice', { role: 'system', content: 'Compaction paused for connection.' });
+    expect(steeringContent(notice)).toBeUndefined();
+    const user = message('user', { role: 'user', content: '[Steering] This is an ordinary user message.' });
+    expect(steeringContent(user)).toBeUndefined();
   });
 });
 
