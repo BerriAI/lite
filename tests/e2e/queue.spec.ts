@@ -252,8 +252,8 @@ for (const width of [1280, 390]) {
       expect((await accepted).status()).toBe(202);
       await expect(queuePanel(page)).toHaveCount(0);
       const note = page.getByRole('article', { name: 'Your message', exact: true }).last();
-      await expect(note).toContainText('Steering'); await expect(note).toContainText(item.content);
-      await expect(note).toContainText('queued-context.txt'); await expect(note).not.toContainText('[Steering]');
+      await expect(note).toContainText(item.content);
+      await expect(note).toContainText('queued-context.txt'); await expect(note).not.toContainText('Steering'); await expect(note).not.toContainText('[Steering]');
       await expect(composer(page)).toHaveValue('An independent unsent thought.');
       await expect(page.getByRole('region', { name: 'Permission requested' })).toHaveCount(0);
       await expect.poll(async () => (await detail(request, session.id)).session.status).toBe('idle');
