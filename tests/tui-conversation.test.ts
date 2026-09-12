@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DelegationSummary, Message, SessionDetail } from '../shared/types.js';
 import { activityActors, activitySections, conversationGroups, taskInvocations, usageLabel, usageDetails } from '../tui/conversation.js';
+import { steeringContent } from '../shared/steering-presentation.js';
 const message = (id: string, extra: Partial<Message>): Message => ({ id, sessionId: 'root', role: 'assistant', content: id, createdAt: 1, ...extra });
 function detail(messages: Message[], status = 'idle'): SessionDetail { return { session: { id: 'root', status, model: 'new-model', mode: 'plan' }, messages, permissions: [], todos: [] } as unknown as SessionDetail; }
 describe('current task sidebar', () => {
@@ -64,5 +65,17 @@ describe('agent activity sections', () => {
       for (const call of steps[0].toolCalls!) call.status = status;
       expect(activitySections(steps, activityActors(session)).map(section => section.kind === 'worker' && section.label)).toEqual(expected);
     }
+  });
+});
+
+describe('terminal steering presentation', () => {
+  it('strips the internal wrapper into plain user content without mutating the delivered system message', () => {
+    const msg = message('steer', { role: 'system', content: '[Steering] The user sent this note to the running response. Update the ongoing task using this latest instruction: follow the latest plan' });
+    expect(steeringContent(msg)).toBe('follow the latest plan');
+    expect(msg.role).toBe('system'); // delivery role is preserved
+    expect(msg.content).toContain('[Steering]'); // marker stays on the backend message
+    // Transcript branches on steeringContent(...) !== undefined to render a
+    // UserRow for these notes; the end-to-end rendering is asserted in
+    // scripts/test-tui.mjs against the real terminal transcript.
   });
 });

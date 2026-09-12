@@ -23,6 +23,7 @@ import type { TerminalController } from './controller.js';
 import { Brand } from './brand.js';
 import { WorkerCard } from './workerCard.js';
 import { withoutVerificationNotice } from '../shared/verification.js';
+import { steeringContent } from '../shared/steering-presentation.js';
 
 /** Heavy left rail used by user messages, block tools, and error boxes. */
 export const RAIL_BORDER = {
@@ -378,10 +379,13 @@ export const Transcript = memo(function Transcript({ detail, width, active = tru
     {visible.map(({ message, startsRun, steps, live, footer, runUsage }, index) => {
       if (message.role === 'user') { previousActor = undefined; return embedded ? null : <UserRow key={message.id} message={message} first={index === 0} />; }
       if (message.role === 'system') {
+        const steering = steeringContent(message);
+        // Render the accepted steering note as a plain user message, exactly
+        // like the message the user typed, with no internal wrapper or
+        // steering/update metadata leaking onto the transcript.
+        if (steering !== undefined) { previousActor = undefined; return embedded ? null : <UserRow key={message.id} message={{ ...message, role: 'user', content: steering }} first={index === 0} />; }
         previousActor = undefined;
-        const steering = message.content.startsWith('[Steering]');
-        const content = message.content.replace(/^\[Steering\] (?:The user sent this note to the running response\. (?:Update the ongoing task using this latest instruction|It supersedes their earlier request in this turn; follow it as the user's latest instruction)|This user note arrived before the response ended and still needs attention|The user sent this note before the response was interrupted\. It still needs attention): /, '');
-        return <box key={message.id} marginTop={1} paddingLeft={3} flexDirection="column" flexShrink={0}>{steering && <text fg={toHex(theme.textMuted)}>You · update</text>}<text fg={toHex(steering ? theme.text : theme.textMuted)} wrapMode="word">{terminalText(content, true)}</text></box>;
+        return <box key={message.id} marginTop={1} paddingLeft={3} flexDirection="column" flexShrink={0}><text fg={toHex(theme.textMuted)} wrapMode="word">{terminalText(message.content, true)}</text></box>;
       }
       const usageMessage = steps.findLast(step => step.turnUsage) ?? steps.at(-1) ?? message;
       const content = withoutVerificationNotice(message.content, message.receipts);
