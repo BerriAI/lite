@@ -2,6 +2,7 @@ import { progressTimeout } from './progress-timeout.js';
 import { REASONING_EFFORTS } from '../shared/types.js';
 import { randomUUID } from 'node:crypto';
 import { validContextWindow } from './budget.js';
+import { anthropicMaxOutputTokens } from './output-tokens.js';
 import type { Model, ReasoningEffort, Provider, StreamChunk, ToolDefinition, Usage } from '../shared/types.js';
 
 export interface ProviderMessage {
@@ -307,7 +308,7 @@ function anthropicMessages(messages: ProviderMessage[], providerId: string, mode
   }
   return result;
 }
-async function* anthropicStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }, requireCompleteText = false): AsyncGenerator<StreamChunk> {
+async function* anthropicStream(response: Response, signal: AbortSignal, scope: { providerId: string; model: string }, maxOutputTokens: number, requireCompleteText = false): AsyncGenerator<StreamChunk> {
   let finished = false, tokens: Usage = { inputTokens: 0, outputTokens: 0 };
   let stopReason: string | undefined;
   const thinking = new Map<number, any>();
@@ -341,7 +342,10 @@ async function* anthropicStream(response: Response, signal: AbortSignal, scope: 
     if (type === 'message_delta') {
       if (chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
       if (chunk.usage?.output_tokens !== undefined) tokens.outputTokens = chunk.usage.output_tokens;
-      if (chunk.delta?.stop_reason === 'max_tokens') { yield {type:'usage',usage:tokens}; throw new ProviderError('The model reached its output limit. No partial tool calls were executed.'); }
+      if (chunk.delta?.stop_reason === 'max_tokens') {
+        yield { type: 'usage', usage: tokens };
+        throw new ProviderError(`The model reached its output limit (max_tokens: ${maxOutputTokens}). No partial tool calls were executed. Increase LITESPEED_ANTHROPIC_MAX_TOKENS (or the explicit request output limit) within the model's supported range, or split large file writes into smaller calls.`, { code: 'output_limit_exceeded' });
+      }
     }
     if (type === 'message_stop') {
       if(requireCompleteText && stopReason !== 'end_turn') { yield {type:'usage',usage:tokens}; throw new ProviderError('The model did not return a complete text response. No generated content was applied.'); }
@@ -476,7 +480,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     headers['x-api-key'] = provider.apiKey; headers['anthropic-version'] = '2023-06-01';
     const instructions = [system, ...messages.filter(m => m.role === 'system').map(m => contentText(m.content))].filter(Boolean).join('\n\n');
     const anthropicTools = tools?.length ? tools.map((t, index) => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters, ...(index === tools.length - 1 ? { cache_control: { type: 'ephemeral' } } : {}) })) : undefined;
-    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: options.maxOutputTokens ?? 8192, stream: true, messages: markTrailingCacheBreakpoint(anthropicMessages(messages, provider.id, model), 'anthropic'),
+    body = { model, ...(options.reasoningEffort ? { output_config: { effort: options.reasoningEffort } } : {}), max_tokens: options.maxOutputTokens ?? anthropicMaxOutputTokens(), stream: true, messages: markTrailingCacheBreakpoint(anthropicMessages(messages, provider.id, model), 'anthropic'),
       ...(instructions ? { system: [{ type: 'text', text: instructions, cache_control: { type: 'ephemeral' } }] } : {}),
       ...(anthropicTools ? { tools: anthropicTools } : {}) };
     url = endpoint(provider.baseUrl || 'https://api.anthropic.com', 'messages');
@@ -501,7 +505,7 @@ export async function* streamCompletion(options: CompletionOptions): AsyncGenera
     await response.body?.cancel();
     throw new ProviderError('Provider did not return an SSE stream. Check that this endpoint supports streaming.');
   }
-  const chunks = provider.kind === 'anthropic' ? anthropicStream(response, signal, { providerId: provider.id, model }, options.requireCompleteText) : provider.kind === 'codex' ? responsesStream(response, signal, { providerId: provider.id, model }) : chatStream(response, signal, { providerId: provider.id, model }, options.requireCompleteText);
+  const chunks = provider.kind === 'anthropic' ? anthropicStream(response, signal, { providerId: provider.id, model }, body.max_tokens, options.requireCompleteText) : provider.kind === 'codex' ? responsesStream(response, signal, { providerId: provider.id, model }) : chatStream(response, signal, { providerId: provider.id, model }, options.requireCompleteText);
   for await (const chunk of chunks) { watchdog.progress(); yield chunk; }
   } finally { watchdog.close(); }
 }

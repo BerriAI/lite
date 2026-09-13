@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { anthropicMaxOutputTokens } from './output-tokens.js';
 import type { ContextSnapshot, Model, Provider, ToolDefinition } from '../shared/types.js';
 import type { ProviderMessage } from './providers.js';
 
@@ -88,9 +89,9 @@ export function resolveContextBudget(provider: Provider, model: string, cache = 
   const catalog = limit?.contextWindow ?? limit?.maxInputTokens;
   const contextWindow = validContextWindow(override) ? override : catalog ?? BUDGET_LIMITS.defaultContextWindow;
   const limitSource = validContextWindow(override) ? 'override' : limit?.contextWindow !== undefined ? 'catalog' : limit?.maxInputTokens !== undefined ? 'catalog-input' : 'default';
-  // Anthropic currently sends max_tokens:8192. Other adapters have no enforced
+  // Reserve the configured native Anthropic output cap. Other adapters have no enforced
   // output cap; this is only a bounded advisory reserve, never a request rejection.
-  const outputReserve = provider.kind === 'anthropic' ? 8192 : contextWindow === undefined ? 4096 : Math.min(4096, Math.floor(contextWindow / 4));
+  const outputReserve = provider.kind === 'anthropic' ? anthropicMaxOutputTokens() : contextWindow === undefined ? 4096 : Math.min(4096, Math.floor(contextWindow / 4));
   return { ...(contextWindow !== undefined ? { contextWindow } : {}), outputReserve, limitSource };
 }
 

@@ -12,6 +12,20 @@ Open **Settings → Providers** in the web app or terminal to add a provider, sa
 
 **Claude subscriptions:** Third-party subscription login/routing is not supported. Use a native API key or a supported provider through LiteLLM instead.
 
+## Native Anthropic output limit
+
+Native Anthropic requests default to **8,192 output tokens per model call**. Large file writes can exhaust this limit while generating a tool's arguments. Litespeed reports an output-limit error and does not execute the incomplete tool calls; resuming with the same limit can fail again.
+
+For models that support a larger response, set the server's `LITESPEED_ANTHROPIC_MAX_TOKENS` environment variable, for example:
+
+```sh
+LITESPEED_ANTHROPIC_MAX_TOKENS=32768 litespeed serve
+```
+
+Restart an already-running server with the new environment. You can also set this variable in the server's `.env`. Unset or blank values keep the 8,192-token default; other values must be positive whole numbers within the selected model's supported output range. The same value is reserved during context budgeting. Calls with an explicit output limit, such as Shunt generation, keep that limit. This setting applies only to native Anthropic connections; it does not cap OpenAI-compatible or ChatGPT requests.
+
+For benchmark runs, record the configured limit and distinguish output-limit failures from completed quality evaluations. See [Anthropic's guidance on truncated tool calls](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons#max_tokens).
+
 ## Prompt caching
 
 Litespeed automatically requests Anthropic prompt caching for native Anthropic connections and Claude/Anthropic model names behind LiteLLM. Each request marks the end of the current user message or tool results, so later steps can reuse the growing conversation. Native requests also retain system and final-tool-schema breakpoints; the OpenAI-compatible route retains its system breakpoint. Markers are added to outgoing copies, not saved conversation history, and never to signed thinking blocks.
